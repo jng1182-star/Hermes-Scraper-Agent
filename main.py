@@ -3,6 +3,7 @@ import subprocess
 import threading
 import time
 import json
+from pathlib import Path
 from dotenv import load_dotenv
 
 # Load .env FIRST so OLLAMA_HOST is available before any crewai/litellm import
@@ -22,17 +23,26 @@ STALL_TIMEOUT = int(os.getenv("STALL_TIMEOUT", "180"))
 MAX_RETRIES   = int(os.getenv("STALL_MAX_RETRIES", "2"))
 
 
+SUPPORTED_PLATFORMS = ["TikTok", "Instagram", "YouTube", "Facebook"]
+
+
 def _build_query(params: dict) -> str:
-    advertiser  = params.get("advertiser", "").strip()
+    # Support both single advertiser and list of advertisers
+    advertisers  = params.get("advertisers") or []
+    if not advertisers and params.get("advertiser"):
+        advertisers = [params["advertiser"].strip()]
+    advertisers = [a.strip() for a in advertisers if str(a).strip()]
+
     competitors = params.get("competitors", [])
     country     = params.get("country", "").strip()
-    platforms   = params.get("platforms", [])
+    platforms   = [p for p in params.get("platforms", []) if p in SUPPORTED_PLATFORMS]
     date_range  = params.get("date_range", "Last 30 days").strip()
     keywords    = params.get("keywords", "").strip()
+    post_type   = params.get("post_type", "both")
 
     parts = []
-    if advertiser:
-        parts.append(advertiser)
+    if advertisers:
+        parts.append(", ".join(advertisers))
     if competitors:
         s = ", ".join(c.strip() for c in competitors if c.strip())
         if s:
@@ -45,6 +55,8 @@ def _build_query(params: dict) -> str:
         parts.append(f"({date_range})")
     if keywords:
         parts.append(f"[topics: {keywords}]")
+    if post_type and post_type != "both":
+        parts.append(f"[{post_type} posts only]")
 
     return " ".join(parts) if parts else "Top Brands"
 
@@ -71,9 +83,33 @@ HARD_DEADLINE = int(os.getenv("HARD_DEADLINE", "570"))   # 9.5 min — leaves 30
 
 
 def run_pipeline(params: dict):
-    query    = _build_query(params)
-    cpm_rate = float(params.get("cpm_rate", 15.0))
-    depth    = params.get("depth", "deep")
+    query     = _build_query(params)
+    cpm_rate  = float(params.get("cpm_rate", 0)) or None  # None → per-platform defaults
+    depth     = params.get("depth", "deep")
+    post_type = params.get("post_type", "both")
+
+    # Normalise advertisers list
+    advertisers = params.get("advertisers") or []
+    if not advertisers and params.get("advertiser"):
+        advertisers = [params["advertiser"].strip()]
+    params["advertisers"] = [a.strip() for a in advertisers if str(a).strip()]
+
+    # Enforce supported platforms only
+    params["platforms"] = [p for p in params.get("platforms", []) if p in SUPPORTED_PLATFORMS]
+
+    # Load any parsed uploaded files and inject as context
+    parsed_dir = Path("data/parsed")
+    uploaded_context = []
+    if parsed_dir.exists():
+        for f in sorted(parsed_dir.iterdir()):
+            if f.is_file() and f.suffix == ".txt":
+                try:
+                    content = f.read_text(encoding="utf-8")[:4000]  # cap per file
+                    uploaded_context.append({"filename": f.name, "content": content})
+                except Exception:
+                    pass
+    if uploaded_context:
+        params["uploaded_context"] = uploaded_context
 
     print(f"Starting Analysis: {query}", flush=True)
 
@@ -202,7 +238,7 @@ def run_pipeline(params: dict):
     if _state_hook:
         _state_hook("gate", "active")
     print("Running Approval Gate…", flush=True)
-    gate = ApprovalGate(cpm_rate=cpm_rate)
+    gate = ApprovalGate(cpm_rate=cpm_rate, post_type=post_type)
     final_json_str = gate.process_final_report(str(raw_output))
     if _state_hook:
         _state_hook("gate", "done")

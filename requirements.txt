@@ -4,3 +4,6 @@ tavily-python>=0.5.0
 duckduckgo-search>=6.0
 pydantic>=2.0
 python-dotenv
+openpyxl>=3.1        # Excel xlsx parsing
+pdfplumber>=0.11     # PDF text extraction
+python-docx>=1.1     # Word docx parsing

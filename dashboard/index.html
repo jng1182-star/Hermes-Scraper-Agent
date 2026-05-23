@@ -45,18 +45,25 @@
   <div id="page-configure" class="page active">
     <div class="inner" style="padding-top:36px; padding-bottom:60px;">
 
-      <!-- Scan Configuration Card -->
       <div class="config-card fade-in">
         <div class="config-card-title">Scan Configuration</div>
 
-        <!-- Row 1: Advertiser + Competitors -->
+        <!-- Row 1: Advertisers (multi) + Competitors -->
         <div class="form-row">
           <div class="form-group">
-            <label class="form-label" for="advertiser">Your Brand (Advertiser)</label>
-            <input class="form-input" id="advertiser" type="text" placeholder="e.g. Nike" autocomplete="off">
+            <label class="form-label">
+              Your Brand(s) / Advertisers
+              <span class="form-hint">Type brand name, press Enter to add multiple</span>
+            </label>
+            <div class="tag-input-wrap" id="advertiserWrap">
+              <input class="tag-input" id="advertiserInput" placeholder="e.g. Colgate, Oral-B…" autocomplete="off">
+            </div>
           </div>
           <div class="form-group">
-            <label class="form-label">Competitor Brands</label>
+            <label class="form-label">
+              Competitor Brands
+              <span class="form-hint">Type brand name, press Enter</span>
+            </label>
             <div class="tag-input-wrap" id="tagWrap">
               <input class="tag-input" id="tagInput" placeholder="Type brand, press Enter…" autocomplete="off">
             </div>
@@ -70,10 +77,10 @@
             <select class="form-input" id="country">
               <option value="">Global</option>
               <option value="Singapore">Singapore</option>
+              <option value="Philippines">Philippines</option>
               <option value="United States">United States</option>
               <option value="United Kingdom">United Kingdom</option>
               <option value="Australia">Australia</option>
-              <option value="Philippines">Philippines</option>
               <option value="Indonesia">Indonesia</option>
               <option value="Malaysia">Malaysia</option>
               <option value="Thailand">Thailand</option>
@@ -91,15 +98,18 @@
             </select>
           </div>
           <div class="form-group">
-            <label class="form-label" for="cpmRate">CPM Rate ($ per 1,000 impressions)</label>
+            <label class="form-label" for="cpmRate">
+              CPM Override ($ per 1,000 impressions)
+              <span class="form-hint">Leave at 0 to use platform defaults (TikTok $3.50, IG $8, YT $9.50, FB $7.50)</span>
+            </label>
             <div class="cpm-wrap">
               <span class="cpm-prefix">$</span>
-              <input class="form-input" id="cpmRate" type="number" value="15.00" min="0.01" step="0.01">
+              <input class="form-input" id="cpmRate" type="number" value="0" min="0" step="0.01" placeholder="0 = platform defaults">
             </div>
           </div>
         </div>
 
-        <!-- Row 3: Platforms -->
+        <!-- Row 3: Platforms (4 only) -->
         <div class="form-row full" style="margin-bottom:20px;">
           <div class="form-group">
             <label class="form-label">Platforms</label>
@@ -116,17 +126,41 @@
               <label class="platform-option">
                 <input type="checkbox" value="Facebook"> <span class="plabel">Facebook</span>
               </label>
-              <label class="platform-option">
-                <input type="checkbox" value="X / Twitter"> <span class="plabel">X / Twitter</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Row 4: Post Type (Paid / Organic / Both) -->
+        <div class="form-row full" style="margin-bottom:20px;">
+          <div class="form-group">
+            <label class="form-label">Content Type to Scan</label>
+            <div class="depth-options" id="postTypeOptions">
+              <label class="depth-option">
+                <input type="radio" name="postType" value="paid">
+                <div>
+                  <div class="dlabel">Paid Only</div>
+                  <div class="dsub">Ad libraries · sponsored · boosted</div>
+                </div>
               </label>
-              <label class="platform-option">
-                <input type="checkbox" value="LinkedIn"> <span class="plabel">LinkedIn</span>
+              <label class="depth-option">
+                <input type="radio" name="postType" value="organic">
+                <div>
+                  <div class="dlabel">Organic Only</div>
+                  <div class="dsub">Viral · UGC · creator content</div>
+                </div>
+              </label>
+              <label class="depth-option active">
+                <input type="radio" name="postType" value="both" checked>
+                <div>
+                  <div class="dlabel">Paid + Organic</div>
+                  <div class="dsub">Full landscape view (recommended)</div>
+                </div>
               </label>
             </div>
           </div>
         </div>
 
-        <!-- Row 4: Date Range -->
+        <!-- Row 5: Date Range -->
         <div class="form-row full" style="margin-bottom:20px;">
           <div class="form-group">
             <label class="form-label">Date Range</label>
@@ -145,7 +179,7 @@
           </div>
         </div>
 
-        <!-- Row 5: Depth + Keywords -->
+        <!-- Row 6: Depth + Keywords -->
         <div class="form-row">
           <div class="form-group">
             <label class="form-label">Analysis Depth</label>
@@ -172,14 +206,29 @@
           </div>
         </div>
 
+        <!-- Row 7: File Upload -->
+        <div class="form-row full" style="margin-bottom:20px;">
+          <div class="form-group">
+            <label class="form-label">
+              Reference Files (optional)
+              <span class="form-hint">Upload competitor lists, briefs, or brand data in any format — agents will read and use this</span>
+            </label>
+            <div class="file-upload-zone" id="fileUploadZone">
+              <input type="file" id="fileInput" multiple
+                accept=".xlsx,.xls,.csv,.pdf,.docx,.txt,.json,.png,.jpg,.jpeg,.webp"
+                style="display:none">
+              <div class="file-upload-inner" onclick="document.getElementById('fileInput').click()">
+                <div class="file-upload-icon">⬆</div>
+                <div class="file-upload-label">Drop files here or <span class="file-link">click to upload</span></div>
+                <div class="file-upload-hint">Excel · PDF · Word · CSV · Images · JSON</div>
+              </div>
+              <div class="file-list" id="fileList"></div>
+            </div>
+          </div>
+        </div>
+
         <!-- Run -->
         <div class="run-section">
-          <label style="display:flex;align-items:center;gap:8px;cursor:pointer;">
-            <input type="file" id="reportUpload" accept=".json" style="display:none">
-            <button class="btn-secondary" onclick="document.getElementById('reportUpload').click()">
-              ↑ Upload report.json
-            </button>
-          </label>
           <button class="btn-ghost" id="resetBtn" title="Clear all fields">↺ Reset</button>
           <button class="btn-primary" id="runBtn">
             <span id="runBtnIcon">▶</span>
@@ -219,7 +268,6 @@
         <button class="btn-stop" id="stopBtn" disabled title="Stop running analysis">■ Stop</button>
       </div>
     </div>
-    <!-- Timeout / retry banner -->
     <div class="timeout-banner" id="timeoutBanner" style="display:none;">
       <span class="timeout-icon">⚠</span>
       <span id="timeoutMsg">Agent stalled — restarting…</span>
@@ -227,16 +275,11 @@
     </div>
 
     <div class="network-body">
-
-      <!-- Left: canvas -->
       <div class="network-canvas-wrap">
         <canvas id="networkCanvas"></canvas>
       </div>
 
-      <!-- Right: agent deck + log -->
       <div class="network-right-panel">
-
-        <!-- Agent Cards -->
         <div class="agent-deck">
 
           <div class="agent-card" id="acard-scraper" data-agent="scraper" style="--acolor:#1f6feb;--acolor-lt:rgba(31,111,235,0.10);">
@@ -246,14 +289,12 @@
                 <div class="acard-icon">⬡</div>
                 <div class="acard-info">
                   <div class="acard-name">SCRAPER</div>
-                  <div class="acard-role">Social Data Scraper</div>
+                  <div class="acard-role">Paid + Organic Data Collector</div>
                 </div>
                 <div class="acard-badge idle" id="abadge-scraper">IDLE</div>
               </div>
               <div class="acard-log" id="alog-scraper">Awaiting activation…</div>
-              <div class="acard-bar-wrap">
-                <div class="acard-bar" id="abar-scraper"></div>
-              </div>
+              <div class="acard-bar-wrap"><div class="acard-bar" id="abar-scraper"></div></div>
             </div>
           </div>
 
@@ -264,14 +305,12 @@
                 <div class="acard-icon">◈</div>
                 <div class="acard-info">
                   <div class="acard-name">ANALYST</div>
-                  <div class="acard-role">Engagement Analyst</div>
+                  <div class="acard-role">Engagement &amp; Spend Analyst</div>
                 </div>
                 <div class="acard-badge idle" id="abadge-analyst">IDLE</div>
               </div>
               <div class="acard-log" id="alog-analyst">Awaiting data from Scraper…</div>
-              <div class="acard-bar-wrap">
-                <div class="acard-bar" id="abar-analyst"></div>
-              </div>
+              <div class="acard-bar-wrap"><div class="acard-bar" id="abar-analyst"></div></div>
             </div>
           </div>
 
@@ -287,9 +326,7 @@
                 <div class="acard-badge idle" id="abadge-reporter">IDLE</div>
               </div>
               <div class="acard-log" id="alog-reporter">Awaiting analysis…</div>
-              <div class="acard-bar-wrap">
-                <div class="acard-bar" id="abar-reporter"></div>
-              </div>
+              <div class="acard-bar-wrap"><div class="acard-bar" id="abar-reporter"></div></div>
             </div>
           </div>
 
@@ -300,20 +337,17 @@
                 <div class="acard-icon">⬟</div>
                 <div class="acard-info">
                   <div class="acard-name">APPROVAL GATE</div>
-                  <div class="acard-role">Math · Sanitize · Score</div>
+                  <div class="acard-role">CPM · ER · Spend Validation</div>
                 </div>
                 <div class="acard-badge idle" id="abadge-gate">IDLE</div>
               </div>
               <div class="acard-log" id="alog-gate">Awaiting pipeline output…</div>
-              <div class="acard-bar-wrap">
-                <div class="acard-bar" id="abar-gate"></div>
-              </div>
+              <div class="acard-bar-wrap"><div class="acard-bar" id="abar-gate"></div></div>
             </div>
           </div>
 
-        </div><!-- /agent-deck -->
+        </div>
 
-        <!-- Live Log -->
         <div class="network-log-panel" id="networkLogPanel">
           <div class="network-log-header">
             <span class="network-log-title">LIVE LOG</span>
@@ -321,57 +355,71 @@
           </div>
           <pre class="network-log-output" id="networkLogOutput">Waiting for analysis to start…</pre>
         </div>
-
-      </div><!-- /network-right-panel -->
-
-    </div><!-- /network-body -->
+      </div>
+    </div>
   </div>
 
   <!-- ═══════════════════ PAGE 3: RESULTS ═════════════════════════ -->
   <div id="page-results" class="page">
     <div class="inner">
 
-      <!-- No data state -->
       <div class="no-data-state" id="noDataState">
         <div class="nd-icon">📊</div>
         <h3>No Results Yet</h3>
         <p>Run an analysis or upload a report.json to see results here.</p>
       </div>
 
-      <!-- Results content (hidden until data loads) -->
       <div id="resultsContent" style="display:none;">
 
-        <!-- Context bar -->
-        <div class="context-bar" id="contextBar"></div>
+        <!-- Scan Summary bar -->
+        <div class="scan-summary-bar" id="scanSummaryBar">
+          <div class="scan-summary-inner" id="contextBar"></div>
+          <div class="scan-post-type-toggle" id="postTypeFilterWrap" style="display:none;">
+            <span class="toggle-label">View:</span>
+            <button class="post-type-btn active" data-pt="all">All</button>
+            <button class="post-type-btn" data-pt="paid">Paid</button>
+            <button class="post-type-btn" data-pt="organic">Organic</button>
+          </div>
+        </div>
 
-        <!-- KPI cards -->
+        <!-- KPI cards — professional labels -->
         <div class="kpi-grid">
           <div class="kpi-card">
-            <div class="kpi-label">Competitors</div>
+            <div class="kpi-label">Brands Analysed</div>
             <div class="kpi-value" id="kpiCount">—</div>
+            <div class="kpi-sub" id="kpiPostCount" style="font-size:0.7rem;color:var(--text3);margin-top:4px;">— posts scanned</div>
           </div>
           <div class="kpi-card" style="--accent:#2563eb;">
-            <div class="kpi-label">Est. Total Spend</div>
+            <div class="kpi-label">Est. Total Media Value</div>
             <div class="kpi-value accent" id="kpiSpend">—</div>
+            <div class="kpi-sub" style="font-size:0.7rem;color:var(--text3);margin-top:4px;">paid + organic earned value</div>
           </div>
           <div class="kpi-card">
-            <div class="kpi-label">Avg. Engagement</div>
+            <div class="kpi-label">Avg. Engagement Rate</div>
             <div class="kpi-value green" id="kpiEngage">—</div>
+            <div class="kpi-sub" id="kpiBenchmark" style="font-size:0.7rem;color:var(--text3);margin-top:4px;">vs. platform benchmarks</div>
           </div>
           <div class="kpi-card">
-            <div class="kpi-label">Top Platform</div>
+            <div class="kpi-label">Dominant Platform</div>
             <div class="kpi-value" id="kpiPlatform" style="font-size:1.2rem;">—</div>
+            <div class="kpi-sub" style="font-size:0.7rem;color:var(--text3);margin-top:4px;">by total impressions</div>
           </div>
         </div>
 
         <!-- Charts row 1 -->
         <div class="charts-grid" style="margin-bottom:20px;">
           <div class="chart-card">
-            <div class="chart-card-title">Spend Distribution (USD)</div>
+            <div class="chart-card-title">
+              Estimated Media Value (USD)
+              <span class="chart-note">Paid CPM-based + Organic engagement value</span>
+            </div>
             <canvas id="spendChart" height="220"></canvas>
           </div>
           <div class="chart-card">
-            <div class="chart-card-title">Engagement Rate (%)</div>
+            <div class="chart-card-title">
+              Engagement Rate (%)
+              <span class="chart-note">vs. platform industry benchmarks</span>
+            </div>
             <canvas id="engageChart" height="220"></canvas>
           </div>
         </div>
@@ -379,7 +427,7 @@
         <!-- Charts row 2 -->
         <div class="charts-grid" style="margin-bottom:20px;">
           <div class="chart-card">
-            <div class="chart-card-title">Platform Breakdown</div>
+            <div class="chart-card-title">Platform Impression Share</div>
             <canvas id="platformChart" height="220"></canvas>
           </div>
           <div class="chart-card">
@@ -388,7 +436,7 @@
           </div>
         </div>
 
-        <!-- Content Intelligence section -->
+        <!-- Content Intelligence -->
         <div class="table-card" style="margin-bottom:20px;">
           <div class="table-card-header">
             <div class="table-card-title">Content Intelligence</div>
@@ -397,10 +445,11 @@
           <div id="contentIntelBody" style="padding:0;"></div>
         </div>
 
-        <!-- Competitor metrics table -->
+        <!-- Competitor metrics table — expanded schema -->
         <div class="table-card">
           <div class="table-card-header">
-            <div class="table-card-title">Engagement Metrics</div>
+            <div class="table-card-title">Brand Engagement Metrics</div>
+            <span id="tableSubtitle" style="font-size:0.72rem;color:var(--text3);font-family:var(--mono);"></span>
           </div>
           <div style="overflow-x:auto;">
             <table class="results-table">
@@ -409,12 +458,16 @@
                   <th>Brand</th>
                   <th>Handle</th>
                   <th>Platform</th>
+                  <th>Type</th>
                   <th>Likes</th>
                   <th>Comments</th>
                   <th>Shares</th>
+                  <th>Saves</th>
                   <th>Views</th>
-                  <th>Engagement %</th>
-                  <th>Est. Spend</th>
+                  <th>Followers</th>
+                  <th>Eng. Rate</th>
+                  <th>vs Benchmark</th>
+                  <th>Est. Value</th>
                   <th>Sentiment</th>
                 </tr>
               </thead>
@@ -423,7 +476,7 @@
           </div>
         </div>
 
-        <!-- Top Posts by Channel -->
+        <!-- Top Posts -->
         <div class="section-divider">
           <span class="section-divider-label">Top Posts by Platform</span>
         </div>
@@ -431,16 +484,17 @@
           <div id="topPostsGrid"></div>
         </div>
 
-        <!-- Calculation Tree / Assumptions -->
+        <!-- Calculation Tree -->
         <div class="table-card" id="calcTreeCard" style="margin-top:20px;display:none;">
           <div class="table-card-header">
-            <div class="table-card-title">Calculation Tree &amp; Assumptions</div>
+            <div class="table-card-title">Calculation Methodology &amp; Assumptions</div>
             <div style="display:flex;align-items:center;gap:12px;">
               <label style="font-size:0.75rem;color:var(--text3);font-family:var(--mono);display:flex;align-items:center;gap:6px;">
-                CPM Rate
+                CPM Override
                 <span style="color:var(--text3);">$</span>
-                <input type="number" id="cpmOverride" step="0.5" min="0.01"
-                  style="width:72px;background:var(--bg3);border:1px solid var(--border);border-radius:4px;padding:3px 8px;color:var(--text);font-size:0.82rem;font-family:var(--mono);">
+                <input type="number" id="cpmOverride" step="0.5" min="0"
+                  placeholder="0 = defaults"
+                  style="width:88px;background:var(--bg3);border:1px solid var(--border);border-radius:4px;padding:3px 8px;color:var(--text);font-size:0.82rem;font-family:var(--mono);">
                 <button class="btn-secondary" id="recalcBtn" style="padding:4px 10px;font-size:0.72rem;">↺ Recalc</button>
               </label>
             </div>
@@ -450,6 +504,10 @@
 
         <!-- Export -->
         <div class="export-row">
+          <label style="display:flex;align-items:center;gap:8px;cursor:pointer;">
+            <input type="file" id="reportUpload" accept=".json" style="display:none">
+            <button class="btn-secondary" onclick="document.getElementById('reportUpload').click()">↑ Load report.json</button>
+          </label>
           <button class="btn-secondary" id="exportJson">↓ Export JSON</button>
           <button class="btn-secondary" id="exportCsv">↓ Export CSV</button>
         </div>
@@ -458,7 +516,7 @@
     </div>
   </div>
 
-</div><!-- /app-shell -->
+</div>
 
 <!-- Node Popover -->
 <div class="node-popover" id="nodePopover">

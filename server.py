@@ -3,6 +3,7 @@ Hermes — HTTP server (stdlib only, no FastAPI/uvicorn).
 Serves the dashboard at /dashboard/ and provides a JSON API.
 Runs the HTTP server in a daemon thread; main thread stays free for signals.
 """
+import cgi
 import json
 import os
 import threading
@@ -197,6 +198,77 @@ def _run_worker(params: dict):
 DASHBOARD_DIR = Path(__file__).parent / "dashboard"
 
 
+def _extract_file_text(path: Path, ext: str, raw_bytes: bytes) -> str:
+    """Best-effort text extraction from uploaded files. Gracefully degrades."""
+    try:
+        if ext in (".txt", ".csv", ".md", ".json"):
+            return raw_bytes.decode("utf-8", errors="replace")
+
+        if ext in (".xlsx", ".xls"):
+            try:
+                import openpyxl
+                import io
+                wb = openpyxl.load_workbook(io.BytesIO(raw_bytes), data_only=True)
+                lines = []
+                for sheet in wb.worksheets:
+                    lines.append(f"=== Sheet: {sheet.title} ===")
+                    for row in sheet.iter_rows(values_only=True):
+                        row_vals = [str(c) if c is not None else "" for c in row]
+                        if any(v.strip() for v in row_vals):
+                            lines.append("\t".join(row_vals))
+                return "\n".join(lines)
+            except ImportError:
+                pass
+            # Fallback: try xlrd for .xls
+            try:
+                import xlrd, io
+                wb = xlrd.open_workbook(file_contents=raw_bytes)
+                lines = []
+                for sheet in wb.sheets():
+                    lines.append(f"=== Sheet: {sheet.name} ===")
+                    for rx in range(sheet.nrows):
+                        lines.append("\t".join(str(sheet.cell_value(rx, cx)) for cx in range(sheet.ncols)))
+                return "\n".join(lines)
+            except ImportError:
+                return f"[Excel file: {path.name} — install openpyxl to extract content]"
+
+        if ext == ".pdf":
+            try:
+                import pdfplumber, io
+                text_parts = []
+                with pdfplumber.open(io.BytesIO(raw_bytes)) as pdf:
+                    for page in pdf.pages:
+                        t = page.extract_text()
+                        if t:
+                            text_parts.append(t)
+                return "\n".join(text_parts)
+            except ImportError:
+                pass
+            try:
+                import PyPDF2, io
+                reader = PyPDF2.PdfReader(io.BytesIO(raw_bytes))
+                return "\n".join(p.extract_text() or "" for p in reader.pages)
+            except ImportError:
+                return f"[PDF file: {path.name} — install pdfplumber to extract content]"
+
+        if ext in (".docx",):
+            try:
+                import docx, io
+                doc = docx.Document(io.BytesIO(raw_bytes))
+                return "\n".join(p.text for p in doc.paragraphs if p.text.strip())
+            except ImportError:
+                return f"[DOCX file: {path.name} — install python-docx to extract content]"
+
+        if ext in (".png", ".jpg", ".jpeg", ".webp", ".gif"):
+            # Store image — agents can reference it by filename
+            return f"[Image file: {path.name} — {len(raw_bytes):,} bytes — visual reference only]"
+
+    except Exception as e:
+        return f"[Extraction failed for {path.name}: {e}]"
+
+    return ""
+
+
 class _ThreadingServer(ThreadingMixIn, HTTPServer):
     daemon_threads = True
 
@@ -255,6 +327,15 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 self._json(200, {})
 
+        elif p == "/uploaded-files":
+            up_dir = Path("data/uploads")
+            files = []
+            if up_dir.exists():
+                for f in sorted(up_dir.iterdir()):
+                    if f.is_file() and not f.name.startswith('.'):
+                        files.append({"name": f.name, "size": f.stat().st_size})
+            self._json(200, {"files": files})
+
         elif p.startswith("/dashboard/") or p == "/dashboard":
             rel = p.removeprefix("/dashboard/") or "index.html"
             file_path = DASHBOARD_DIR / rel
@@ -280,7 +361,10 @@ class Handler(BaseHTTPRequestHandler):
         except Exception:
             self._json(400, {"error": "bad json"}); return
 
-        if p == "/run-analysis":
+        if p == "/upload-file":
+            self._handle_file_upload(); return
+
+        elif p == "/run-analysis":
             with _state_lock:
                 if _run_state["running"]:
                     self._json(200, {"status": "already_running"}); return
@@ -334,6 +418,51 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(200, {"status": "not_running"})
         else:
             self.send_error(404)
+
+    def _handle_file_upload(self):
+        """Handle multipart file uploads. Saves to data/uploads/ and extracts text."""
+        content_type = self.headers.get("Content-Type", "")
+        if "multipart/form-data" not in content_type:
+            self._json(400, {"error": "Expected multipart/form-data"}); return
+
+        up_dir = Path("data/uploads")
+        up_dir.mkdir(parents=True, exist_ok=True)
+        parsed_dir = Path("data/parsed")
+        parsed_dir.mkdir(parents=True, exist_ok=True)
+
+        try:
+            form = cgi.FieldStorage(
+                fp=self.rfile,
+                headers=self.headers,
+                environ={"REQUEST_METHOD": "POST", "CONTENT_TYPE": content_type},
+            )
+            uploaded = []
+            for field_name in form.keys():
+                item = form[field_name]
+                if not hasattr(item, "filename") or not item.filename:
+                    continue
+                filename = Path(item.filename).name  # strip path
+                save_path = up_dir / filename
+                raw_bytes  = item.file.read()
+                save_path.write_bytes(raw_bytes)
+
+                # Try to extract text for agent context
+                ext = save_path.suffix.lower()
+                text_content = _extract_file_text(save_path, ext, raw_bytes)
+                if text_content:
+                    parsed_path = parsed_dir / (filename + ".txt")
+                    parsed_path.write_text(text_content, encoding="utf-8")
+
+                uploaded.append({
+                    "name":     filename,
+                    "size":     len(raw_bytes),
+                    "parsed":   bool(text_content),
+                    "ext":      ext,
+                })
+
+            self._json(200, {"status": "ok", "files": uploaded})
+        except Exception as e:
+            self._json(500, {"error": str(e)})
 
     def do_OPTIONS(self):
         self.send_response(200)

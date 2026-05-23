@@ -3,52 +3,73 @@ from crewai import Task
 
 class SocialTasks:
     def extraction_task(self, agent, query, params: dict = None) -> Task:
-        params = params or {}
+        params     = params or {}
         date_from  = params.get("date_from") or ""
         date_to    = params.get("date_to")   or ""
         date_range = params.get("date_range", "Last 30 days")
-        platforms  = params.get("platforms",  [])
+        platforms  = params.get("platforms",  ["TikTok", "Instagram", "YouTube", "Facebook"])
+        post_type  = params.get("post_type",  "both")
+        advertisers= params.get("advertisers", [])
+        competitors = params.get("competitors", [])
+        uploaded   = params.get("uploaded_context", [])
 
-        # Build a precise date scope instruction for the agent
         if date_from and date_to:
             date_scope = (
-                f"IMPORTANT: Restrict ALL data you collect to the period {date_from} → {date_to}. "
-                "Ignore any posts, campaigns, or metrics outside this window."
+                f"RESTRICT ALL DATA to {date_from} → {date_to}. "
+                "Ignore posts, campaigns, or metrics outside this window."
             )
         else:
             date_scope = (
-                f"IMPORTANT: Restrict ALL data you collect to the period: {date_range}. "
-                "Ignore any posts, campaigns, or metrics outside this window."
+                f"RESTRICT ALL DATA to: {date_range}. "
+                "Ignore posts, campaigns, or metrics outside this window."
             )
 
-        platform_scope = ""
-        if platforms:
-            platform_scope = (
-                f"\nFOCUS PLATFORMS: {', '.join(platforms)}. "
-                "Prioritise results from these platforms. "
-                "Only include other platforms if no data is found on the target platforms."
-            )
+        plat_str = ", ".join(platforms) if platforms else "TikTok, Instagram, YouTube, Facebook"
+        post_scope = {
+            "paid":    "Focus ONLY on PAID content: ads, sponsored posts, boosted content, ad library entries.",
+            "organic": "Focus ONLY on ORGANIC content: non-sponsored posts, UGC, viral content, creator posts.",
+            "both":    "Collect BOTH paid (ads, sponsored, boosted) AND organic (UGC, viral, creator) content. Tag each data point as paid or organic.",
+        }.get(post_type, "Collect both paid and organic content.")
+
+        # Uploaded file context
+        upload_context = ""
+        if uploaded:
+            upload_context = "\n\nUPLOADED REFERENCE FILES (use this data to inform your search):\n"
+            for uf in uploaded[:5]:  # cap at 5 files
+                upload_context += f"\n--- {uf['filename']} ---\n{uf['content'][:2000]}\n"
+
+        all_brands = list(advertisers) + [c for c in competitors if c not in advertisers]
+        brands_str = ", ".join(all_brands) if all_brands else query
 
         return Task(
             description=(
                 f"Use the Social Media Intelligence Search tool to research: {query}\n\n"
-                f"{date_scope}{platform_scope}\n\n"
-                "The tool will return structured JSON with raw snippets per brand and platform. "
-                "Your job is to read ALL the raw_snippets carefully and extract:\n"
-                "1. ENGAGEMENT METRICS — likes, comments, shares, views (as integers where found)\n"
-                "2. POST CONTENT — actual post captions, campaign names, slogans, viral content themes\n"
-                "3. HASHTAGS — any #hashtags mentioned in the snippets\n"
-                "4. CONTENT THEMES — recurring topics, product names, collaborations, events\n"
-                "5. FOLLOWER/FAN counts if mentioned\n"
-                "6. PLATFORM — which platform each data point came from\n\n"
-                "For each brand, look for evidence of their most engaging content: "
-                "what they post about, which campaigns got traction, what their audience responds to. "
-                "If a snippet mentions a specific post, campaign, or product launch — extract it. "
-                "Return everything you find, organised by brand and platform."
+                f"TARGET BRANDS: {brands_str}\n"
+                f"PLATFORMS: {plat_str} (ONLY these four platforms)\n"
+                f"DATE SCOPE: {date_scope}\n"
+                f"CONTENT TYPE: {post_scope}\n"
+                f"{upload_context}\n\n"
+                "For EACH brand on EACH platform, extract:\n"
+                "1. PAID METRICS (if applicable):\n"
+                "   - Ad campaign names, creatives, slogans\n"
+                "   - Estimated impressions/reach from ad library\n"
+                "   - CPM/CPC signals if visible\n"
+                "   - Sponsored post URLs and engagement\n"
+                "2. ORGANIC METRICS:\n"
+                "   - Likes, comments, shares, saves, views (as integers — parse '2.3M' as 2300000)\n"
+                "   - Follower/subscriber count\n"
+                "   - Top organic post captions and hashtags\n"
+                "   - Viral content themes\n"
+                "3. For BOTH: note which entries are paid vs organic\n\n"
+                "IMPORTANT: Parse ALL numbers from snippets. '2.3M views' = 2300000. "
+                "'45K likes' = 45000. '8% ER' = engagement rate 8.0. "
+                "Never return zeros when the snippets contain quantitative signals. "
+                "If a snippet gives a range (e.g. '10K–50K'), use the midpoint (30000)."
             ),
             expected_output=(
-                "A detailed report per brand covering: platform, engagement numbers, "
-                "post content samples, hashtags, and content themes — all extracted from the raw snippets."
+                "A detailed per-brand, per-platform report with: paid campaign data, "
+                "organic engagement numbers (parsed as integers), follower counts, "
+                "top post content, hashtags, and content themes. Each metric labelled paid/organic."
             ),
             agent=agent,
         )
@@ -56,29 +77,37 @@ class SocialTasks:
     def analysis_task(self, agent) -> Task:
         return Task(
             description=(
-                "Analyse the extracted social media data and structure it per competitor brand. "
-                "For each brand produce:\n"
-                "- name: brand name\n"
-                "- handle: social media handle (e.g. @brand) if found, else blank\n"
-                "- platform: primary platform where data was found\n"
-                "- metrics: {likes, comments, shares, views} as integers (use 0 if not found)\n"
-                "- sentiment: overall audience sentiment — 'Positive', 'Neutral', or 'Negative' "
-                "  (infer from engagement tone, comments, caption language)\n"
-                "- top_posts: list of up to 3 post objects. Each object has:\n"
-                "    { \"caption\": \"short description of the post\", \"url\": \"direct link to the post if found, else null\" }\n"
-                "  Example: { \"caption\": \"Summer campaign featuring athlete collab — 2.1M views\", \"url\": \"https://www.tiktok.com/@brand/video/123\" }\n"
-                "  If a URL was visible in the search results, include it. Otherwise set url to null.\n"
-                "- hashtags: list of up to 6 hashtags associated with this brand\n"
-                "- content_themes: list of up to 4 recurring content themes "
-                "  (e.g. ['Athlete endorsement', 'User-generated content', 'Product launch'])\n\n"
-                "Assess sentiment from the tone of comments and engagement pattern: "
-                "high engagement + positive language = Positive; "
-                "low engagement or mixed = Neutral; "
-                "complaints, controversy = Negative."
+                "Analyse the extracted social media data and structure it PER COMPETITOR BRAND. "
+                "For each brand produce ONE record per platform (or one combined record if data spans platforms):\n\n"
+                "- name: brand name (never 'Unknown')\n"
+                "- handle: @handle if found, else blank\n"
+                "- platform: TikTok | Instagram | YouTube | Facebook\n"
+                "- post_type: 'paid' | 'organic' | 'both'\n"
+                "- metrics: {\n"
+                "    likes: integer,\n"
+                "    comments: integer,\n"
+                "    shares: integer,\n"
+                "    saves: integer,\n"
+                "    views: integer,\n"
+                "    followers: integer  (subscriber count for YouTube, page followers for Facebook)\n"
+                "  }\n"
+                "  NOTE: Parse shorthand — '2.3M' = 2300000, '45K' = 45000, '8% of 500K followers' → likes≈40000\n"
+                "  Use your best estimate based on available data. DO NOT use 0 when signals exist.\n"
+                "- sentiment: 'Positive' | 'Neutral' | 'Negative' — infer from engagement tone\n"
+                "- top_posts: list of up to 5 objects:\n"
+                "    {caption: str, url: str|null, post_type: 'paid'|'organic', likes: int, views: int}\n"
+                "- hashtags: list of up to 6 hashtags\n"
+                "- content_themes: list of up to 4 themes\n"
+                "- paid_campaigns: list of notable paid campaign names (empty list if none found)\n\n"
+                "Engagement inference rules:\n"
+                "- If ER% and followers are known: interactions = ER% × followers / 100\n"
+                "- If views are known and platform is TikTok/YouTube: estimate likes ≈ views × 0.05, comments ≈ views × 0.005\n"
+                "- If only 'high engagement' mentioned: use platform median (TikTok: 5% ER, IG: 1.5%, FB: 0.8%, YT: 2%)\n"
             ),
             expected_output=(
-                "A structured list of competitors, each with: name, handle, platform, metrics, "
-                "sentiment, top_posts (list of strings), hashtags (list), content_themes (list)."
+                "A structured list of competitor records, each with: name, handle, platform, post_type, "
+                "metrics{likes,comments,shares,saves,views,followers}, sentiment, "
+                "top_posts[{caption,url,post_type,likes,views}], hashtags[], content_themes[], paid_campaigns[]."
             ),
             agent=agent,
         )
@@ -87,34 +116,43 @@ class SocialTasks:
         return Task(
             description=(
                 "Format the analysed competitor data into a single valid JSON object. "
-                "The output must be ONLY the JSON object — no markdown, no code fences, no extra text. "
+                "Output ONLY the JSON — no markdown, no code fences, no extra text.\n\n"
                 "Use this exact schema:\n"
                 "{\n"
                 '  "competitors": [\n'
                 "    {\n"
                 '      "name": "string",\n'
                 '      "handle": "string",\n'
-                '      "platform": "string",\n'
-                '      "metrics": {"likes": 0, "comments": 0, "shares": 0, "views": 0},\n'
+                '      "platform": "TikTok|Instagram|YouTube|Facebook",\n'
+                '      "post_type": "paid|organic|both",\n'
+                '      "metrics": {\n'
+                '        "likes": 0, "comments": 0, "shares": 0,\n'
+                '        "saves": 0, "views": 0, "followers": 0\n'
+                "      },\n"
                 '      "sentiment": "Positive|Neutral|Negative",\n'
-                '      "top_posts": [{"caption": "string", "url": "string or null"}],\n'
-                '      "hashtags": ["#string", "#string"],\n'
-                '      "content_themes": ["string", "string"]\n'
+                '      "top_posts": [\n'
+                '        {"caption": "str", "url": "str or null", "post_type": "paid|organic", "likes": 0, "views": 0}\n'
+                "      ],\n"
+                '      "hashtags": ["#string"],\n'
+                '      "content_themes": ["string"],\n'
+                '      "paid_campaigns": ["string"]\n'
                 "    }\n"
                 "  ]\n"
                 "}\n\n"
-                "Rules:\n"
-                "- Every competitor must have ALL fields\n"
-                "- top_posts: 1–3 items max. Each item is a JSON object: {\"caption\": \"...\", \"url\": \"https://... or null\"}\n"
-                "- hashtags: 1–6 items max, each starting with #\n"
-                "- content_themes: 1–4 items max, plain text labels\n"
-                "- Use 0 for any unknown numeric value\n"
-                "- Use empty list [] if no data found for top_posts / hashtags / content_themes"
+                "RULES:\n"
+                "- Every competitor MUST have ALL fields\n"
+                "- metrics: use best available estimate — never all-zeros if data was found\n"
+                "- post_type per competitor must be 'paid', 'organic', or 'both'\n"
+                "- top_posts: 1–5 items; each a JSON object with caption, url (or null), post_type, likes, views\n"
+                "- hashtags: 1–6 items starting with #\n"
+                "- content_themes: 1–4 plain text labels\n"
+                "- paid_campaigns: list campaign names found; [] if none"
             ),
             expected_output=(
                 "A raw JSON object (no markdown) with competitors array. "
-                "Each entry has: name, handle, platform, metrics{likes,comments,shares,views}, "
-                "sentiment, top_posts[{caption,url}], hashtags[], content_themes[]."
+                "Each entry: name, handle, platform, post_type, metrics{6 fields}, "
+                "sentiment, top_posts[{caption,url,post_type,likes,views}], "
+                "hashtags[], content_themes[], paid_campaigns[]."
             ),
             agent=agent,
         )

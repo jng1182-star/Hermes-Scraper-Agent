@@ -1,5 +1,5 @@
 /* ─────────────────────────────────────────────────────────────────────────
-   SocialListen — app.js
+   Hermes — app.js  v2
    Page router · Form state · Canvas neural graph · /status polling · Charts
    ───────────────────────────────────────────────────────────────────────── */
 
@@ -7,24 +7,27 @@
 
 // ── State ────────────────────────────────────────────────────────────────────
 const State = {
-  competitors: [],            // tag chips
+  advertisers: [],          // tag chips — your brand(s)
+  competitors: [],          // tag chips — competitors
   dateRange: 'Last 30 days',
   customDateFrom: '',
   customDateTo: '',
   depth: 'deep',
+  postType: 'both',         // paid | organic | both
   pollInterval: null,
-  elapsedInterval: null,      // client-side 1s tick
-  elapsedStart: null,         // Date.now() when run started
+  elapsedInterval: null,
+  elapsedStart: null,
   reportData: null,
-  activePlatforms: new Set(), // currently selected platform filter pills
+  activePlatforms: new Set(),
+  activePostTypeFilter: 'all', // all | paid | organic  (results page)
   agentStates: { scraper: 'idle', analyst: 'idle', reporter: 'idle', gate: 'idle' },
   lastLogs: [],
+  uploadedFiles: [],
 };
 
-// ── Chart instances ──────────────────────────────────────────────────────────
 const Charts = { spend: null, engage: null, platform: null, sentiment: null };
 
-// ── Colour palette (Silicon Boardroom dark) ──────────────────────────────────
+// ── Colour palette ───────────────────────────────────────────────────────────
 const C = {
   accent:    '#1f6feb',
   accentLt:  'rgba(31,111,235,0.15)',
@@ -64,11 +67,9 @@ function showPage(name) {
     if (!_networkInit) {
       setTimeout(() => { initNetworkCanvas(); drawNetworkLoop(); _networkInit = true; }, 80);
     } else {
-      // Already initialised — just resize in case window changed
       setTimeout(resizeCanvas, 80);
     }
   } else {
-    // Pause animation when not on network page to save CPU
     if (_rafId && name !== 'network') {
       cancelAnimationFrame(_rafId);
       _rafId = null;
@@ -85,47 +86,51 @@ document.querySelectorAll('.nav-tab').forEach(btn => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// COMPETITOR TAG INPUT
+// TAG INPUTS — Advertisers + Competitors
 // ═══════════════════════════════════════════════════════════════════════════════
 
-const tagInput = document.getElementById('tagInput');
-const tagWrap  = document.getElementById('tagWrap');
+function _makeTagInput(wrapId, inputId, stateArray) {
+  const wrap  = document.getElementById(wrapId);
+  const input = document.getElementById(inputId);
+  if (!wrap || !input) return;
 
-function addTag(val) {
-  val = val.trim();
-  if (!val || State.competitors.includes(val)) return;
-  State.competitors.push(val);
-  renderTags();
-}
-
-function removeTag(val) {
-  State.competitors = State.competitors.filter(c => c !== val);
-  renderTags();
-}
-
-function renderTags() {
-  const chips = tagWrap.querySelectorAll('.tag-chip');
-  chips.forEach(c => c.remove());
-  State.competitors.forEach(val => {
-    const chip = document.createElement('span');
-    chip.className = 'tag-chip';
-    chip.innerHTML = val + '<button type="button" aria-label="remove">×</button>';
-    chip.querySelector('button').addEventListener('click', () => removeTag(val));
-    tagWrap.insertBefore(chip, tagInput);
+  function addTag(val) {
+    val = val.trim();
+    if (!val || stateArray.includes(val)) return;
+    stateArray.push(val);
+    renderTags();
+  }
+  function removeTag(val) {
+    const idx = stateArray.indexOf(val);
+    if (idx !== -1) stateArray.splice(idx, 1);
+    renderTags();
+  }
+  function renderTags() {
+    wrap.querySelectorAll('.tag-chip').forEach(c => c.remove());
+    stateArray.forEach(val => {
+      const chip = document.createElement('span');
+      chip.className = 'tag-chip';
+      chip.innerHTML = val + '<button type="button" aria-label="remove">×</button>';
+      chip.querySelector('button').addEventListener('click', () => removeTag(val));
+      wrap.insertBefore(chip, input);
+    });
+  }
+  input.addEventListener('keydown', e => {
+    if ((e.key === 'Enter' || e.key === ',') && input.value.trim()) {
+      e.preventDefault();
+      addTag(input.value);
+      input.value = '';
+    }
+    if (e.key === 'Backspace' && !input.value && stateArray.length) {
+      removeTag(stateArray[stateArray.length - 1]);
+    }
   });
+  wrap.addEventListener('click', () => input.focus());
+  return { addTag, removeTag, renderTags };
 }
 
-tagInput.addEventListener('keydown', e => {
-  if ((e.key === 'Enter' || e.key === ',') && tagInput.value.trim()) {
-    e.preventDefault();
-    addTag(tagInput.value);
-    tagInput.value = '';
-  }
-  if (e.key === 'Backspace' && !tagInput.value && State.competitors.length) {
-    removeTag(State.competitors[State.competitors.length - 1]);
-  }
-});
-tagWrap.addEventListener('click', () => tagInput.focus());
+const _advCtrl  = _makeTagInput('advertiserWrap', 'advertiserInput', State.advertisers);
+const _compCtrl = _makeTagInput('tagWrap',         'tagInput',        State.competitors);
 
 // ── Platform checkboxes ──────────────────────────────────────────────────────
 document.querySelectorAll('.platform-option').forEach(label => {
@@ -135,6 +140,15 @@ document.querySelectorAll('.platform-option').forEach(label => {
     label.classList.toggle('checked', cb.checked);
   });
   label.querySelector('input').addEventListener('click', e => e.stopPropagation());
+});
+
+// ── Post type radios ─────────────────────────────────────────────────────────
+document.querySelectorAll('#postTypeOptions .depth-option').forEach(label => {
+  label.addEventListener('click', () => {
+    document.querySelectorAll('#postTypeOptions .depth-option').forEach(l => l.classList.remove('active'));
+    label.classList.add('active');
+    State.postType = label.querySelector('input').value;
+  });
 });
 
 // ── Date range presets ───────────────────────────────────────────────────────
@@ -148,9 +162,6 @@ document.querySelectorAll('.date-preset').forEach(btn => {
       document.getElementById('dateCustom').classList.add('show');
     } else {
       document.getElementById('dateCustom').classList.remove('show');
-      const now = new Date();
-      const from = new Date(now);
-      from.setDate(now.getDate() - days);
       State.dateRange = `Last ${days} days`;
     }
   });
@@ -162,13 +173,73 @@ document.getElementById('dateTo').addEventListener('change', e => { State.custom
 // ── Depth radio ──────────────────────────────────────────────────────────────
 document.querySelectorAll('.depth-option').forEach(label => {
   label.addEventListener('click', () => {
-    document.querySelectorAll('.depth-option').forEach(l => l.classList.remove('active'));
+    const inp = label.querySelector('input[name=depth]');
+    if (!inp) return;
+    document.querySelectorAll('.depth-option').forEach(l => {
+      if (l.querySelector('input[name=depth]')) l.classList.remove('active');
+    });
     label.classList.add('active');
-    State.depth = label.querySelector('input').value;
+    State.depth = inp.value;
   });
 });
 
-// ── File upload ──────────────────────────────────────────────────────────────
+// ── File upload zone ─────────────────────────────────────────────────────────
+const fileInput = document.getElementById('fileInput');
+const fileList  = document.getElementById('fileList');
+const dropZone  = document.getElementById('fileUploadZone');
+
+function _uploadFiles(files) {
+  if (!files || !files.length) return;
+  const fd = new FormData();
+  Array.from(files).forEach(f => fd.append('files', f));
+  fetch('/upload-file', { method: 'POST', body: fd })
+    .then(r => r.json())
+    .then(d => {
+      if (d.files) {
+        d.files.forEach(f => {
+          if (!State.uploadedFiles.find(u => u.name === f.name))
+            State.uploadedFiles.push(f);
+        });
+        renderFileList();
+      }
+    })
+    .catch(() => {});
+}
+
+function renderFileList() {
+  if (!fileList) return;
+  fileList.innerHTML = '';
+  State.uploadedFiles.forEach(f => {
+    const row = document.createElement('div');
+    row.className = 'file-item';
+    const icon = { '.xlsx':'📊','.xls':'📊','.csv':'📋','.pdf':'📄','.docx':'📝','.json':'🗂','.png':'🖼','.jpg':'🖼','.jpeg':'🖼','.webp':'🖼' };
+    const ext = '.' + (f.name.split('.').pop() || '').toLowerCase();
+    const emoji = icon[ext] || '📎';
+    const kb = f.size ? ` · ${(f.size / 1024).toFixed(1)} KB` : '';
+    const parsed = f.parsed ? '<span class="file-parsed">✓ parsed</span>' : '';
+    row.innerHTML = `<span class="file-icon">${emoji}</span><span class="file-name">${esc(f.name)}${kb}</span>${parsed}`;
+    fileList.appendChild(row);
+  });
+}
+
+fileInput.addEventListener('change', e => { _uploadFiles(e.target.files); e.target.value = ''; });
+dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('drag-over'); });
+dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
+dropZone.addEventListener('drop', e => {
+  e.preventDefault();
+  dropZone.classList.remove('drag-over');
+  _uploadFiles(e.dataTransfer.files);
+});
+
+// ── Load existing uploads on init ────────────────────────────────────────────
+(async function loadUploads() {
+  try {
+    const d = await fetch('/uploaded-files').then(r => r.json());
+    if (d.files) { State.uploadedFiles = d.files; renderFileList(); }
+  } catch(e) {}
+})();
+
+// ── report.json upload (results page) ────────────────────────────────────────
 document.getElementById('reportUpload').addEventListener('change', function(e) {
   const file = e.target.files[0];
   if (!file) return;
@@ -190,49 +261,58 @@ document.getElementById('reportUpload').addEventListener('change', function(e) {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 function getFormParams() {
+  // Auto-commit unsubmitted text
+  const advInput = document.getElementById('advertiserInput');
+  if (advInput && advInput.value.trim()) {
+    advInput.value.split(',').forEach(v => { const t=v.trim(); if(t) State.advertisers.push(t); });
+    advInput.value = '';
+  }
+  const tagInputEl = document.getElementById('tagInput');
+  if (tagInputEl && tagInputEl.value.trim()) {
+    tagInputEl.value.split(',').forEach(v => { const t=v.trim(); if(t) State.competitors.push(t); });
+    tagInputEl.value = '';
+  }
+
   const platforms = [];
   document.querySelectorAll('.platform-option input:checked').forEach(cb => platforms.push(cb.value));
 
   let dateRange = State.dateRange;
+  let dateFrom = null, dateTo = null;
   if (dateRange === 'custom') {
-    const f = document.getElementById('dateFrom').value;
-    const t = document.getElementById('dateTo').value;
-    if (f && t) dateRange = `${f} to ${t}`;
+    dateFrom = document.getElementById('dateFrom').value;
+    dateTo   = document.getElementById('dateTo').value;
+    if (dateFrom && dateTo) dateRange = `${dateFrom} to ${dateTo}`;
+  } else {
+    dateFrom = document.getElementById('dateFrom').value || null;
+    dateTo   = document.getElementById('dateTo').value   || null;
   }
 
+  const cpmVal = parseFloat(document.getElementById('cpmRate').value) || 0;
+
   return {
-    advertiser:  document.getElementById('advertiser').value.trim(),
-    competitors: [...State.competitors],
-    country:     document.getElementById('country').value,
+    advertisers:  [...State.advertisers],
+    advertiser:   State.advertisers[0] || '',          // backward compat
+    competitors:  [...State.competitors],
+    country:      document.getElementById('country').value,
     platforms,
-    date_range:  dateRange,
-    date_from:   document.getElementById('dateFrom').value || null,
-    date_to:     document.getElementById('dateTo').value || null,
-    cpm_rate:    parseFloat(document.getElementById('cpmRate').value) || 15.0,
-    keywords:    document.getElementById('keywords').value.trim(),
-    depth:       State.depth,
+    post_type:    State.postType,
+    date_range:   dateRange,
+    date_from:    dateFrom,
+    date_to:      dateTo,
+    cpm_rate:     cpmVal,
+    keywords:     document.getElementById('keywords').value.trim(),
+    depth:        State.depth,
   };
 }
 
 document.getElementById('runBtn').addEventListener('click', async () => {
-  // Auto-commit any unsubmitted competitor text (user typed but didn't press Enter)
-  const tagInputEl = document.getElementById('tagInput');
-  if (tagInputEl && tagInputEl.value.trim()) {
-    tagInputEl.value.split(',').forEach(v => {
-      const t = v.trim();
-      if (t) addTag(t);
-    });
-    tagInputEl.value = '';
-  }
+  const params = getFormParams();
 
-  // Validate — need at least an advertiser OR at least one competitor
-  const advertiser = document.getElementById('advertiser').value.trim();
-  if (!advertiser && State.competitors.length === 0) {
-    const adv = document.getElementById('advertiser');
-    adv.focus();
-    adv.style.borderColor = 'var(--red)';
-    setTimeout(() => adv.style.borderColor = '', 2000);
-    setLogStatus('error', 'Enter at least a brand name to analyse.');
+  if (!params.advertisers.length && !params.competitors.length) {
+    const inp = document.getElementById('advertiserInput');
+    inp.focus(); inp.style.borderColor = 'var(--red)';
+    setTimeout(() => inp.style.borderColor = '', 2000);
+    setLogStatus('error', 'Enter at least one brand to analyse.');
     showLogPanel(true);
     return;
   }
@@ -247,28 +327,23 @@ document.getElementById('runBtn').addEventListener('click', async () => {
   setLogStatus('running', 'Analysis running…');
   document.getElementById('logOutput').textContent = '';
 
-  // Reset agent states
   State.agentStates = { scraper: 'idle', analyst: 'idle', reporter: 'idle', gate: 'idle' };
   resetAgentCards();
   updateDots('running');
 
-  // Show elapsed timer from 0 — tick every second client-side
   const elapsedBadge = document.getElementById('elapsedBadge');
-  if (elapsedBadge) { elapsedBadge.style.display = 'flex'; }
+  if (elapsedBadge) elapsedBadge.style.display = 'flex';
   document.getElementById('elapsedTime').textContent = '0:00';
   State.elapsedStart = Date.now();
   if (State.elapsedInterval) clearInterval(State.elapsedInterval);
   State.elapsedInterval = setInterval(() => {
     const secs = Math.floor((Date.now() - State.elapsedStart) / 1000);
-    const m = Math.floor(secs / 60);
-    const s = secs % 60;
+    const m = Math.floor(secs / 60), s = secs % 60;
     const el = document.getElementById('elapsedTime');
     if (el) el.textContent = `${m}:${String(s).padStart(2,'0')}`;
   }, 1000);
   const banner = document.getElementById('timeoutBanner');
   if (banner) banner.style.display = 'none';
-
-  const params = getFormParams();
 
   try {
     const res = await fetch('/run-analysis', {
@@ -281,42 +356,32 @@ document.getElementById('runBtn').addEventListener('click', async () => {
       setLogStatus('running', 'Analysis already in progress…');
     }
   } catch(e) {
-    setLogStatus('error', 'Could not reach server. Is uvicorn running?');
-    resetRunBtn();
-    updateDots('idle');
-    return;
+    setLogStatus('error', 'Could not reach server.');
+    resetRunBtn(); updateDots('idle'); return;
   }
 
   State.pollInterval = setInterval(pollStatus, 2000);
-  // Enable stop button
   const stopBtn = document.getElementById('stopBtn');
   if (stopBtn) stopBtn.disabled = false;
-  // Auto-switch to network page so user can watch
   showPage('network');
 });
 
 document.getElementById('stopBtn').addEventListener('click', async () => {
   const stopBtn = document.getElementById('stopBtn');
-  stopBtn.disabled = true;
-  stopBtn.textContent = '■ Stopping…';
-  try {
-    await fetch('/stop-analysis', { method: 'POST' });
-  } catch(e) {}
+  stopBtn.disabled = true; stopBtn.textContent = '■ Stopping…';
+  try { await fetch('/stop-analysis', { method: 'POST' }); } catch(e) {}
 });
 
 async function pollStatus() {
   try {
     const res = await fetch('/status');
-    const s = await res.json();
+    const s   = await res.json();
 
-    // Update logs
     if (s.logs && s.logs.length) {
-      // Configure & Run log panel
       document.getElementById('logOutput').textContent = s.logs.join('\n');
       document.getElementById('logOutput').scrollTop = 999999;
       State.lastLogs = s.logs;
 
-      // Network View live log — colorized
       const netLog = document.getElementById('networkLogOutput');
       if (netLog) {
         netLog.innerHTML = s.logs.map(line => {
@@ -335,22 +400,17 @@ async function pollStatus() {
       }
     }
 
-    // Update agent states from server
     if (s.agent_states) {
       State.agentStates = s.agent_states;
       updateAgentCards(s.agent_states, s.logs || []);
     }
 
-    // Timeout / stall banner
     const banner = document.getElementById('timeoutBanner');
     if (banner) {
       if (s.timed_out && s.running) {
         banner.style.display = 'flex';
-        const maxRetries = 2;
-        document.getElementById('timeoutMsg').textContent =
-          `Agent stalled — restarting from beginning…`;
-        document.getElementById('retryBadge').textContent =
-          `Retry ${s.retry_count}/${maxRetries}`;
+        document.getElementById('timeoutMsg').textContent = 'Agent stalled — restarting from beginning…';
+        document.getElementById('retryBadge').textContent = `Retry ${s.retry_count}/2`;
       } else if (!s.timed_out || !s.running) {
         banner.style.display = 'none';
       }
@@ -359,9 +419,7 @@ async function pollStatus() {
     setLiveBadge(s.running);
 
     if (!s.running) {
-      clearInterval(State.pollInterval);
-      State.pollInterval = null;
-      // Stop ticking but keep badge visible so user sees total elapsed time
+      clearInterval(State.pollInterval); State.pollInterval = null;
       if (State.elapsedInterval) { clearInterval(State.elapsedInterval); State.elapsedInterval = null; }
       resetRunBtn();
 
@@ -373,9 +431,7 @@ async function pollStatus() {
         setLogStatus('done', 'Analysis complete — loading results…');
         updateDots('done');
         if (banner) banner.style.display = 'none';
-        // Mark all agent states done
         Object.keys(State.agentStates).forEach(k => { State.agentStates[k] = 'done'; });
-        // Fetch and render report
         setTimeout(async () => {
           try {
             const rep = await fetch('/report').then(r => r.json());
@@ -384,8 +440,7 @@ async function pollStatus() {
           } catch(e) {}
         }, 1000);
       } else {
-        setLogStatus('done', 'Finished.');
-        updateDots('idle');
+        setLogStatus('done', 'Finished.'); updateDots('idle');
       }
     }
   } catch(e) {}
@@ -394,32 +449,24 @@ async function pollStatus() {
 // ── Agent Card Updates ───────────────────────────────────────────────────────
 
 const CARD_LOG_HINTS = {
-  scraper:  { idle: 'Awaiting activation…',        active: 'Scraping social platforms…',  done: 'Data collection complete' },
-  analyst:  { idle: 'Awaiting data from Scraper…', active: 'Analysing engagement data…',  done: 'Analysis complete' },
-  reporter: { idle: 'Awaiting analysis…',           active: 'Composing intelligence report…', done: 'Report compiled' },
-  gate:     { idle: 'Awaiting pipeline output…',   active: 'Validating · computing spend…', done: 'Report approved ✓' },
+  scraper:  { idle: 'Awaiting activation…', active: 'Collecting paid & organic data…', done: 'Data collection complete' },
+  analyst:  { idle: 'Awaiting data…',       active: 'Analysing engagement & spend…',   done: 'Analysis complete' },
+  reporter: { idle: 'Awaiting analysis…',   active: 'Composing intelligence report…', done: 'Report compiled' },
+  gate:     { idle: 'Awaiting output…',     active: 'Validating · computing CPM & ER…', done: 'Report approved ✓' },
 };
 
 function updateAgentCards(agentStates, logs) {
   Object.entries(agentStates).forEach(([id, status]) => {
     const card  = document.getElementById('acard-' + id);
     const badge = document.getElementById('abadge-' + id);
-    const logEl = document.getElementById('alog-' + id);
+    const logEl = document.getElementById('alog-'   + id);
     if (!card || !badge || !logEl) return;
-
-    // Card class
-    card.className = 'agent-card ' + status;
-
-    // Badge
+    card.className  = 'agent-card ' + status;
     badge.className = 'acard-badge ' + status;
     badge.textContent = status === 'active' ? '● ACTIVE' : status === 'done' ? '✓ DONE' : '○ IDLE';
-
-    // Log line — find the last log entry mentioning this agent label
-    const agentLabel = { scraper: 'scraper', analyst: 'analyst', reporter: 'reporter', gate: 'gate' }[id];
-    const hint = CARD_LOG_HINTS[id]?.[status] || '';
-    const match = [...logs].reverse().find(l => l.toLowerCase().includes(agentLabel));
+    const hint  = CARD_LOG_HINTS[id]?.[status] || '';
+    const match = [...logs].reverse().find(l => l.toLowerCase().includes(id));
     if (match && status === 'active') {
-      // Trim to fit — strip brackets/prefixes
       const clean = match.replace(/^\[.*?\]\s*/, '').substring(0, 52);
       logEl.textContent = clean + (match.length > 52 ? '…' : '');
     } else {
@@ -432,9 +479,9 @@ function resetAgentCards() {
   ['scraper','analyst','reporter','gate'].forEach(id => {
     const card  = document.getElementById('acard-' + id);
     const badge = document.getElementById('abadge-' + id);
-    const logEl = document.getElementById('alog-' + id);
+    const logEl = document.getElementById('alog-'   + id);
     if (!card || !badge || !logEl) return;
-    card.className = 'agent-card';
+    card.className  = 'agent-card';
     badge.className = 'acard-badge idle';
     badge.textContent = '○ IDLE';
     logEl.textContent = CARD_LOG_HINTS[id]?.idle || 'Awaiting…';
@@ -445,55 +492,49 @@ function resetRunBtn() {
   const btn = document.getElementById('runBtn');
   btn.disabled = false;
   const icon = document.getElementById('runBtnIcon');
-  icon.textContent = '▶';
-  icon.classList.remove('spinner-icon');
+  icon.textContent = '▶'; icon.classList.remove('spinner-icon');
   document.getElementById('runBtnText').textContent = 'Run Analysis';
   const stopBtn = document.getElementById('stopBtn');
   if (stopBtn) { stopBtn.disabled = true; stopBtn.textContent = '■ Stop'; }
 }
 
 function resetForm() {
-  // Clear text inputs
-  document.getElementById('advertiser').value = '';
   document.getElementById('keywords').value = '';
-  document.getElementById('cpmRate').value = '15.00';
-
-  // Clear competitor chips
-  State.competitors = [];
-  renderTags();
-  document.getElementById('tagInput').value = '';
-
-  // Reset country to default (Global)
+  document.getElementById('cpmRate').value  = '0';
+  State.advertisers.length = 0; State.competitors.length = 0;
+  if (_advCtrl)  _advCtrl.renderTags();
+  if (_compCtrl) _compCtrl.renderTags();
+  document.getElementById('advertiserInput').value = '';
+  document.getElementById('tagInput').value        = '';
   document.getElementById('country').value = '';
 
-  // Reset platforms to TikTok + Instagram checked
   document.querySelectorAll('.platform-option').forEach(label => {
-    const cb = label.querySelector('input[type=checkbox]');
+    const cb  = label.querySelector('input[type=checkbox]');
     const val = cb.value;
     const checked = (val === 'TikTok' || val === 'Instagram');
-    cb.checked = checked;
-    label.classList.toggle('checked', checked);
+    cb.checked = checked; label.classList.toggle('checked', checked);
   });
 
-  // Reset date preset to "Last 30 days"
   document.querySelectorAll('.date-preset').forEach(btn => {
     btn.classList.toggle('active', btn.dataset.days === '30');
   });
   document.getElementById('dateCustom').classList.remove('show');
   document.getElementById('dateFrom').value = '';
-  document.getElementById('dateTo').value = '';
-  State.dateRange = 'Last 30 days';
-  State.customDateFrom = '';
-  State.customDateTo = '';
+  document.getElementById('dateTo').value   = '';
+  State.dateRange = 'Last 30 days'; State.customDateFrom = ''; State.customDateTo = '';
 
-  // Reset depth to deep
   document.querySelectorAll('.depth-option').forEach(label => {
-    const val = label.querySelector('input').value;
-    label.classList.toggle('active', val === 'deep');
+    const inp = label.querySelector('input[name=depth]');
+    if (inp) label.classList.toggle('active', inp.value === 'deep');
   });
   State.depth = 'deep';
 
-  // Hide log panel
+  document.querySelectorAll('#postTypeOptions .depth-option').forEach(label => {
+    const inp = label.querySelector('input[name=postType]');
+    if (inp) label.classList.toggle('active', inp.value === 'both');
+  });
+  State.postType = 'both';
+
   showLogPanel(false);
 }
 
@@ -502,88 +543,63 @@ document.getElementById('resetBtn').addEventListener('click', resetForm);
 function showLogPanel(show) {
   document.getElementById('logPanel').classList.toggle('show', show);
 }
-
 function setLogStatus(state, text) {
   const spinner = document.getElementById('logSpinner');
   spinner.className = 'log-spinner ' + state;
   document.getElementById('logStatus').textContent = text;
 }
-
 function updateDots(state) {
-  const dotN = document.getElementById('dot-network');
-  const dotC = document.getElementById('dot-configure');
-  dotC.className = 'status-dot ' + (state === 'running' ? 'running' : state === 'error' ? 'error' : '');
-  dotN.className = 'status-dot ' + (state === 'running' ? 'running' : state === 'done' ? 'done' : '');
+  document.getElementById('dot-configure').className =
+    'status-dot ' + (state === 'running' ? 'running' : state === 'error' ? 'error' : '');
+  document.getElementById('dot-network').className =
+    'status-dot ' + (state === 'running' ? 'running' : state === 'done' ? 'done' : '');
 }
-
 function setLiveBadge(running) {
   const badge = document.getElementById('liveBadge');
   const text  = document.getElementById('liveText');
-  if (running) {
-    badge.classList.add('connected');
-    text.textContent = 'Live';
-  } else {
-    badge.classList.remove('connected');
-    text.textContent = 'Idle';
-  }
+  if (running) { badge.classList.add('connected'); text.textContent = 'Live'; }
+  else         { badge.classList.remove('connected'); text.textContent = 'Idle'; }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// NETWORK CANVAS — Silicon Boardroom dark theme (faithful JS port)
+// NETWORK CANVAS — Silicon Boardroom dark theme
 // ═══════════════════════════════════════════════════════════════════════════════
 
-// Silicon Boardroom palette
 const SB = {
-  bg:      '#050a14',
-  bg2:     '#060d1c',
-  bg3:     '#0a1628',
-  bg4:     '#060e1e',
-  fg:      '#c9d1d9',
-  fg2:     '#8b949e',
-  fg3:     '#3d6fa8',
-  grid:    '#1e90ff',
-  accent:  '#1f6feb',
-  success: '#22c55e',
-  idleBorder: '#2e5080',
+  bg:'#050a14', bg2:'#060d1c', bg3:'#0a1628', bg4:'#060e1e',
+  fg:'#c9d1d9', fg2:'#8b949e', fg3:'#3d6fa8',
+  grid:'#1e90ff', accent:'#1f6feb', success:'#22c55e', idleBorder:'#2e5080',
 };
 
-// Blend two hex colors: 0=c1, 1=c2
 function hexBlend(c1, c2, t) {
   const h = s => [parseInt(s.slice(1,3),16), parseInt(s.slice(3,5),16), parseInt(s.slice(5,7),16)];
-  const [r1,g1,b1] = h(c1), [r2,g2,b2] = h(c2);
-  const r = Math.round(r1 + (r2-r1)*t);
-  const g = Math.round(g1 + (g2-g1)*t);
-  const b = Math.round(b1 + (b2-b1)*t);
+  const [r1,g1,b1]=h(c1), [r2,g2,b2]=h(c2);
+  const r=Math.round(r1+(r2-r1)*t), g=Math.round(g1+(g2-g1)*t), b=Math.round(b1+(b2-b1)*t);
   return `#${r.toString(16).padStart(2,'0')}${g.toString(16).padStart(2,'0')}${b.toString(16).padStart(2,'0')}`;
 }
 
 const AGENTS = {
-  scraper:  { label: 'SCRAPER',       role: 'Social Data Scraper',    color: '#1f6feb' },
-  analyst:  { label: 'ANALYST',       role: 'Engagement Analyst',     color: '#38bdf8' },
-  reporter: { label: 'REPORTER',      role: 'Intelligence Reporter',  color: '#a78bfa' },
-  gate:     { label: 'APPROVAL GATE', role: 'Math · Sanitize · Score',color: '#22c55e' },
+  scraper:  { label:'SCRAPER',       role:'Paid + Organic Collector', color:'#1f6feb' },
+  analyst:  { label:'ANALYST',       role:'Engagement Analyst',       color:'#38bdf8' },
+  reporter: { label:'REPORTER',      role:'Intelligence Reporter',    color:'#a78bfa' },
+  gate:     { label:'APPROVAL GATE', role:'CPM · ER · Validation',   color:'#22c55e' },
 };
 
 const NODE_POS = {
-  scraper:  { x: 0.50, y: 0.20 },
-  analyst:  { x: 0.25, y: 0.55 },
-  reporter: { x: 0.75, y: 0.55 },
-  gate:     { x: 0.50, y: 0.82 },
+  scraper:  { x:0.50, y:0.20 },
+  analyst:  { x:0.25, y:0.55 },
+  reporter: { x:0.75, y:0.55 },
+  gate:     { x:0.50, y:0.82 },
 };
 
 const EDGES = [
-  { from: 'scraper',  to: 'analyst'  },
-  { from: 'scraper',  to: 'reporter' },
-  { from: 'analyst',  to: 'gate'     },
-  { from: 'reporter', to: 'gate'     },
+  { from:'scraper',  to:'analyst'  },
+  { from:'scraper',  to:'reporter' },
+  { from:'analyst',  to:'gate'     },
+  { from:'reporter', to:'gate'     },
 ];
 
-let _canvas = null;
-let _ctx    = null;
-let _pulse  = 0;
-let _gridOff = 0;
-let _rafId  = null;
-let _packets = [];
+let _canvas=null, _ctx=null, _pulse=0, _gridOff=0, _rafId=null, _packets=[];
 
 function initNetworkCanvas() {
   _canvas = document.getElementById('networkCanvas');
@@ -593,329 +609,170 @@ function initNetworkCanvas() {
   _canvas.addEventListener('mousemove', onCanvasHover);
   _canvas.addEventListener('mouseleave', hidePopover);
 }
-
 function resizeCanvas() {
   if (!_canvas) return;
   const wrap = _canvas.parentElement;
   _canvas.width  = wrap.clientWidth;
   _canvas.height = wrap.clientHeight;
 }
-
 function nodePixel(id) {
   const p = NODE_POS[id];
   return { x: p.x * _canvas.width, y: p.y * _canvas.height };
 }
-
 function drawNetworkLoop() {
   if (_rafId) cancelAnimationFrame(_rafId);
-  let firstFrame = true;
+  let first = true;
   function frame() {
-    if (!_canvas || !_ctx) return;
-    if (firstFrame) { resizeCanvas(); firstFrame = false; }
-    drawNetwork();
-    _pulse   += 1;
-    _gridOff  = (_gridOff + 0.4) % 24;
-    _rafId    = requestAnimationFrame(frame);
+    if (!_canvas||!_ctx) return;
+    if (first) { resizeCanvas(); first=false; }
+    drawNetwork(); _pulse+=1; _gridOff=(_gridOff+0.4)%24;
+    _rafId = requestAnimationFrame(frame);
   }
   _rafId = requestAnimationFrame(frame);
 }
-
 function drawNetwork() {
-  const W = _canvas.width, H = _canvas.height, ctx = _ctx;
-
-  // Dark background fill
-  ctx.fillStyle = SB.bg;
-  ctx.fillRect(0, 0, W, H);
-
-  // Scrolling grid lines (Silicon Boardroom style)
-  const off = _gridOff % 24;
-  ctx.strokeStyle = hexBlend(SB.bg, SB.grid, 0.07);
-  ctx.lineWidth = 1;
-  ctx.beginPath();
-  for (let x = -24 + off; x < W + 24; x += 24) {
-    ctx.moveTo(x, 0); ctx.lineTo(x, H);
-  }
-  for (let y = -24 + off; y < H + 24; y += 24) {
-    ctx.moveTo(0, y); ctx.lineTo(W, y);
-  }
+  const W=_canvas.width, H=_canvas.height, ctx=_ctx;
+  ctx.fillStyle=SB.bg; ctx.fillRect(0,0,W,H);
+  const off=_gridOff%24;
+  ctx.strokeStyle=hexBlend(SB.bg,SB.grid,0.07); ctx.lineWidth=1; ctx.beginPath();
+  for(let x=-24+off;x<W+24;x+=24){ctx.moveTo(x,0);ctx.lineTo(x,H);}
+  for(let y=-24+off;y<H+24;y+=24){ctx.moveTo(0,y);ctx.lineTo(W,y);}
   ctx.stroke();
-
-  // Edges
-  EDGES.forEach(e => drawEdge(ctx, e));
-
-  // Spawn packets
-  if (_pulse % 15 === 0 && Math.random() < 0.7) {
-    const active = EDGES.filter(e => (State.agentStates[e.from] || 'idle') === 'active');
-    if (active.length) {
-      const e = active[Math.floor(Math.random() * active.length)];
-      _packets.push({
-        from: e.from, to: e.to, t: 0,
-        speed: 0.012 + Math.random() * 0.008,
-        color: AGENTS[e.from].color,
-      });
+  EDGES.forEach(e=>drawEdge(ctx,e));
+  if(_pulse%15===0&&Math.random()<0.7){
+    const active=EDGES.filter(e=>(State.agentStates[e.from]||'idle')==='active');
+    if(active.length){
+      const e=active[Math.floor(Math.random()*active.length)];
+      _packets.push({from:e.from,to:e.to,t:0,speed:0.012+Math.random()*0.008,color:AGENTS[e.from].color});
     }
   }
-
-  // Draw packets
-  _packets = _packets.filter(p => { p.t += p.speed; return p.t < 1.0; });
-  _packets.forEach(p => {
-    const a = nodePixel(p.from), b = nodePixel(p.to);
-    const px = a.x + (b.x - a.x) * p.t;
-    const py = a.y + (b.y - a.y) * p.t;
-    [[8, 0.12], [5, 0.28], [3, 0.65]].forEach(([r, alpha]) => {
-      ctx.save();
-      ctx.globalAlpha = alpha;
-      ctx.fillStyle = hexBlend(SB.bg, p.color, 1.0);
-      ctx.beginPath(); ctx.arc(px, py, r, 0, Math.PI * 2); ctx.fill();
-      ctx.restore();
+  _packets=_packets.filter(p=>{p.t+=p.speed;return p.t<1.0;});
+  _packets.forEach(p=>{
+    const a=nodePixel(p.from), b=nodePixel(p.to);
+    const px=a.x+(b.x-a.x)*p.t, py=a.y+(b.y-a.y)*p.t;
+    [[8,0.12],[5,0.28],[3,0.65]].forEach(([r,alpha])=>{
+      ctx.save(); ctx.globalAlpha=alpha; ctx.fillStyle=hexBlend(SB.bg,p.color,1.0);
+      ctx.beginPath(); ctx.arc(px,py,r,0,Math.PI*2); ctx.fill(); ctx.restore();
     });
   });
-
-  // Nodes
-  Object.keys(AGENTS).forEach(id => drawNode(ctx, id, W, H));
-
-  // Footer label
-  ctx.save();
-  ctx.font = 'bold 9px Menlo, "SF Mono", monospace';
-  ctx.fillStyle = SB.fg3;
-  ctx.textAlign = 'left';
-  ctx.textBaseline = 'bottom';
-  ctx.fillText('HERMES · NEURAL AGENT NETWORK', 12, H - 8);
-  ctx.restore();
+  Object.keys(AGENTS).forEach(id=>drawNode(ctx,id,W,H));
+  ctx.save(); ctx.font='bold 9px Menlo,"SF Mono",monospace'; ctx.fillStyle=SB.fg3;
+  ctx.textAlign='left'; ctx.textBaseline='bottom'; ctx.setLineDash([]);
+  ctx.fillText('HERMES · NEURAL AGENT NETWORK',12,H-8); ctx.restore();
 }
-
-function drawEdge(ctx, edge) {
-  const a = nodePixel(edge.from), b = nodePixel(edge.to);
-  const stFrom = State.agentStates[edge.from] || 'idle';
-  const stTo   = State.agentStates[edge.to]   || 'idle';
-  const isActive = stFrom === 'active' || stTo === 'active';
-  const isDone   = stFrom === 'done'   && stTo === 'done';
-  const color    = AGENTS[edge.from].color;
-
-  if (isActive) {
-    // 3-layer glow (outer → inner → core)
-    [[8, hexBlend(SB.bg, color, 0.12)],
-     [4, hexBlend(SB.bg, color, 0.22)],
-     [2, hexBlend(SB.bg, color, 0.60)]].forEach(([w, c]) => {
-      ctx.save();
-      ctx.strokeStyle = c; ctx.lineWidth = w;
-      ctx.setLineDash([]); ctx.lineCap = 'round';
-      ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
-      ctx.restore();
+function drawEdge(ctx,edge){
+  const a=nodePixel(edge.from), b=nodePixel(edge.to);
+  const stFrom=State.agentStates[edge.from]||'idle', stTo=State.agentStates[edge.to]||'idle';
+  const isActive=stFrom==='active'||stTo==='active', isDone=stFrom==='done'&&stTo==='done';
+  const color=AGENTS[edge.from].color;
+  if(isActive){
+    [[8,hexBlend(SB.bg,color,0.12)],[4,hexBlend(SB.bg,color,0.22)],[2,hexBlend(SB.bg,color,0.60)]].forEach(([w,c])=>{
+      ctx.save(); ctx.strokeStyle=c; ctx.lineWidth=w; ctx.setLineDash([]); ctx.lineCap='round';
+      ctx.beginPath(); ctx.moveTo(a.x,a.y); ctx.lineTo(b.x,b.y); ctx.stroke(); ctx.restore();
     });
-  } else if (isDone) {
-    ctx.save();
-    ctx.strokeStyle = hexBlend(SB.bg, SB.success, 0.30);
-    ctx.lineWidth = 1; ctx.setLineDash([]);
-    ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
-    ctx.restore();
+  } else if(isDone){
+    ctx.save(); ctx.strokeStyle=hexBlend(SB.bg,SB.success,0.30); ctx.lineWidth=1; ctx.setLineDash([]);
+    ctx.beginPath(); ctx.moveTo(a.x,a.y); ctx.lineTo(b.x,b.y); ctx.stroke(); ctx.restore();
   } else {
-    ctx.save();
-    ctx.strokeStyle = '#182840';
-    ctx.lineWidth = 1; ctx.setLineDash([4, 8]);
-    ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
-    ctx.restore();
+    ctx.save(); ctx.strokeStyle='#182840'; ctx.lineWidth=1; ctx.setLineDash([4,8]);
+    ctx.beginPath(); ctx.moveTo(a.x,a.y); ctx.lineTo(b.x,b.y); ctx.stroke(); ctx.restore();
   }
-
-  // Terminal pip at destination
-  const pipColor = isActive ? hexBlend(SB.bg, color, 0.60)
-                 : isDone   ? hexBlend(SB.bg, SB.success, 0.30)
-                 : '#182840';
-  const pipR = isActive ? 3 : 2;
-  ctx.save();
-  ctx.fillStyle = pipColor; ctx.setLineDash([]);
-  ctx.beginPath(); ctx.arc(b.x, b.y, pipR, 0, Math.PI * 2); ctx.fill();
-  ctx.restore();
+  const pipColor=isActive?hexBlend(SB.bg,color,0.60):isDone?hexBlend(SB.bg,SB.success,0.30):'#182840';
+  ctx.save(); ctx.fillStyle=pipColor; ctx.setLineDash([]);
+  ctx.beginPath(); ctx.arc(b.x,b.y,isActive?3:2,0,Math.PI*2); ctx.fill(); ctx.restore();
 }
-
-function drawNode(ctx, id, W, H) {
-  const { x, y } = nodePixel(id);
-  const agent    = AGENTS[id];
-  const status   = State.agentStates[id] || 'idle';
-  const isActive = status === 'active';
-  const isDone   = status === 'done';
-  const color    = agent.color;
-  const pulse    = _pulse;
-  const sinFast  = Math.sin(pulse * 0.25);
-  const sinSlow  = Math.sin(pulse * 0.12);
-  const intensity = 0.55 + 0.45 * sinFast;
-
-  // Node radius — larger than before
-  const nr = isActive ? 22 : isDone ? 20 : 18;
-
-  // ── Active: multi-layer bloom ─────────────────────────────────────────────
-  if (isActive) {
-    // Outer atmospheric bloom (3 layers)
-    [[56, 0.04], [40, 0.08], [26, 0.15]].forEach(([r, alpha]) => {
-      ctx.save();
-      ctx.globalAlpha = alpha * intensity;
-      const grad = ctx.createRadialGradient(x, y, 0, x, y, r);
-      grad.addColorStop(0, color);
-      grad.addColorStop(1, SB.bg);
-      ctx.fillStyle = grad;
-      ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
-      ctx.restore();
+function drawNode(ctx,id,W,H){
+  const {x,y}=nodePixel(id), agent=AGENTS[id];
+  const status=State.agentStates[id]||'idle';
+  const isActive=status==='active', isDone=status==='done', color=agent.color;
+  const pulse=_pulse, sinFast=Math.sin(pulse*0.25), sinSlow=Math.sin(pulse*0.12);
+  const intensity=0.55+0.45*sinFast, nr=isActive?22:isDone?20:18;
+  if(isActive){
+    [[56,0.04],[40,0.08],[26,0.15]].forEach(([r,alpha])=>{
+      ctx.save(); ctx.globalAlpha=alpha*intensity;
+      const g=ctx.createRadialGradient(x,y,0,x,y,r); g.addColorStop(0,color); g.addColorStop(1,SB.bg);
+      ctx.fillStyle=g; ctx.beginPath(); ctx.arc(x,y,r,0,Math.PI*2); ctx.fill(); ctx.restore();
     });
-    // Pulsing outer ring
-    const outerR = nr + 8 + 5 * sinSlow;
-    ctx.save();
-    ctx.strokeStyle = hexBlend(SB.bg, color, 0.28 * intensity);
-    ctx.lineWidth = 1; ctx.setLineDash([]);
-    ctx.beginPath(); ctx.arc(x, y, outerR, 0, Math.PI * 2); ctx.stroke();
-    ctx.restore();
-    // Middle ring
-    const midR = nr + 4 + 3 * Math.sin(pulse * 0.20);
-    ctx.save();
-    ctx.strokeStyle = hexBlend(SB.bg, color, 0.50 * intensity);
-    ctx.lineWidth = 1.5; ctx.setLineDash([]);
-    ctx.beginPath(); ctx.arc(x, y, midR, 0, Math.PI * 2); ctx.stroke();
-    ctx.restore();
+    const outerR=nr+8+5*sinSlow;
+    ctx.save(); ctx.strokeStyle=hexBlend(SB.bg,color,0.28*intensity); ctx.lineWidth=1; ctx.setLineDash([]);
+    ctx.beginPath(); ctx.arc(x,y,outerR,0,Math.PI*2); ctx.stroke(); ctx.restore();
+    const midR=nr+4+3*Math.sin(pulse*0.20);
+    ctx.save(); ctx.strokeStyle=hexBlend(SB.bg,color,0.50*intensity); ctx.lineWidth=1.5; ctx.setLineDash([]);
+    ctx.beginPath(); ctx.arc(x,y,midR,0,Math.PI*2); ctx.stroke(); ctx.restore();
   }
-
-  // ── Done: success ring ────────────────────────────────────────────────────
-  if (isDone) {
-    ctx.save();
-    ctx.strokeStyle = hexBlend(SB.bg, SB.success, 0.35);
-    ctx.lineWidth = 1.5; ctx.setLineDash([]);
-    ctx.beginPath(); ctx.arc(x, y, nr + 5, 0, Math.PI * 2); ctx.stroke();
-    ctx.restore();
-    // Faint done bloom
-    ctx.save();
-    ctx.globalAlpha = 0.08;
-    const grad = ctx.createRadialGradient(x, y, 0, x, y, nr + 14);
-    grad.addColorStop(0, SB.success);
-    grad.addColorStop(1, SB.bg);
-    ctx.fillStyle = grad;
-    ctx.beginPath(); ctx.arc(x, y, nr + 14, 0, Math.PI * 2); ctx.fill();
-    ctx.restore();
+  if(isDone){
+    ctx.save(); ctx.strokeStyle=hexBlend(SB.bg,SB.success,0.35); ctx.lineWidth=1.5; ctx.setLineDash([]);
+    ctx.beginPath(); ctx.arc(x,y,nr+5,0,Math.PI*2); ctx.stroke(); ctx.restore();
+    ctx.save(); ctx.globalAlpha=0.08;
+    const g=ctx.createRadialGradient(x,y,0,x,y,nr+14); g.addColorStop(0,SB.success); g.addColorStop(1,SB.bg);
+    ctx.fillStyle=g; ctx.beginPath(); ctx.arc(x,y,nr+14,0,Math.PI*2); ctx.fill(); ctx.restore();
   }
-
-  // ── Node body — radial gradient fill (Silicon Boardroom style) ───────────
-  const innerColor = isActive ? hexBlend(SB.bg, color, 0.22 * intensity)
-                   : isDone   ? hexBlend(SB.bg, SB.success, 0.12)
-                   : SB.bg3;
   ctx.save();
-  const bodyGrad = ctx.createRadialGradient(x - nr * 0.25, y - nr * 0.25, 0, x, y, nr);
-  bodyGrad.addColorStop(0, isActive ? hexBlend(SB.bg3, color, 0.30 * intensity) : isDone ? hexBlend(SB.bg3, SB.success, 0.18) : hexBlend(SB.bg3, SB.fg3, 0.08));
-  bodyGrad.addColorStop(1, isActive ? '#050f20' : isDone ? '#031208' : '#070e1e');
-  ctx.fillStyle = bodyGrad;
-  ctx.strokeStyle = isActive ? hexBlend(SB.bg, color, 0.85) : isDone ? SB.success : SB.idleBorder;
-  ctx.lineWidth = isActive ? 2 : 1.5;
-  ctx.setLineDash([]);
-  ctx.beginPath(); ctx.arc(x, y, nr, 0, Math.PI * 2);
-  ctx.fill(); ctx.stroke();
-  ctx.restore();
-
-  // ── Corner pip — blinks when active ──────────────────────────────────────
-  const pipVisible = !isActive || Math.sin(pulse * 0.5) > 0;
-  if (pipVisible) {
-    const dotColor = isActive ? color : isDone ? SB.success : SB.idleBorder;
-    const pipR = isActive ? 4 : 3;
+  const bg=ctx.createRadialGradient(x-nr*0.25,y-nr*0.25,0,x,y,nr);
+  bg.addColorStop(0,isActive?hexBlend(SB.bg3,color,0.30*intensity):isDone?hexBlend(SB.bg3,SB.success,0.18):hexBlend(SB.bg3,SB.fg3,0.08));
+  bg.addColorStop(1,isActive?'#050f20':isDone?'#031208':'#070e1e');
+  ctx.fillStyle=bg; ctx.strokeStyle=isActive?hexBlend(SB.bg,color,0.85):isDone?SB.success:SB.idleBorder;
+  ctx.lineWidth=isActive?2:1.5; ctx.setLineDash([]);
+  ctx.beginPath(); ctx.arc(x,y,nr,0,Math.PI*2); ctx.fill(); ctx.stroke(); ctx.restore();
+  const pipVisible=!isActive||Math.sin(pulse*0.5)>0;
+  if(pipVisible){
+    const dotColor=isActive?color:isDone?SB.success:SB.idleBorder, pipR=isActive?4:3;
     ctx.save();
-    if (isActive) {
-      // Pip glow
-      ctx.globalAlpha = 0.45 * intensity;
-      ctx.fillStyle = color;
-      ctx.beginPath(); ctx.arc(x + nr - 6, y - nr + 3, pipR + 3, 0, Math.PI * 2); ctx.fill();
-      ctx.globalAlpha = 1.0;
-    }
-    ctx.fillStyle = dotColor;
-    ctx.setLineDash([]);
-    ctx.beginPath(); ctx.arc(x + nr - 6, y - nr + 3, pipR, 0, Math.PI * 2); ctx.fill();
-    ctx.restore();
+    if(isActive){ ctx.globalAlpha=0.45*intensity; ctx.fillStyle=color; ctx.beginPath(); ctx.arc(x+nr-6,y-nr+3,pipR+3,0,Math.PI*2); ctx.fill(); ctx.globalAlpha=1.0; }
+    ctx.fillStyle=dotColor; ctx.setLineDash([]);
+    ctx.beginPath(); ctx.arc(x+nr-6,y-nr+3,pipR,0,Math.PI*2); ctx.fill(); ctx.restore();
   }
-
-  // ── Label ─────────────────────────────────────────────────────────────────
-  ctx.save();
-  ctx.font = 'bold 10px Menlo, "SF Mono", monospace';
-  ctx.fillStyle = isActive ? color : isDone ? SB.success : SB.fg3;
-  ctx.textAlign = 'center'; ctx.textBaseline = 'top'; ctx.setLineDash([]);
-  ctx.fillText(agent.label, x, y + nr + 8);
-  ctx.restore();
-
-  // ── Status line / Thinking animation ─────────────────────────────────────
-  ctx.save();
-  ctx.font = '600 9px Menlo, "SF Mono", monospace';
-  ctx.textAlign = 'center'; ctx.textBaseline = 'top'; ctx.setLineDash([]);
-  if (isActive) {
-    const dots = '.'.repeat((Math.floor(pulse * 0.06) % 3) + 1);
-    ctx.fillStyle = hexBlend(SB.bg, color, 0.85);
-    ctx.fillText('Thinking' + dots, x, y + nr + 21);
-  } else if (isDone) {
-    ctx.fillStyle = hexBlend(SB.bg, SB.success, 0.70);
-    ctx.fillText('✓ DONE', x, y + nr + 21);
-  } else {
-    ctx.fillStyle = hexBlend(SB.bg, SB.fg3, 0.55);
-    ctx.fillText('○ IDLE', x, y + nr + 21);
-  }
+  ctx.save(); ctx.font='bold 10px Menlo,"SF Mono",monospace';
+  ctx.fillStyle=isActive?color:isDone?SB.success:SB.fg3;
+  ctx.textAlign='center'; ctx.textBaseline='top'; ctx.setLineDash([]);
+  ctx.fillText(agent.label,x,y+nr+8); ctx.restore();
+  ctx.save(); ctx.font='600 9px Menlo,"SF Mono",monospace';
+  ctx.textAlign='center'; ctx.textBaseline='top'; ctx.setLineDash([]);
+  if(isActive){ const dots='.'.repeat((Math.floor(pulse*0.06)%3)+1); ctx.fillStyle=hexBlend(SB.bg,color,0.85); ctx.fillText('Thinking'+dots,x,y+nr+21); }
+  else if(isDone){ ctx.fillStyle=hexBlend(SB.bg,SB.success,0.70); ctx.fillText('✓ DONE',x,y+nr+21); }
+  else{ ctx.fillStyle=hexBlend(SB.bg,SB.fg3,0.55); ctx.fillText('○ IDLE',x,y+nr+21); }
   ctx.restore();
 }
 
 // ── Popover ──────────────────────────────────────────────────────────────────
 const nodePopover = document.getElementById('nodePopover');
-let _popoverAgent = null;
-let _popoverTO = null;
-
-function getNodeAt(mx, my) {
-  if (!_canvas) return null;
-  const rect = _canvas.getBoundingClientRect();
-  const cx = mx - rect.left;
-  const cy = my - rect.top;
-  for (const id of Object.keys(NODE_POS)) {
-    const { x, y } = nodePixel(id);
-    const r = State.agentStates[id] === 'active' ? 26 : 22;
-    if (Math.hypot(cx - x, cy - y) <= r) return id;
+let _popoverAgent=null, _popoverTO=null;
+function getNodeAt(mx,my){
+  if(!_canvas) return null;
+  const rect=_canvas.getBoundingClientRect();
+  const cx=mx-rect.left, cy=my-rect.top;
+  for(const id of Object.keys(NODE_POS)){
+    const{x,y}=nodePixel(id), r=State.agentStates[id]==='active'?26:22;
+    if(Math.hypot(cx-x,cy-y)<=r) return id;
   }
   return null;
 }
-
-function onCanvasHover(e) {
-  const id = getNodeAt(e.clientX, e.clientY);
-  if (id === _popoverAgent) return;
-  hidePopover();
-  if (!id) return;
-  _popoverAgent = id;
-  clearTimeout(_popoverTO);
-  _popoverTO = setTimeout(() => showPopover(id, e.clientX, e.clientY), 120);
+function onCanvasHover(e){
+  const id=getNodeAt(e.clientX,e.clientY);
+  if(id===_popoverAgent) return;
+  hidePopover(); if(!id) return;
+  _popoverAgent=id; clearTimeout(_popoverTO);
+  _popoverTO=setTimeout(()=>showPopover(id,e.clientX,e.clientY),120);
 }
-
-function showPopover(id, mx, my) {
-  const agent  = AGENTS[id];
-  const status = State.agentStates[id] || 'idle';
-
-  document.getElementById('popoverName').textContent = agent.label;
-  document.getElementById('popoverRole').textContent = agent.role;
-
-  const badge = document.getElementById('popoverBadge');
-  badge.textContent  = status.toUpperCase();
-  badge.className    = 'popover-status-badge ' + status;
-
-  const lastLog = [...State.lastLogs].reverse().find(l =>
-    l.toLowerCase().includes(agent.label.split(' ')[0].toLowerCase())
-  ) || '';
-  document.getElementById('popoverLog').textContent = lastLog
-    ? lastLog.substring(0, 100) + (lastLog.length > 100 ? '…' : '')
-    : 'No log output yet.';
-
-  const pop = nodePopover;
-  pop.style.display = 'block';
-  // Position — keep on screen
-  const PW = 280, PH = 160;
-  let left = mx + 16;
-  let top  = my - 80;
-  if (left + PW > window.innerWidth  - 8) left = mx - PW - 16;
-  if (top  < 8)                           top  = 8;
-  if (top  + PH > window.innerHeight - 8) top  = window.innerHeight - PH - 8;
-  pop.style.left = left + 'px';
-  pop.style.top  = top  + 'px';
-  pop.classList.add('show');
+function showPopover(id,mx,my){
+  const agent=AGENTS[id], status=State.agentStates[id]||'idle';
+  document.getElementById('popoverName').textContent=agent.label;
+  document.getElementById('popoverRole').textContent=agent.role;
+  const badge=document.getElementById('popoverBadge');
+  badge.textContent=status.toUpperCase(); badge.className='popover-status-badge '+status;
+  const lastLog=[...State.lastLogs].reverse().find(l=>l.toLowerCase().includes(agent.label.split(' ')[0].toLowerCase()))||'';
+  document.getElementById('popoverLog').textContent=lastLog?lastLog.substring(0,100)+(lastLog.length>100?'…':''):'No log output yet.';
+  const pop=nodePopover; pop.style.display='block';
+  const PW=280, PH=160;
+  let left=mx+16, top=my-80;
+  if(left+PW>window.innerWidth-8) left=mx-PW-16;
+  if(top<8) top=8;
+  if(top+PH>window.innerHeight-8) top=window.innerHeight-PH-8;
+  pop.style.left=left+'px'; pop.style.top=top+'px'; pop.classList.add('show');
 }
-
-function hidePopover() {
-  _popoverAgent = null;
-  clearTimeout(_popoverTO);
-  nodePopover.classList.remove('show');
-  nodePopover.style.display = 'none';
+function hidePopover(){
+  _popoverAgent=null; clearTimeout(_popoverTO);
+  nodePopover.classList.remove('show'); nodePopover.style.display='none';
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -932,54 +789,271 @@ const CHART_OPTS = {
   },
 };
 
+// Platform metadata — only the 4 supported platforms
+const PLATFORM_META = {
+  'tiktok':    { cls:'ch-tiktok',    icon:'pi-tiktok',    label:'TikTok' },
+  'instagram': { cls:'ch-instagram', icon:'pi-instagram', label:'Instagram' },
+  'youtube':   { cls:'ch-youtube',   icon:'pi-youtube',   label:'YouTube' },
+  'facebook':  { cls:'ch-facebook',  icon:'pi-facebook',  label:'Facebook' },
+};
+function platformMeta(s) {
+  const key=(s||'').toLowerCase().replace(/[^a-z]/g,'');
+  return PLATFORM_META[key]||{cls:'ch-default',icon:'pi-default',label:s||'Social'};
+}
+
+// ── Benchmark ER lines ────────────────────────────────────────────────────────
+const BENCH_ER = { tiktok:5.0, instagram:1.5, facebook:0.8, youtube:2.0 };
+function benchmarkFor(platform) {
+  return BENCH_ER[(platform||'').toLowerCase().replace(/[^a-z]/,'')]||2.0;
+}
+
 function renderResults(data) {
   if (!data || !data.competitors || !data.competitors.length) {
     const nd = document.getElementById('noDataState');
-    const params = data && data.scan_params || {};
-    const hadQuery = params.advertiser || (params.competitors && params.competitors.length);
+    const params = (data && data.scan_params) || {};
+    const hadQuery = params.advertisers?.length || params.advertiser || params.competitors?.length;
     nd.innerHTML = hadQuery
       ? `<div class="nd-icon">🔍</div>
          <h3>No competitor data found</h3>
          <p style="color:var(--text3);font-size:0.82rem;max-width:340px;margin:0 auto 18px;">
-           The agents couldn't extract structured data for <strong>${esc(params.advertiser || 'this brand')}</strong>
-           on the selected platforms. Try broader platforms, a longer date range, or a more well-known brand.
+           The agents couldn't extract structured data for <strong>${esc((params.advertisers||[params.advertiser||'']).join(', ') || 'this brand')}</strong>
+           on the selected platforms. Try a longer date range, broader platforms, or more well-known brands.
          </p>
          <button onclick="showPage('configure')" style="background:var(--accent);color:#fff;border:none;border-radius:6px;padding:8px 20px;cursor:pointer;font-size:0.8rem;">
-           ← Adjust & Re-run
+           ← Adjust &amp; Re-run
          </button>`
-      : `<div class="nd-icon">📊</div>
-         <h3>No Results Yet</h3>
-         <p style="color:var(--text3);font-size:0.82rem;">Run an analysis or upload a report.json to see results here.</p>`;
+      : `<div class="nd-icon">📊</div><h3>No Results Yet</h3>
+         <p style="color:var(--text3);font-size:0.82rem;">Run an analysis or load a report.json to see results here.</p>`;
     nd.style.display = 'block';
     document.getElementById('resultsContent').style.display = 'none';
     return;
   }
-  document.getElementById('noDataState').style.display = 'none';
+
+  document.getElementById('noDataState').style.display   = 'none';
   document.getElementById('resultsContent').style.display = 'block';
 
   const comp   = data.competitors;
   const params = data.scan_params || {};
 
-  // Reset platform filter on each new report so all platforms start selected
+  // Wire post-type filter toggle
+  const ptWrap = document.getElementById('postTypeFilterWrap');
+  const hasPaidOrg = comp.some(c => c.post_type === 'paid' || c.post_type === 'organic');
+  if (ptWrap) ptWrap.style.display = hasPaidOrg ? 'flex' : 'none';
+  document.querySelectorAll('.post-type-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.post-type-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      State.activePostTypeFilter = btn.dataset.pt;
+      renderResultsFiltered();
+    });
+  });
+
+  // Reset platform filter
   State.activePlatforms = new Set();
-
-  // Context bar (also initialises activePlatforms to all)
   buildContextBar(params, comp);
-
-  // Render all dynamic content using the filter (starts with all selected)
   renderResultsFiltered();
 
   // TikTok embed script
   if (!document.getElementById('tiktok-embed-js')) {
     const s = document.createElement('script');
-    s.id = 'tiktok-embed-js'; s.src = 'https://www.tiktok.com/embed.js'; s.async = true;
+    s.id='tiktok-embed-js'; s.src='https://www.tiktok.com/embed.js'; s.async=true;
     document.body.appendChild(s);
-  } else if (window.tiktokEmbed) {
-    window.tiktokEmbed.render();
+  } else if (window.tiktokEmbed) { window.tiktokEmbed.render(); }
+
+  document.getElementById('dot-results').className = 'status-dot done';
+}
+
+function buildContextBar(params, comp) {
+  const bar = document.getElementById('contextBar');
+
+  const paramPlats = params.platforms || [];
+  const dataPlats  = [...new Set(comp.map(c => c.platform).filter(Boolean))];
+  const allPlats   = [...new Set([...paramPlats, ...dataPlats])].filter(p =>
+    ['TikTok','Instagram','YouTube','Facebook'].includes(p)
+  );
+
+  if (State.activePlatforms.size === 0) allPlats.forEach(p => State.activePlatforms.add(p));
+
+  const advertisers = params.advertisers || (params.advertiser ? [params.advertiser] : []);
+  const parts = [];
+  if (advertisers.length) parts.push(`<strong>${esc(advertisers.join(', '))}</strong>`);
+  if (params.competitors && params.competitors.length)
+    parts.push('vs ' + params.competitors.map(c => `<span class="ctx-badge">${esc(c)}</span>`).join(' '));
+  if (params.country)    parts.push(`<span class="ctx-sep">·</span> ${esc(params.country)}`);
+  if (params.date_range) parts.push(`<span class="ctx-sep">·</span> ${esc(params.date_range)}`);
+  if (params.post_type && params.post_type !== 'both')
+    parts.push(`<span class="ctx-sep">·</span> <span class="post-type-badge ${params.post_type}">${esc(params.post_type)}</span>`);
+
+  let pillsHtml = '';
+  if (allPlats.length) {
+    const pillList = allPlats.map(p => {
+      const active = State.activePlatforms.has(p);
+      const pm = platformMeta(p);
+      return `<button class="ctx-plat-pill ${pm.cls} ${active?'active':''}" data-plat="${esc(p)}">${esc(p)}</button>`;
+    }).join('');
+    pillsHtml = `<span class="ctx-sep">·</span><span class="ctx-pills-wrap">${pillList}</span>`;
   }
 
-  // Mark results dot done
-  document.getElementById('dot-results').className = 'status-dot done';
+  if (!parts.length && comp.length) parts.push(`${comp.length} brand(s) analysed`);
+  bar.innerHTML = (parts.join(' ') || 'Scan complete') + pillsHtml;
+
+  bar.querySelectorAll('.ctx-plat-pill').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const plat = btn.dataset.plat;
+      if (State.activePlatforms.has(plat)) {
+        if (State.activePlatforms.size === 1) return;
+        State.activePlatforms.delete(plat); btn.classList.remove('active');
+      } else {
+        State.activePlatforms.add(plat); btn.classList.add('active');
+      }
+      renderResultsFiltered();
+    });
+  });
+}
+
+function filteredComp() {
+  if (!State.reportData) return [];
+  let all = State.reportData.competitors || [];
+  if (State.activePlatforms.size > 0)
+    all = all.filter(c => State.activePlatforms.has(c.platform));
+  if (State.activePostTypeFilter !== 'all')
+    all = all.filter(c => !c.post_type || c.post_type === State.activePostTypeFilter || c.post_type === 'both');
+  return all;
+}
+
+function renderResultsFiltered() {
+  const data = State.reportData;
+  if (!data) return;
+  const comp     = filteredComp();
+  const bgColors = comp.map((_, i) => BRAND_COLORS[i % BRAND_COLORS.length]);
+
+  // ── KPIs ────────────────────────────────────────────────────────────────
+  const totalSpend    = comp.reduce((s,c) => s + (c.estimated_spend_usd||0), 0);
+  const avgEngage     = comp.length
+    ? comp.reduce((s,c) => s+(c.engagement_rate||0), 0) / comp.length : 0;
+  // Dominant platform by views (impressions)
+  const platImpMap = {};
+  comp.forEach(c => {
+    const p = c.platform || 'Unknown';
+    platImpMap[p] = (platImpMap[p]||0) + ((c.metrics||{}).views||0);
+  });
+  const topPlatform = Object.entries(platImpMap).sort((a,b)=>b[1]-a[1])[0]?.[0] || '—';
+
+  const totalPosts = comp.reduce((s,c) => s + (c.top_posts||[]).length, 0);
+  document.getElementById('kpiCount').textContent    = comp.length;
+  document.getElementById('kpiPostCount').textContent= `${totalPosts} posts scanned across ${comp.length} brand${comp.length!==1?'s':''}`;
+  document.getElementById('kpiSpend').textContent    = '$' + totalSpend.toLocaleString(undefined,{maximumFractionDigits:0});
+  document.getElementById('kpiEngage').textContent   = avgEngage.toFixed(2) + '%';
+  document.getElementById('kpiPlatform').textContent = topPlatform;
+
+  // Benchmark comparison
+  const avgBench = comp.length
+    ? comp.reduce((s,c)=>s+benchmarkFor(c.platform),0)/comp.length : 2.0;
+  const diff = avgEngage - avgBench;
+  const kpiBench = document.getElementById('kpiBenchmark');
+  if (kpiBench) {
+    kpiBench.textContent = diff >= 0
+      ? `+${diff.toFixed(2)}% above industry avg`
+      : `${diff.toFixed(2)}% below industry avg`;
+    kpiBench.style.color = diff >= 0 ? 'var(--green)' : 'var(--red)';
+  }
+
+  // Table subtitle
+  const params = data.scan_params || {};
+  const tSub = document.getElementById('tableSubtitle');
+  if (tSub) {
+    const pt = params.post_type || 'both';
+    const label = pt === 'paid' ? 'Paid posts only' : pt === 'organic' ? 'Organic posts only' : 'Paid + Organic combined';
+    tSub.textContent = `${comp.length} brand${comp.length!==1?'s':''} · ${label} · sorted by est. media value`;
+  }
+
+  // ── Charts ───────────────────────────────────────────────────────────────
+  const labels  = comp.map(c => c.name || c.handle || '?');
+  const spends  = comp.map(c => c.estimated_spend_usd || 0);
+  const engages = comp.map(c => c.engagement_rate || 0);
+  const benchmarks = comp.map(c => benchmarkFor(c.platform));
+
+  destroyCharts();
+
+  Charts.spend = new Chart(document.getElementById('spendChart').getContext('2d'), {
+    type: 'bar',
+    data: { labels, datasets: [{ data: spends, backgroundColor: bgColors, borderRadius:5, borderSkipped:false, label:'Est. Value (USD)' }] },
+    options: { ...CHART_OPTS, plugins: { legend:{display:false}, tooltip:{callbacks:{label:ctx=>`$${Number(ctx.parsed.y).toLocaleString()}`}} } },
+  });
+
+  Charts.engage = new Chart(document.getElementById('engageChart').getContext('2d'), {
+    type: 'bar',
+    data: {
+      labels,
+      datasets: [
+        { data: engages,    backgroundColor: bgColors,              borderRadius:5, borderSkipped:false, label:'Engagement Rate %' },
+        { data: benchmarks, backgroundColor: 'rgba(248,81,73,0.15)',borderRadius:3, borderSkipped:false, label:'Platform Benchmark', borderColor:'rgba(248,81,73,0.6)', borderWidth:1 },
+      ]
+    },
+    options: { ...CHART_OPTS, plugins: { legend:{display:true,position:'top',labels:{color:'#8b949e',font:{size:10}}}, tooltip:{callbacks:{label:ctx=>`${ctx.dataset.label}: ${ctx.parsed.y.toFixed(2)}%`}} } },
+  });
+
+  const platViewMap = {};
+  comp.forEach(c => {
+    const p = c.platform || 'Unknown';
+    platViewMap[p] = (platViewMap[p]||0) + ((c.metrics||{}).views||0);
+  });
+  const platLabels = Object.keys(platViewMap);
+  Charts.platform = new Chart(document.getElementById('platformChart').getContext('2d'), {
+    type: 'doughnut',
+    data: { labels: platLabels, datasets: [{ data: platLabels.map(k=>platViewMap[k]), backgroundColor: BRAND_COLORS, hoverOffset:6, borderColor:'#060d1c', borderWidth:2 }] },
+    options: { responsive:true, cutout:'62%', plugins:{ legend:{display:true,position:'right',labels:{font:{size:11},color:'#8b949e'}}, tooltip:{callbacks:{label:ctx=>`${ctx.label}: ${Number(ctx.parsed).toLocaleString()} views`}} } },
+  });
+
+  const sentCts = { Positive:0, Neutral:0, Negative:0 };
+  comp.forEach(c => { sentCts[c.sentiment] = (sentCts[c.sentiment]||0)+1; });
+  Charts.sentiment = new Chart(document.getElementById('sentimentChart').getContext('2d'), {
+    type: 'bar',
+    data: { labels: Object.keys(sentCts), datasets:[{ data:Object.values(sentCts),
+      backgroundColor:['rgba(34,197,94,0.18)','rgba(245,158,11,0.18)','rgba(248,81,73,0.18)'],
+      borderColor:[C.green,C.amber,C.red], borderWidth:2, borderRadius:5, borderSkipped:false }] },
+    options: { ...CHART_OPTS, plugins:{legend:{display:false}} },
+  });
+
+  // ── Content Intel ─────────────────────────────────────────────────────────
+  renderContentIntel(comp, bgColors);
+
+  // ── Table ─────────────────────────────────────────────────────────────────
+  const sorted = [...comp].sort((a,b) => (b.estimated_spend_usd||0) - (a.estimated_spend_usd||0));
+  const tbody = document.getElementById('resultsTableBody');
+  tbody.innerHTML = sorted.map((c, i) => {
+    const m = c.metrics || {};
+    const sentClass = (c.sentiment||'').toLowerCase();
+    const color = bgColors[i % bgColors.length];
+    const pt = c.post_type || 'both';
+    const ptBadge = `<span class="post-type-badge ${pt}">${esc(pt)}</span>`;
+    const bench = benchmarkFor(c.platform);
+    const erDiff = (c.engagement_rate||0) - bench;
+    const erColor = erDiff >= 0 ? 'var(--green)' : 'var(--red)';
+    const erDiffStr = (erDiff >= 0 ? '+' : '') + erDiff.toFixed(2) + '%';
+    return `<tr>
+      <td><span style="display:inline-flex;align-items:center;gap:7px;">
+        <span style="width:8px;height:8px;border-radius:50%;background:${color};display:inline-block;flex-shrink:0;"></span>
+        <strong>${esc(c.name||'—')}</strong>
+      </span></td>
+      <td style="color:#64748b;">${esc(c.handle||'—')}</td>
+      <td><span class="platform-badge">${esc(c.platform||'Multi')}</span></td>
+      <td>${ptBadge}</td>
+      <td>${fmt(m.likes)}</td>
+      <td>${fmt(m.comments)}</td>
+      <td>${fmt(m.shares)}</td>
+      <td>${fmt(m.saves)}</td>
+      <td>${fmt(m.views)}</td>
+      <td>${fmt(m.followers)}</td>
+      <td><strong>${(c.engagement_rate||0).toFixed(2)}%</strong></td>
+      <td style="color:${erColor};font-size:0.78rem;">${erDiffStr}</td>
+      <td style="color:#2563eb;font-weight:700;">$${(c.estimated_spend_usd||0).toLocaleString(undefined,{maximumFractionDigits:0})}</td>
+      <td><span class="sentiment-badge ${sentClass}">${esc(c.sentiment||'—')}</span></td>
+    </tr>`;
+  }).join('');
+
+  renderTopPosts({ competitors: comp });
+  renderCalcTree(data);
 }
 
 function renderContentIntel(comp, bgColors) {
@@ -989,9 +1063,9 @@ function renderContentIntel(comp, bgColors) {
   const hasContent = comp.some(c =>
     (c.top_posts && c.top_posts.length) ||
     (c.hashtags && c.hashtags.length) ||
-    (c.content_themes && c.content_themes.length)
+    (c.content_themes && c.content_themes.length) ||
+    (c.paid_campaigns && c.paid_campaigns.length)
   );
-
   if (!hasContent) {
     container.innerHTML = '<div style="padding:20px 24px;color:var(--text3);font-size:0.82rem;">No post content data available — run a deeper analysis to populate this section.</div>';
     return;
@@ -1001,10 +1075,12 @@ function renderContentIntel(comp, bgColors) {
   grid.className = 'content-intel-grid';
 
   comp.forEach((c, i) => {
-    const color   = bgColors[i % bgColors.length];
-    const posts   = c.top_posts      || [];
-    const tags    = c.hashtags       || [];
-    const themes  = c.content_themes || [];
+    const color  = bgColors[i % bgColors.length];
+    const posts  = c.top_posts      || [];
+    const tags   = c.hashtags       || [];
+    const themes = c.content_themes || [];
+    const campaigns = c.paid_campaigns || [];
+    const pt = c.post_type || 'both';
 
     const card = document.createElement('div');
     card.className = 'content-intel-card fade-in';
@@ -1012,33 +1088,43 @@ function renderContentIntel(comp, bgColors) {
     let html = `
       <div class="ci-brand-row">
         <span class="ci-color-dot" style="background:${color}"></span>
-        <span class="ci-brand-name">${esc(c.name || '—')}</span>
+        <span class="ci-brand-name">${esc(c.name||'—')}</span>
         ${c.handle ? `<span class="ci-handle">${esc(c.handle)}</span>` : ''}
-        <span class="platform-badge" style="margin-left:auto;">${esc(c.platform || 'Multi')}</span>
+        <span class="platform-badge" style="margin-left:auto;">${esc(c.platform||'Multi')}</span>
+        <span class="post-type-badge ${pt}" style="margin-left:6px;">${esc(pt)}</span>
       </div>`;
 
+    if (campaigns.length) {
+      html += `<div class="ci-section-label">Paid Campaigns</div><ul class="ci-posts">`;
+      campaigns.forEach(camp => { html += `<li class="ci-post-item"><span class="post-type-badge paid" style="font-size:0.62rem;">paid</span>${esc(camp)}</li>`; });
+      html += `</ul>`;
+    }
+
     if (posts.length) {
-      html += `<div class="ci-section-label">Top Posts / Campaigns</div><ul class="ci-posts">`;
+      html += `<div class="ci-section-label">Top Posts</div><ul class="ci-posts">`;
       posts.forEach(p => {
-        html += `<li class="ci-post-item">${esc(p)}</li>`;
+        const caption  = typeof p === 'object' ? (p.caption || p.text || p.description || '') : String(p);
+        const url      = typeof p === 'object' ? (p.url || null) : null;
+        const postType = typeof p === 'object' ? (p.post_type || pt) : pt;
+        const likes    = typeof p === 'object' && p.likes ? ` · ${fmtShort(p.likes)} likes` : '';
+        const views    = typeof p === 'object' && p.views ? ` · ${fmtShort(p.views)} views` : '';
+        const typeBadge = `<span class="post-type-badge ${postType}" style="font-size:0.62rem;">${esc(postType)}</span>`;
+        const statStr = likes || views ? `<span style="color:var(--text3);font-size:0.72rem;">${likes}${views}</span>` : '';
+        html += url
+          ? `<li class="ci-post-item">${typeBadge}<a href="${esc(url)}" target="_blank" rel="noopener noreferrer" class="ci-post-link">${esc(caption)}</a>${statStr}</li>`
+          : `<li class="ci-post-item">${typeBadge}${esc(caption)}${statStr}</li>`;
       });
       html += `</ul>`;
     }
 
     if (tags.length) {
       html += `<div class="ci-section-label">Hashtags</div><div class="ci-tags">`;
-      tags.forEach(t => {
-        const tag = t.startsWith('#') ? t : '#' + t;
-        html += `<span class="hashtag-badge">${esc(tag)}</span>`;
-      });
+      tags.forEach(t => { const tag=t.startsWith('#')?t:'#'+t; html+=`<span class="hashtag-badge">${esc(tag)}</span>`; });
       html += `</div>`;
     }
-
     if (themes.length) {
       html += `<div class="ci-section-label">Content Themes</div><div class="ci-tags">`;
-      themes.forEach(th => {
-        html += `<span class="theme-badge">${esc(th)}</span>`;
-      });
+      themes.forEach(th => { html+=`<span class="theme-badge">${esc(th)}</span>`; });
       html += `</div>`;
     }
 
@@ -1050,167 +1136,66 @@ function renderContentIntel(comp, bgColors) {
   container.appendChild(grid);
 }
 
-// ── Top Posts by Platform ────────────────────────────────────────────────────
-
-const PLATFORM_META = {
-  'tiktok':    { cls: 'ch-tiktok',    icon: 'pi-tiktok',    label: 'TikTok' },
-  'instagram': { cls: 'ch-instagram', icon: 'pi-instagram', label: 'Instagram' },
-  'youtube':   { cls: 'ch-youtube',   icon: 'pi-youtube',   label: 'YouTube' },
-  'facebook':  { cls: 'ch-facebook',  icon: 'pi-facebook',  label: 'Facebook' },
-  'x':         { cls: 'ch-twitter',   icon: 'pi-twitter',   label: 'X / Twitter' },
-  'twitter':   { cls: 'ch-twitter',   icon: 'pi-twitter',   label: 'X / Twitter' },
-  'linkedin':  { cls: 'ch-linkedin',  icon: 'pi-linkedin',  label: 'LinkedIn' },
-};
-
-function platformMeta(platformStr) {
-  const key = (platformStr || '').toLowerCase().replace(/[^a-z]/g, '');
-  return PLATFORM_META[key] || { cls: 'ch-default', icon: 'pi-default', label: platformStr || 'Social' };
-}
-
-// ── Post embed helpers ────────────────────────────────────────────────────────
+// ── Top Posts embeds ─────────────────────────────────────────────────────────
 
 function _ytVideoId(url) {
   try {
-    const u = new URL(url);
-    if (u.hostname.includes('youtu.be')) return u.pathname.slice(1).split('?')[0];
-    return u.searchParams.get('v') || null;
-  } catch { return null; }
+    const u=new URL(url);
+    if(u.hostname.includes('youtu.be')) return u.pathname.slice(1).split('?')[0];
+    return u.searchParams.get('v')||null;
+  } catch{return null;}
 }
-
 function _tiktokVideoId(url) {
-  // https://www.tiktok.com/@handle/video/1234567890
-  const m = url.match(/\/video\/(\d+)/);
-  return m ? m[1] : null;
+  const m=url.match(/\/video\/(\d+)/); return m?m[1]:null;
 }
-
-function buildPostEmbed(url, caption, platform, idx) {
-  const plat = (platform || '').toLowerCase();
-  const rankBadge = `<span class="post-tile-rank">#${idx + 1}</span>`;
-
-  // YouTube — native iframe embed
-  if (plat.includes('youtube') || url.includes('youtu')) {
-    const vid = _ytVideoId(url);
-    if (vid) {
-      return `
-        <div class="post-tile-embed">
-          ${rankBadge}
-          <iframe src="https://www.youtube.com/embed/${esc(vid)}" frameborder="0"
-            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-            allowfullscreen loading="lazy"></iframe>
-        </div>
-        <div class="post-tile-caption">${esc(caption)}</div>`;
-    }
+function buildPostEmbed(url,caption,platform,idx){
+  const plat=(platform||'').toLowerCase();
+  const rankBadge=`<span class="post-tile-rank">#${idx+1}</span>`;
+  if(plat.includes('youtube')||url.includes('youtu')){
+    const vid=_ytVideoId(url);
+    if(vid) return `<div class="post-tile-embed">${rankBadge}<iframe src="https://www.youtube.com/embed/${esc(vid)}" frameborder="0" allow="accelerometer;autoplay;clipboard-write;encrypted-media;gyroscope;picture-in-picture" allowfullscreen loading="lazy"></iframe></div><div class="post-tile-caption">${esc(caption)}</div>`;
   }
-
-  // TikTok — native blockquote oEmbed (loads tiktok.com/embed.js)
-  if (plat.includes('tiktok') || url.includes('tiktok.com')) {
-    const vid = _tiktokVideoId(url);
-    if (vid) {
-      // Use TikTok's official embed via blockquote + script
-      return `
-        <div class="post-tile-embed post-tile-tiktok">
-          ${rankBadge}
-          <blockquote class="tiktok-embed" cite="${esc(url)}"
-            data-video-id="${esc(vid)}" style="max-width:320px;min-width:240px;">
-            <section></section>
-          </blockquote>
-        </div>
-        <div class="post-tile-caption">${esc(caption)}</div>`;
-    }
+  if(plat.includes('tiktok')||url.includes('tiktok.com')){
+    const vid=_tiktokVideoId(url);
+    if(vid) return `<div class="post-tile-embed post-tile-tiktok">${rankBadge}<blockquote class="tiktok-embed" cite="${esc(url)}" data-video-id="${esc(vid)}" style="max-width:320px;min-width:240px;"><section></section></blockquote></div><div class="post-tile-caption">${esc(caption)}</div>`;
   }
-
-  // All other platforms — styled link card with "View Post" CTA
-  return buildPostLinkCard(url, caption, idx);
+  return buildPostLinkCard(url,caption,idx);
 }
-
-function buildPostNoUrl(caption, idx) {
-  return `
-    <div class="post-tile-nourl">
-      <span class="post-tile-rank">#${idx + 1}</span>
-      <div class="post-tile-caption">${esc(caption)}</div>
-    </div>`;
+function buildPostNoUrl(caption,idx){
+  return `<div class="post-tile-nourl"><span class="post-tile-rank">#${idx+1}</span><div class="post-tile-caption">${esc(caption)}</div></div>`;
 }
-
-function buildPostLinkCard(url, caption, idx) {
-  // Extract domain for display
-  let domain = '';
-  try { domain = new URL(url).hostname.replace('www.', ''); } catch {}
-  return `
-    <div class="post-tile-linkcard">
-      <span class="post-tile-rank">#${idx + 1}</span>
-      <div class="post-tile-caption">${esc(caption)}</div>
-      <a class="post-tile-cta" href="${esc(url)}" target="_blank" rel="noopener noreferrer">
-        View Post ↗<span class="post-tile-domain">${esc(domain)}</span>
-      </a>
-    </div>`;
+function buildPostLinkCard(url,caption,idx){
+  let domain=''; try{domain=new URL(url).hostname.replace('www.','');}catch{}
+  return `<div class="post-tile-linkcard"><span class="post-tile-rank">#${idx+1}</span><div class="post-tile-caption">${esc(caption)}</div><a class="post-tile-cta" href="${esc(url)}" target="_blank" rel="noopener noreferrer">View Post ↗<span class="post-tile-domain">${esc(domain)}</span></a></div>`;
 }
-
-function renderTopPosts(data) {
-  const section = document.getElementById('topPostsSection');
-  const grid    = document.getElementById('topPostsGrid');
-  if (!section || !grid) return;
-
-  const comp = data.competitors || [];
-  const hasAny = comp.some(c => c.top_posts && c.top_posts.length);
-  if (!hasAny) { section.style.display = 'none'; return; }
-
-  // Group by platform → brand → posts
-  const byPlatform = {};
-  comp.forEach((c, i) => {
-    const plat = c.platform || 'Social Media';
-    if (!byPlatform[plat]) byPlatform[plat] = [];
-    byPlatform[plat].push({
-      name:   c.name || '—',
-      handle: c.handle || '',
-      posts:  c.top_posts || [],
-      metrics: c.metrics || {},
-      color:  BRAND_COLORS[i % BRAND_COLORS.length],
-    });
-  });
-
-  const meta_outer = platformMeta; // alias
-  grid.className = 'top-posts-grid';
-  grid.innerHTML = '';
-
-  // Flatten all posts into a single embed-card grid, grouped by brand/platform header
-  comp.forEach((c, ci) => {
-    const posts = c.top_posts || [];
-    if (!posts.length) return;
-    const plat = c.platform || 'Social Media';
-    const pm   = meta_outer(plat);
-    const brandColor = BRAND_COLORS[ci % BRAND_COLORS.length];
-
-    // Brand row header
-    const header = document.createElement('div');
-    header.className = 'tposts-brand-header';
-    header.innerHTML = `
-      <span class="channel-platform-icon ${pm.icon}" style="font-size:1rem;margin-right:6px;"></span>
-      <span class="dot" style="background:${brandColor}"></span>
-      <span class="tposts-brand-name">${esc(c.name || '—')}</span>
-      ${c.handle ? `<span class="tposts-handle">${esc(c.handle)}</span>` : ''}
-      <span class="tposts-plat-label ${pm.cls}">${esc(pm.label)}</span>`;
+function renderTopPosts(data){
+  const section=document.getElementById('topPostsSection'), grid=document.getElementById('topPostsGrid');
+  if(!section||!grid) return;
+  const comp=data.competitors||[];
+  const hasAny=comp.some(c=>c.top_posts&&c.top_posts.length);
+  if(!hasAny){section.style.display='none';return;}
+  grid.className='top-posts-grid'; grid.innerHTML='';
+  comp.forEach((c,ci)=>{
+    const posts=c.top_posts||[]; if(!posts.length) return;
+    const plat=c.platform||'Social Media', pm=platformMeta(plat);
+    const brandColor=BRAND_COLORS[ci%BRAND_COLORS.length];
+    const header=document.createElement('div'); header.className='tposts-brand-header';
+    header.innerHTML=`<span class="channel-platform-icon ${pm.icon}" style="font-size:1rem;margin-right:6px;"></span><span class="dot" style="background:${brandColor}"></span><span class="tposts-brand-name">${esc(c.name||'—')}</span>${c.handle?`<span class="tposts-handle">${esc(c.handle)}</span>`:''}<span class="tposts-plat-label ${pm.cls}">${esc(pm.label)}</span>`;
     grid.appendChild(header);
-
-    // Post embed cards row
-    const row = document.createElement('div');
-    row.className = 'tposts-row';
-
-    posts.slice(0, 10).forEach((post, idx) => {
-      const caption = typeof post === 'object' ? (post.caption || '') : String(post);
-      const postUrl = typeof post === 'object' ? (post.url || null) : null;
-      const embedHtml = postUrl ? buildPostEmbed(postUrl, caption, plat, idx) : buildPostNoUrl(caption, idx);
-
-      const tile = document.createElement('div');
-      tile.className = 'post-tile';
-      tile.innerHTML = embedHtml;
+    const row=document.createElement('div'); row.className='tposts-row';
+    posts.slice(0,10).forEach((post,idx)=>{
+      const caption=typeof post==='object'?(post.caption||''):String(post);
+      const postUrl=typeof post==='object'?(post.url||null):null;
+      const embedHtml=postUrl?buildPostEmbed(postUrl,caption,plat,idx):buildPostNoUrl(caption,idx);
+      const tile=document.createElement('div'); tile.className='post-tile'; tile.innerHTML=embedHtml;
       row.appendChild(tile);
     });
-
     grid.appendChild(row);
   });
-
-  section.style.display = grid.children.length ? 'block' : 'none';
+  section.style.display=grid.children.length?'block':'none';
 }
+
+// ── Calculation Tree ──────────────────────────────────────────────────────────
 
 function renderCalcTree(data) {
   const card = document.getElementById('calcTreeCard');
@@ -1218,56 +1203,74 @@ function renderCalcTree(data) {
   if (!card || !body) return;
 
   const a = data.assumptions;
-  if (!a) { card.style.display = 'none'; return; }
+  if (!a) { card.style.display='none'; return; }
   card.style.display = 'block';
 
-  // Set CPM override input to current value
   const cpmInput = document.getElementById('cpmOverride');
   if (cpmInput && !cpmInput._seeded) {
-    cpmInput.value = a.cpm_rate_usd || 15.0;
+    cpmInput.value = typeof a.cpm_rate_usd === 'number' ? a.cpm_rate_usd : 0;
     cpmInput._seeded = true;
   }
 
-  const brandColors = BRAND_COLORS;
+  const pt = a.post_type || 'both';
 
   let html = `
     <div class="calc-assumptions">
-      <div class="calc-pill">CPM Rate: <strong>$${a.cpm_rate_usd || '—'}</strong></div>
-      <div class="calc-pill">Data Source: <strong>${esc(a.data_source || 'Web search')}</strong></div>
-      <div class="calc-pill">Total Engagement: <strong>${fmt(a.total_engagement)}</strong></div>
-      <div class="calc-pill">Total Est. Spend: <strong>$${fmt(a.total_spend_usd)}</strong></div>
+      <div class="calc-pill">Content Type: <strong>${esc(pt)}</strong></div>
+      <div class="calc-pill">Data Source: <strong>${esc(a.data_source||'Web search')}</strong></div>
+      <div class="calc-pill">Total Interactions: <strong>${fmt(a.total_interactions)}</strong></div>
+      <div class="calc-pill">Total Impressions: <strong>${fmt(a.total_impressions)}</strong></div>
+      <div class="calc-pill">Est. Paid Value: <strong>$${fmt(a.total_spend_paid_usd)}</strong></div>
+      <div class="calc-pill">Est. Organic Value: <strong>$${fmt(a.total_spend_org_usd)}</strong></div>
+      <div class="calc-pill total">Est. Total Media Value: <strong>$${fmt(a.total_spend_usd)}</strong></div>
     </div>
     <div class="calc-formula-row">
-      <div class="calc-formula-label">Spend Formula</div>
-      ${esc(a.spend_formula || '')}
+      <div class="calc-formula-label">CPM Note</div>${esc(a.cpm_note||'')}
     </div>
     <div class="calc-formula-row">
-      <div class="calc-formula-label">Engagement Rate Formula</div>
-      ${esc(a.engagement_formula || '')}
+      <div class="calc-formula-label">Paid Spend Formula</div>${esc(a.spend_formula_paid||'')}
     </div>
     <div class="calc-formula-row">
-      <div class="calc-formula-label">Caveats</div>
-      ${esc(a.engagement_proxy || '')} · ${esc(a.views_note || '')} · ${esc(a.cpm_note || '')}
+      <div class="calc-formula-label">Organic Value Formula</div>${esc(a.spend_formula_organic||'')}
+    </div>
+    <div class="calc-formula-row">
+      <div class="calc-formula-label">Mixed Formula</div>${esc(a.spend_formula_both||'')}
+    </div>
+    <div class="calc-formula-row">
+      <div class="calc-formula-label">Engagement Rate</div>${esc(a.engagement_rate_formula||'').replace(/\n/g,'<br>')}
+    </div>
+    <div class="calc-formula-row">
+      <div class="calc-formula-label">Benchmarks</div>${esc(a.benchmark_note||'')}
     </div>`;
 
   if (a.brand_breakdowns && a.brand_breakdowns.length) {
     html += '<div class="calc-brand-grid">';
     a.brand_breakdowns.forEach((b, i) => {
-      const color = brandColors[i % brandColors.length];
+      const color = BRAND_COLORS[i % BRAND_COLORS.length];
+      const erSign = (b.er_vs_benchmark||0) >= 0 ? '+' : '';
+      const erColor = (b.er_vs_benchmark||0) >= 0 ? 'var(--green)' : 'var(--red)';
       html += `
         <div class="calc-brand-card">
           <div class="calc-brand-name">
             <span style="width:8px;height:8px;border-radius:50%;background:${color};display:inline-block;flex-shrink:0;"></span>
             ${esc(b.brand)}
+            <span class="post-type-badge ${b.post_type||'both'}" style="font-size:0.62rem;margin-left:4px;">${esc(b.post_type||'both')}</span>
           </div>
+          <div class="calc-row"><span>Platform</span><span class="calc-val">${esc(b.platform||'—')}</span></div>
           <div class="calc-row"><span>Likes</span><span class="calc-val">${fmt(b.likes)}</span></div>
           <div class="calc-row"><span>Comments</span><span class="calc-val">${fmt(b.comments)}</span></div>
           <div class="calc-row"><span>Shares</span><span class="calc-val">${fmt(b.shares)}</span></div>
-          <div class="calc-row"><span>Views</span><span class="calc-val">${fmt(b.views)}</span></div>
-          <div class="calc-row"><span>Engagement</span><span class="calc-val accent">${fmt(b.engagement)}</span></div>
-          <div class="calc-row"><span>Eng. Rate</span><span class="calc-val green">${b.eng_rate_pct}%</span></div>
-          <div class="calc-row"><span>Est. Spend</span><span class="calc-val accent">$${fmt(b.spend_usd)}</span></div>
-          <div class="calc-formula-inline">${esc(b.formula || '')}</div>
+          <div class="calc-row"><span>Saves</span><span class="calc-val">${fmt(b.saves)}</span></div>
+          <div class="calc-row"><span>Views / Impressions</span><span class="calc-val">${fmt(b.views)}</span></div>
+          <div class="calc-row"><span>Followers</span><span class="calc-val">${fmt(b.followers)}</span></div>
+          <div class="calc-row"><span>Interactions</span><span class="calc-val accent">${fmt(b.interactions)}</span></div>
+          <div class="calc-row"><span>ER Denominator</span><span class="calc-val" style="font-size:0.72rem;">${fmt(b.er_denominator)} ${esc(b.er_denominator_label||'')}</span></div>
+          <div class="calc-row"><span>Engagement Rate</span><span class="calc-val green">${(b.engagement_rate||0).toFixed(2)}%</span></div>
+          <div class="calc-row"><span>vs Benchmark</span><span class="calc-val" style="color:${erColor};">${erSign}${(b.er_vs_benchmark||0).toFixed(2)}%</span></div>
+          <div class="calc-row"><span>CPM Used</span><span class="calc-val">$${b.cpm_used||'—'}</span></div>
+          <div class="calc-row"><span>Est. Value</span><span class="calc-val accent">$${fmt(b.spend_usd)}</span></div>
+          <div class="calc-formula-inline">${esc(b.spend_note||b.spend_formula||'')}</div>
+          <div class="calc-formula-inline" style="color:var(--text3);">${esc(b.er_formula||'')}</div>
         </div>`;
     });
     html += '</div>';
@@ -1276,201 +1279,58 @@ function renderCalcTree(data) {
   body.innerHTML = html;
 }
 
-// Recalc with new CPM rate
-document.addEventListener('DOMContentLoaded', () => {});
-(function wireRecalc() {
+// ── Recalc ────────────────────────────────────────────────────────────────────
+;(function wireRecalc() {
   const btn = document.getElementById('recalcBtn');
   if (!btn) return;
   btn.addEventListener('click', () => {
-    const newCpm = parseFloat(document.getElementById('cpmOverride').value);
-    if (!newCpm || !State.reportData) return;
+    const newCpm = parseFloat(document.getElementById('cpmOverride').value) || 0;
+    if (!State.reportData) return;
     const data = State.reportData;
     const a    = data.assumptions;
 
-    // Recompute every competitor spend
-    (data.competitors || []).forEach((c, i) => {
-      const m      = c.metrics || {};
-      const eng    = (m.likes||0) + (m.comments||0) + (m.shares||0);
-      c.estimated_spend_usd = Math.round((eng / 1000) * newCpm * 100) / 100;
+    const BENCH = { tiktok:5.0, instagram:1.5, facebook:0.8, youtube:2.0 };
+    const platCPM = { tiktok:3.50, instagram:8.00, youtube:9.50, facebook:7.50 };
+
+    ;(data.competitors||[]).forEach((c, i) => {
+      const m = c.metrics || {};
+      const plat = (c.platform||'').toLowerCase().split('/')[0].trim();
+      const cpm  = newCpm > 0 ? newCpm : (platCPM[plat] || 7.0);
+      const pt   = c.post_type || 'both';
+      const views = m.views || 0;
+      const interactions = (m.likes||0)+(m.comments||0)+(m.shares||0)+(m.saves||0);
+
+      let spend;
+      if      (pt==='paid')    spend = Math.round((views/1000)*cpm*100)/100;
+      else if (pt==='organic') spend = Math.round(interactions*0.75*100)/100;
+      else {
+        const paid_part = Math.round((views*0.60/1000)*cpm*100)/100;
+        const org_part  = Math.round(interactions*0.40*0.75*100)/100;
+        spend = Math.round((paid_part+org_part)*100)/100;
+      }
+      c.estimated_spend_usd = spend;
+      c.cpm_used = cpm;
+
       if (a && a.brand_breakdowns && a.brand_breakdowns[i]) {
         const b = a.brand_breakdowns[i];
-        b.spend_usd = c.estimated_spend_usd;
-        b.formula = `(${b.likes} likes + ${b.comments} comments + ${b.shares} shares) / 1000 × $${newCpm} CPM`;
+        b.spend_usd  = spend;
+        b.cpm_used   = cpm;
+        b.spend_note = newCpm > 0
+          ? `Recalc using user CPM $${newCpm}`
+          : `Recalc using platform default CPM $${cpm}`;
       }
     });
+
     if (a) {
-      a.cpm_rate_usd   = newCpm;
-      a.cpm_note       = `CPM of $${newCpm} applied uniformly across all platforms. Adjust in Config.`;
-      a.total_spend_usd = Math.round((data.competitors || []).reduce((s, c) => s + (c.estimated_spend_usd||0), 0) * 100) / 100;
+      a.cpm_rate_usd    = newCpm > 0 ? newCpm : 'per-platform defaults';
+      a.cpm_note        = newCpm > 0 ? `User-set CPM override: $${newCpm}` : 'Platform defaults restored.';
+      a.total_spend_usd = Math.round((data.competitors||[]).reduce((s,c)=>s+(c.estimated_spend_usd||0),0)*100)/100;
     }
 
+    if (cpmInput) cpmInput._seeded = false;
     renderResults(data);
   });
 })();
-
-function buildContextBar(params, comp) {
-  const bar = document.getElementById('contextBar');
-
-  // Derive all platforms present in data (union of params + actual competitor data)
-  const paramPlats = params.platforms || [];
-  const dataPlats  = [...new Set(comp.map(c => c.platform).filter(Boolean))];
-  const allPlats   = [...new Set([...paramPlats, ...dataPlats])];
-
-  // Initialise activePlatforms to all on first build
-  if (State.activePlatforms.size === 0) {
-    allPlats.forEach(p => State.activePlatforms.add(p));
-  }
-
-  const parts = [];
-  if (params.advertiser) parts.push(`<strong>${esc(params.advertiser)}</strong>`);
-  if (params.competitors && params.competitors.length)
-    parts.push('vs ' + params.competitors.map(c => `<span class="ctx-badge">${esc(c)}</span>`).join(' '));
-  if (params.country) parts.push(`<span class="ctx-sep">·</span> ${esc(params.country)}`);
-  if (params.date_range) parts.push(`<span class="ctx-sep">·</span> ${esc(params.date_range)}`);
-
-  // Platform filter pills — always shown if platforms exist
-  let pillsHtml = '';
-  if (allPlats.length) {
-    const pillList = allPlats.map(p => {
-      const active = State.activePlatforms.has(p);
-      const pm = platformMeta(p);
-      return `<button class="ctx-plat-pill ${pm.cls} ${active ? 'active' : ''}" data-plat="${esc(p)}">${esc(p)}</button>`;
-    }).join('');
-    pillsHtml = `<span class="ctx-sep">·</span><span class="ctx-pills-wrap">${pillList}</span>`;
-  }
-
-  if (!parts.length && comp.length) parts.push(`${comp.length} competitor(s) analysed`);
-  bar.innerHTML = (parts.join(' ') || 'Scan complete') + pillsHtml;
-
-  // Wire pill clicks
-  bar.querySelectorAll('.ctx-plat-pill').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const plat = btn.dataset.plat;
-      if (State.activePlatforms.has(plat)) {
-        // Don't allow deselecting the last pill
-        if (State.activePlatforms.size === 1) return;
-        State.activePlatforms.delete(plat);
-        btn.classList.remove('active');
-      } else {
-        State.activePlatforms.add(plat);
-        btn.classList.add('active');
-      }
-      renderResultsFiltered();
-    });
-  });
-}
-
-// Re-render KPIs, charts, table, top posts using current platform filter
-function filteredComp() {
-  if (!State.reportData) return [];
-  const all = State.reportData.competitors || [];
-  if (State.activePlatforms.size === 0) return all;
-  return all.filter(c => State.activePlatforms.has(c.platform));
-}
-
-function renderResultsFiltered() {
-  const data = State.reportData;
-  if (!data) return;
-  const comp     = filteredComp();
-  const bgColors = comp.map((_, i) => BRAND_COLORS[i % BRAND_COLORS.length]);
-
-  // KPIs
-  const totalSpend  = comp.reduce((s, c) => s + (c.estimated_spend_usd || 0), 0);
-  const avgEngage   = comp.length ? comp.reduce((s, c) => s + (c.engagement_rate || 0), 0) / comp.length : 0;
-  const platformCts = {};
-  comp.forEach(c => { const p = c.platform || 'Unknown'; platformCts[p] = (platformCts[p] || 0) + 1; });
-  const topPlatform = Object.entries(platformCts).sort((a,b) => b[1]-a[1])[0]?.[0] || '—';
-
-  document.getElementById('kpiCount').textContent    = comp.length;
-  document.getElementById('kpiSpend').textContent    = '$' + totalSpend.toLocaleString(undefined, {maximumFractionDigits:0});
-  document.getElementById('kpiEngage').textContent   = avgEngage.toFixed(2) + '%';
-  document.getElementById('kpiPlatform').textContent = topPlatform;
-
-  // Charts
-  const labels  = comp.map(c => c.name || c.handle || '?');
-  const spends  = comp.map(c => c.estimated_spend_usd || 0);
-  const engages = comp.map(c => c.engagement_rate || 0);
-
-  destroyCharts();
-
-  Charts.spend = new Chart(document.getElementById('spendChart').getContext('2d'), {
-    type: 'bar',
-    data: { labels, datasets: [{ data: spends, backgroundColor: bgColors, borderRadius: 5, borderSkipped: false }] },
-    options: { ...CHART_OPTS },
-  });
-  Charts.engage = new Chart(document.getElementById('engageChart').getContext('2d'), {
-    type: 'line',
-    data: { labels, datasets: [{ data: engages, borderColor: C.accent, backgroundColor: C.accentLt,
-      tension: 0.4, fill: true, pointBackgroundColor: C.accent, pointRadius: 5,
-      pointBorderColor: '#050a14', pointBorderWidth: 2 }] },
-    options: { ...CHART_OPTS },
-  });
-
-  const platLabels = Object.keys(platformCts);
-  const platData   = platLabels.map(k => platformCts[k]);
-  Charts.platform = new Chart(document.getElementById('platformChart').getContext('2d'), {
-    type: 'doughnut',
-    data: { labels: platLabels, datasets: [{ data: platData, backgroundColor: bgColors,
-      hoverOffset: 6, borderColor: '#060d1c', borderWidth: 2 }] },
-    options: { responsive: true, cutout: '62%',
-      plugins: { legend: { display: true, position: 'right', labels: { font: { size: 11 }, color: '#8b949e' } } } },
-  });
-
-  const sentCts = { Positive: 0, Neutral: 0, Negative: 0 };
-  comp.forEach(c => { sentCts[c.sentiment] = (sentCts[c.sentiment] || 0) + 1; });
-  Charts.sentiment = new Chart(document.getElementById('sentimentChart').getContext('2d'), {
-    type: 'bar',
-    data: { labels: Object.keys(sentCts), datasets: [{
-      data: Object.values(sentCts),
-      backgroundColor: ['rgba(34,197,94,0.18)', 'rgba(245,158,11,0.18)', 'rgba(248,81,73,0.18)'],
-      borderColor: [C.green, C.amber, C.red], borderWidth: 2, borderRadius: 5, borderSkipped: false,
-    }] },
-    options: { ...CHART_OPTS, plugins: { legend: { display: false } } },
-  });
-
-  // Content intel
-  renderContentIntel(comp, bgColors);
-
-  // Table
-  const tbody = document.getElementById('resultsTableBody');
-  tbody.innerHTML = comp.map((c, i) => {
-    const m = c.metrics || {};
-    const sentClass = (c.sentiment || '').toLowerCase();
-    const color = bgColors[i % bgColors.length];
-    return `<tr>
-      <td><span style="display:inline-flex;align-items:center;gap:7px;">
-        <span style="width:8px;height:8px;border-radius:50%;background:${color};display:inline-block;flex-shrink:0;"></span>
-        <strong>${esc(c.name || '—')}</strong>
-      </span></td>
-      <td style="color:#64748b;">${esc(c.handle || '—')}</td>
-      <td><span class="platform-badge">${esc(c.platform || 'Multi')}</span></td>
-      <td>${fmt(m.likes)}</td><td>${fmt(m.comments)}</td>
-      <td>${fmt(m.shares)}</td><td>${fmt(m.views)}</td>
-      <td><strong>${(c.engagement_rate || 0).toFixed(2)}%</strong></td>
-      <td style="color:#2563eb;font-weight:700;">$${(c.estimated_spend_usd || 0).toLocaleString(undefined,{maximumFractionDigits:0})}</td>
-      <td><span class="sentiment-badge ${sentClass}">${esc(c.sentiment || '—')}</span></td>
-    </tr>`;
-  }).join('');
-
-  // Top posts (pass filtered data object)
-  renderTopPosts({ competitors: comp });
-
-  // Calc tree (always uses full data — assumptions are scan-wide)
-  renderCalcTree(data);
-}
-
-function destroyCharts() {
-  Object.keys(Charts).forEach(k => { if (Charts[k]) { Charts[k].destroy(); Charts[k] = null; } });
-}
-
-function fmt(n) { return n != null ? Number(n).toLocaleString() : '—'; }
-function esc(s) {
-  return String(s)
-    .replace(/&/g,'&amp;')
-    .replace(/</g,'&lt;')
-    .replace(/>/g,'&gt;')
-    .replace(/"/g,'&quot;');
-}
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // EXPORT
@@ -1478,51 +1338,68 @@ function esc(s) {
 
 document.getElementById('exportJson').addEventListener('click', () => {
   if (!State.reportData) return;
-  const blob = new Blob([JSON.stringify(State.reportData, null, 2)], { type: 'application/json' });
+  const blob = new Blob([JSON.stringify(State.reportData,null,2)], {type:'application/json'});
   const url  = URL.createObjectURL(blob);
   const a    = document.createElement('a');
-  a.href = url; a.download = 'sociallisten-report.json';
+  a.href=url; a.download='hermes-report.json';
   document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
 });
 
 document.getElementById('exportCsv').addEventListener('click', () => {
-  if (!State.reportData || !State.reportData.competitors) return;
-  const cols = ['name','handle','platform','likes','comments','shares','views','engagement_rate','estimated_spend_usd','sentiment'];
+  if (!State.reportData||!State.reportData.competitors) return;
+  const cols = ['name','handle','platform','post_type','likes','comments','shares','saves','views','followers','engagement_rate','benchmark_er','er_vs_benchmark','estimated_spend_usd','cpm_used','sentiment'];
   const rows = State.reportData.competitors.map(c => {
-    const m = c.metrics || {};
-    return [c.name, c.handle, c.platform, m.likes, m.comments, m.shares, m.views,
-            c.engagement_rate, c.estimated_spend_usd, c.sentiment]
-      .map(v => `"${String(v||'').replace(/"/g,'""')}"`)
+    const m = c.metrics||{};
+    return [c.name,c.handle,c.platform,c.post_type,m.likes,m.comments,m.shares,m.saves,m.views,m.followers,
+            c.engagement_rate,c.benchmark_er_pct,c.er_vs_benchmark,c.estimated_spend_usd,c.cpm_used,c.sentiment]
+      .map(v=>`"${String(v||'').replace(/"/g,'""')}"`)
       .join(',');
   });
-  const csv  = [cols.join(','), ...rows].join('\n');
-  const blob = new Blob([csv], { type: 'text/csv' });
+  const csv  = [cols.join(','),...rows].join('\n');
+  const blob = new Blob([csv],{type:'text/csv'});
   const url  = URL.createObjectURL(blob);
   const a    = document.createElement('a');
-  a.href = url; a.download = 'sociallisten-report.csv';
+  a.href=url; a.download='hermes-report.csv';
   document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
 });
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// INIT — check server connection + pre-load any existing report
+// HELPERS
+// ═══════════════════════════════════════════════════════════════════════════════
+
+function fmt(n)     { return n!=null ? Number(n).toLocaleString() : '—'; }
+function fmtShort(n) {
+  if (n == null) return '—';
+  if (n >= 1e9)  return (n/1e9).toFixed(1) + 'B';
+  if (n >= 1e6)  return (n/1e6).toFixed(1) + 'M';
+  if (n >= 1e3)  return (n/1e3).toFixed(1) + 'K';
+  return String(n);
+}
+function esc(s) {
+  return String(s)
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+function destroyCharts() {
+  Object.keys(Charts).forEach(k=>{if(Charts[k]){Charts[k].destroy();Charts[k]=null;}});
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// INIT — server ping + pre-load existing report
 // ═══════════════════════════════════════════════════════════════════════════════
 
 (async function init() {
-  // Ping server
   try {
     const s = await fetch('/status').then(r => r.json());
     setLiveBadge(s.running);
     if (s.running) {
-      // Analysis in progress — jump to network view, start polling
       updateDots('running');
       State.pollInterval = setInterval(pollStatus, 2000);
       showPage('network');
       showLogPanel(true);
       setLogStatus('running', 'Analysis in progress…');
     }
-  } catch(e) { /* server offline */ }
+  } catch(e) {}
 
-  // Load existing report if any
   try {
     const rep = await fetch('/report').then(r => r.json());
     if (rep && rep.competitors && rep.competitors.length) {
