@@ -84,9 +84,11 @@ HARD_DEADLINE = int(os.getenv("HARD_DEADLINE", "570"))   # 9.5 min — leaves 30
 
 def run_pipeline(params: dict):
     query     = _build_query(params)
-    cpm_rate  = float(params.get("cpm_rate", 0)) or None  # None → per-platform defaults
+    cpm_rate  = float(params.get("cpm_rate", 0)) or None  # None → auto (market×industry×seasonal)
     depth     = params.get("depth", "deep")
     post_type = params.get("post_type", "both")
+    country   = params.get("country", "").strip()
+    industry  = params.get("industry", "").strip()
 
     # Normalise advertisers list
     advertisers = params.get("advertisers") or []
@@ -238,7 +240,7 @@ def run_pipeline(params: dict):
     if _state_hook:
         _state_hook("gate", "active")
     print("Running Approval Gate…", flush=True)
-    gate = ApprovalGate(cpm_rate=cpm_rate, post_type=post_type)
+    gate = ApprovalGate(cpm_rate=cpm_rate, post_type=post_type, country=country, industry=industry)
     final_json_str = gate.process_final_report(str(raw_output))
     if _state_hook:
         _state_hook("gate", "done")

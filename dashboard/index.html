@@ -70,7 +70,7 @@
           </div>
         </div>
 
-        <!-- Row 2: Country + CPM -->
+        <!-- Row 2: Country + Industry -->
         <div class="form-row">
           <div class="form-group">
             <label class="form-label" for="country">Country / Market</label>
@@ -98,13 +98,42 @@
             </select>
           </div>
           <div class="form-group">
+            <label class="form-label" for="industry">
+              Industry / Vertical
+              <span class="form-hint">Adjusts CPM benchmarks to category norms</span>
+            </label>
+            <select class="form-input" id="industry">
+              <option value="">General / Mixed</option>
+              <option value="fmcg">FMCG / CPG</option>
+              <option value="food_bev">Food &amp; Beverage</option>
+              <option value="beauty">Beauty &amp; Personal Care</option>
+              <option value="fashion">Fashion &amp; Apparel</option>
+              <option value="retail">Retail &amp; E-commerce</option>
+              <option value="tech">Technology &amp; Electronics</option>
+              <option value="telco">Telecoms</option>
+              <option value="finance">Financial Services</option>
+              <option value="insurance">Insurance</option>
+              <option value="automotive">Automotive</option>
+              <option value="travel">Travel &amp; Hospitality</option>
+              <option value="health">Health &amp; Pharma</option>
+              <option value="entertainment">Entertainment &amp; Media</option>
+              <option value="gaming">Gaming</option>
+              <option value="education">Education</option>
+              <option value="real_estate">Real Estate</option>
+            </select>
+          </div>
+        </div>
+
+        <!-- Row 2b: CPM Override -->
+        <div class="form-row">
+          <div class="form-group" style="flex:1;">
             <label class="form-label" for="cpmRate">
               CPM Override ($ per 1,000 impressions)
-              <span class="form-hint">Leave at 0 to use platform defaults (TikTok $3.50, IG $8, YT $9.50, FB $7.50)</span>
+              <span class="form-hint" id="cpmHint">Leave at 0 to use market + industry defaults</span>
             </label>
             <div class="cpm-wrap">
               <span class="cpm-prefix">$</span>
-              <input class="form-input" id="cpmRate" type="number" value="0" min="0" step="0.01" placeholder="0 = platform defaults">
+              <input class="form-input" id="cpmRate" type="number" value="0" min="0" step="0.01" placeholder="0 = auto (market × industry × seasonal)">
             </div>
           </div>
         </div>

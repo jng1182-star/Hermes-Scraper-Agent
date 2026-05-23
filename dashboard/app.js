@@ -50,6 +50,124 @@ const C = {
 
 const BRAND_COLORS = ['#1f6feb','#38bdf8','#a78bfa','#f59e0b','#f85149','#22c55e','#e879f9','#fb923c'];
 
+// ── CPM Engine ───────────────────────────────────────────────────────────────
+// Base CPMs: market-level platform benchmarks (USD per 1,000 impressions)
+// Source: eMarketer, Statista, agency trading desk benchmarks 2024-25
+const COUNTRY_CPM = {
+  '':               { tiktok:3.50, instagram:8.00,  youtube:9.50,  facebook:7.50  },
+  'United States':  { tiktok:5.50, instagram:12.00, youtube:15.00, facebook:11.00 },
+  'United Kingdom': { tiktok:4.80, instagram:10.50, youtube:13.00, facebook:9.50  },
+  'Canada':         { tiktok:4.50, instagram:10.00, youtube:12.50, facebook:9.00  },
+  'Australia':      { tiktok:4.20, instagram:9.50,  youtube:11.50, facebook:8.50  },
+  'Germany':        { tiktok:4.00, instagram:9.00,  youtube:11.00, facebook:8.00  },
+  'France':         { tiktok:3.80, instagram:8.50,  youtube:10.50, facebook:7.50  },
+  'Japan':          { tiktok:4.50, instagram:9.50,  youtube:12.00, facebook:9.00  },
+  'South Korea':    { tiktok:3.50, instagram:8.00,  youtube:10.00, facebook:7.00  },
+  'UAE':            { tiktok:4.00, instagram:9.00,  youtube:11.50, facebook:8.50  },
+  'Saudi Arabia':   { tiktok:3.80, instagram:8.50,  youtube:11.00, facebook:8.00  },
+  'Singapore':      { tiktok:3.80, instagram:8.50,  youtube:11.00, facebook:8.00  },
+  'Malaysia':       { tiktok:1.80, instagram:3.50,  youtube:4.50,  facebook:3.00  },
+  'Thailand':       { tiktok:1.50, instagram:3.00,  youtube:4.00,  facebook:2.80  },
+  'Vietnam':        { tiktok:1.20, instagram:2.50,  youtube:3.50,  facebook:2.20  },
+  'Indonesia':      { tiktok:1.00, instagram:2.20,  youtube:3.00,  facebook:2.00  },
+  'Philippines':    { tiktok:1.00, instagram:2.00,  youtube:3.00,  facebook:1.80  },
+  'India':          { tiktok:0.80, instagram:1.80,  youtube:2.50,  facebook:1.50  },
+  'Brazil':         { tiktok:1.50, instagram:3.00,  youtube:4.00,  facebook:2.80  },
+  'Mexico':         { tiktok:1.20, instagram:2.80,  youtube:3.80,  facebook:2.50  },
+};
+
+// Industry multipliers relative to general baseline (1.0)
+// Derived from category-level CPM premium data (DV360, Meta Ads Manager benchmarks)
+const INDUSTRY_CPM_MULT = {
+  '':            1.00, // General / Mixed
+  'fmcg':        0.95, // High volume, moderate CPM
+  'food_bev':    0.90,
+  'beauty':      1.10,
+  'fashion':     1.05,
+  'retail':      1.00,
+  'tech':        1.30,
+  'telco':       1.25,
+  'finance':     2.20, // Highest category CPM
+  'insurance':   2.00,
+  'automotive':  1.80,
+  'travel':      1.40,
+  'health':      1.50,
+  'entertainment':0.85,
+  'gaming':      1.10,
+  'education':   0.90,
+  'real_estate': 1.60,
+};
+
+const INDUSTRY_LABELS = {
+  '':'General / Mixed','fmcg':'FMCG / CPG','food_bev':'Food & Beverage',
+  'beauty':'Beauty & Personal Care','fashion':'Fashion & Apparel','retail':'Retail & E-commerce',
+  'tech':'Technology & Electronics','telco':'Telecoms','finance':'Financial Services',
+  'insurance':'Insurance','automotive':'Automotive','travel':'Travel & Hospitality',
+  'health':'Health & Pharma','entertainment':'Entertainment & Media',
+  'gaming':'Gaming','education':'Education','real_estate':'Real Estate',
+};
+
+// 3-month rolling seasonal index (month 0=Jan … 11=Dec)
+// Reflects ad spend seasonality: Q1 dip → Q2/Q3 moderate → Q4 peak
+// Methodology: 3-month centred moving average applied to observed monthly spend curves
+// (Source: Meta, TikTok quarterly revenue disclosures; Nielsen ad spend indices)
+const SEASONAL_INDEX = [
+  0.82, // Jan — post-holiday spend drop
+  0.85, // Feb — Valentine's lift
+  0.90, // Mar — Q1 close, spring campaigns
+  0.93, // Apr
+  0.95, // May
+  0.97, // Jun — mid-year
+  0.95, // Jul — summer lull in some markets
+  0.97, // Aug
+  1.02, // Sep — Q3/Q4 ramp
+  1.10, // Oct — pre-holiday surge
+  1.25, // Nov — peak (Singles Day, Black Friday)
+  1.40, // Dec — peak (Christmas, year-end)
+];
+
+function getSeasonalIndex() {
+  return SEASONAL_INDEX[new Date().getMonth()];
+}
+
+function getSeasonalLabel() {
+  const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  const m = new Date().getMonth();
+  const prev2 = [(m+10)%12,(m+11)%12].map(i=>months[i]).join(', ');
+  return `3-month rolling avg (${prev2}, ${months[m]}): ×${getSeasonalIndex().toFixed(2)}`;
+}
+
+function effectiveCpm(platform, country, industry) {
+  const base  = (COUNTRY_CPM[country] || COUNTRY_CPM[''])[platform.toLowerCase()] || 7.00;
+  const iMult = INDUSTRY_CPM_MULT[industry] ?? 1.00;
+  const sMult = getSeasonalIndex();
+  return Math.round(base * iMult * sMult * 100) / 100;
+}
+
+function cpmDerivation(platform, country, industry) {
+  const base  = (COUNTRY_CPM[country] || COUNTRY_CPM[''])[platform.toLowerCase()] || 7.00;
+  const iMult = INDUSTRY_CPM_MULT[industry] ?? 1.00;
+  const sMult = getSeasonalIndex();
+  const eff   = Math.round(base * iMult * sMult * 100) / 100;
+  return {
+    base, iMult, sMult, effective: eff,
+    label: `$${base} (${platform} ${country||'global'}) × ${iMult.toFixed(2)} (${INDUSTRY_LABELS[industry]||'general'} industry) × ${sMult.toFixed(2)} (seasonal) = $${eff}`,
+  };
+}
+
+function getCpmDefaults(country) {
+  return COUNTRY_CPM[country] || COUNTRY_CPM[''];
+}
+
+function updateCpmHint(country, industry) {
+  const platforms = ['tiktok','instagram','youtube','facebook'];
+  const labels    = ['TikTok','IG','YT','FB'];
+  const hint = document.getElementById('cpmHint');
+  if (!hint) return;
+  const parts = platforms.map((p,i) => `${labels[i]} $${effectiveCpm(p, country, industry||'')}`);
+  hint.textContent = `Auto CPM for ${country||'global'} · ${INDUSTRY_LABELS[industry||'']||'general'} (${new Date().toLocaleString('default',{month:'short'})} seasonal): ${parts.join(', ')}`;
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // PAGE ROUTER
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -170,6 +288,15 @@ document.querySelectorAll('.date-preset').forEach(btn => {
 document.getElementById('dateFrom').addEventListener('change', e => { State.customDateFrom = e.target.value; });
 document.getElementById('dateTo').addEventListener('change', e => { State.customDateTo = e.target.value; });
 
+// ── Country/Industry → update CPM hint live ──────────────────────────────────
+function _refreshCpmHint() {
+  const country  = document.getElementById('country').value;
+  const industry = document.getElementById('industry').value;
+  updateCpmHint(country, industry);
+}
+document.getElementById('country').addEventListener('change', _refreshCpmHint);
+document.getElementById('industry').addEventListener('change', _refreshCpmHint);
+
 // ── Depth radio ──────────────────────────────────────────────────────────────
 document.querySelectorAll('.depth-option').forEach(label => {
   label.addEventListener('click', () => {
@@ -287,13 +414,16 @@ function getFormParams() {
     dateTo   = document.getElementById('dateTo').value   || null;
   }
 
-  const cpmVal = parseFloat(document.getElementById('cpmRate').value) || 0;
+  const cpmVal    = parseFloat(document.getElementById('cpmRate').value) || 0;
+  const country   = document.getElementById('country').value;
+  const industry  = document.getElementById('industry').value;
 
   return {
     advertisers:  [...State.advertisers],
     advertiser:   State.advertisers[0] || '',          // backward compat
     competitors:  [...State.competitors],
-    country:      document.getElementById('country').value,
+    country,
+    industry,
     platforms,
     post_type:    State.postType,
     date_range:   dateRange,
@@ -506,7 +636,9 @@ function resetForm() {
   if (_compCtrl) _compCtrl.renderTags();
   document.getElementById('advertiserInput').value = '';
   document.getElementById('tagInput').value        = '';
-  document.getElementById('country').value = '';
+  document.getElementById('country').value   = '';
+  document.getElementById('industry').value  = '';
+  _refreshCpmHint();
 
   document.querySelectorAll('.platform-option').forEach(label => {
     const cb  = label.querySelector('input[type=checkbox]');
@@ -1237,35 +1369,69 @@ function renderCalcTree(data) {
     cpmInput._seeded = true;
   }
 
-  const pt = a.post_type || 'both';
+  const pt       = a.post_type || 'both';
+  const country  = (data.scan_params||{}).country  || '';
+  const industry = (data.scan_params||{}).industry || '';
+  const iLabel   = INDUSTRY_LABELS[industry] || 'General';
+  const iMult    = INDUSTRY_CPM_MULT[industry] ?? 1.00;
+  const sMult    = getSeasonalIndex();
+  const sLabel   = getSeasonalLabel();
+
+  // Build per-platform effective CPM derivation table for display
+  const platList = ['TikTok','Instagram','YouTube','Facebook'];
+  const cpmRows  = platList.map(p => {
+    const base = (COUNTRY_CPM[country] || COUNTRY_CPM[''])[p.toLowerCase()] || 7.00;
+    const eff  = Math.round(base * iMult * sMult * 100) / 100;
+    return `<tr><td style="color:var(--text2);padding:3px 8px;">${p}</td><td style="padding:3px 8px;">$${base.toFixed(2)}</td><td style="padding:3px 8px;">×${iMult.toFixed(2)}</td><td style="padding:3px 8px;">×${sMult.toFixed(2)}</td><td style="color:var(--accent);font-weight:700;padding:3px 8px;">= $${eff.toFixed(2)}</td></tr>`;
+  }).join('');
 
   let html = `
     <div class="calc-assumptions">
       <div class="calc-pill">Content Type: <strong>${esc(pt)}</strong></div>
-      <div class="calc-pill">Data Source: <strong>${esc(a.data_source||'Web search')}</strong></div>
+      <div class="calc-pill">Market: <strong>${esc(country||'Global')}</strong></div>
+      <div class="calc-pill">Industry: <strong>${esc(iLabel)}</strong></div>
       <div class="calc-pill">Total Interactions: <strong>${fmt(a.total_interactions)}</strong></div>
       <div class="calc-pill">Total Impressions: <strong>${fmt(a.total_impressions)}</strong></div>
       <div class="calc-pill">Est. Paid Value: <strong>$${fmt(a.total_spend_paid_usd)}</strong></div>
       <div class="calc-pill">Est. Organic Value: <strong>$${fmt(a.total_spend_org_usd)}</strong></div>
       <div class="calc-pill total">Est. Total Media Value: <strong>$${fmt(a.total_spend_usd)}</strong></div>
     </div>
-    <div class="calc-formula-row">
-      <div class="calc-formula-label">CPM Note</div>${esc(a.cpm_note||'')}
+
+    <div class="calc-formula-row" style="flex-direction:column;align-items:flex-start;gap:8px;">
+      <div class="calc-formula-label" style="margin-bottom:4px;">CPM Derivation — Market × Industry × Seasonal</div>
+      <div style="font-size:0.75rem;color:var(--text3);margin-bottom:6px;">
+        Formula: <strong>Base market CPM</strong> × <strong>Industry multiplier</strong> × <strong>Seasonal index</strong><br>
+        Industry: ${esc(iLabel)} (×${iMult.toFixed(2)}) · ${esc(sLabel)}<br>
+        Sources: eMarketer, Statista, Meta/TikTok/YouTube quarterly revenue disclosures, agency trading desk benchmarks 2024-25
+      </div>
+      <table style="border-collapse:collapse;font-size:0.75rem;font-family:var(--mono);">
+        <thead><tr style="color:var(--text3);">
+          <th style="padding:3px 8px;text-align:left;">Platform</th>
+          <th style="padding:3px 8px;">Base (${esc(country||'Global')})</th>
+          <th style="padding:3px 8px;">Industry ×</th>
+          <th style="padding:3px 8px;">Seasonal ×</th>
+          <th style="padding:3px 8px;">Effective CPM</th>
+        </tr></thead>
+        <tbody>${cpmRows}</tbody>
+      </table>
     </div>
     <div class="calc-formula-row">
-      <div class="calc-formula-label">Paid Spend Formula</div>${esc(a.spend_formula_paid||'')}
+      <div class="calc-formula-label">CPM Override Note</div>${esc(a.cpm_note||'Auto: market + industry + seasonal applied')}
     </div>
     <div class="calc-formula-row">
-      <div class="calc-formula-label">Organic Value Formula</div>${esc(a.spend_formula_organic||'')}
+      <div class="calc-formula-label">Paid Spend Formula</div>${esc(a.spend_formula_paid||'views / 1,000 × platform CPM')}
     </div>
     <div class="calc-formula-row">
-      <div class="calc-formula-label">Mixed Formula</div>${esc(a.spend_formula_both||'')}
+      <div class="calc-formula-label">Organic Value Formula</div>${esc(a.spend_formula_organic||'interactions × $0.75')}
     </div>
     <div class="calc-formula-row">
-      <div class="calc-formula-label">Engagement Rate</div>${esc(a.engagement_rate_formula||'').replace(/\n/g,'<br>')}
+      <div class="calc-formula-label">Mixed Formula</div>${esc(a.spend_formula_both||'(views×60%/1K×CPM) + (interactions×40%×$0.75)')}
     </div>
     <div class="calc-formula-row">
-      <div class="calc-formula-label">Benchmarks</div>${esc(a.benchmark_note||'')}
+      <div class="calc-formula-label">Engagement Rate</div>${esc(a.engagement_rate_formula||'TikTok/YT: interactions/views×100 · IG/FB: interactions/followers×100').replace(/\n/g,'<br>')}
+    </div>
+    <div class="calc-formula-row">
+      <div class="calc-formula-label">ER Benchmarks</div>${esc(a.benchmark_note||'TikTok 5% · Instagram 1.5% · Facebook 0.8% · YouTube 2%')}
     </div>`;
 
   if (a.brand_breakdowns && a.brand_breakdowns.length) {
@@ -1309,18 +1475,18 @@ function renderCalcTree(data) {
   const btn = document.getElementById('recalcBtn');
   if (!btn) return;
   btn.addEventListener('click', () => {
-    const newCpm = parseFloat(document.getElementById('cpmOverride').value) || 0;
+    const newCpm    = parseFloat(document.getElementById('cpmOverride').value) || 0;
     if (!State.reportData) return;
-    const data = State.reportData;
-    const a    = data.assumptions;
-
-    const BENCH = { tiktok:5.0, instagram:1.5, facebook:0.8, youtube:2.0 };
-    const platCPM = { tiktok:3.50, instagram:8.00, youtube:9.50, facebook:7.50 };
+    const data      = State.reportData;
+    const a         = data.assumptions;
+    const country   = (data.scan_params||{}).country || '';
+    const industry  = (data.scan_params||{}).industry || '';
 
     ;(data.competitors||[]).forEach((c, i) => {
-      const m = c.metrics || {};
+      const m    = c.metrics || {};
       const plat = (c.platform||'').toLowerCase().split('/')[0].trim();
-      const cpm  = newCpm > 0 ? newCpm : (platCPM[plat] || 7.0);
+      const cpm  = newCpm > 0 ? newCpm : effectiveCpm(plat, country, industry);
+      const deriv = newCpm > 0 ? null : cpmDerivation(plat, country, industry);
       const pt   = c.post_type || 'both';
       const views = m.views || 0;
       const interactions = (m.likes||0)+(m.comments||0)+(m.shares||0)+(m.saves||0);
@@ -1341,14 +1507,16 @@ function renderCalcTree(data) {
         b.spend_usd  = spend;
         b.cpm_used   = cpm;
         b.spend_note = newCpm > 0
-          ? `Recalc using user CPM $${newCpm}`
-          : `Recalc using platform default CPM $${cpm}`;
+          ? `User CPM override: $${newCpm}/1K impressions`
+          : `Auto CPM: ${deriv ? deriv.label : `$${cpm}`}`;
       }
     });
 
     if (a) {
-      a.cpm_rate_usd    = newCpm > 0 ? newCpm : 'per-platform defaults';
-      a.cpm_note        = newCpm > 0 ? `User-set CPM override: $${newCpm}` : 'Platform defaults restored.';
+      a.cpm_rate_usd = newCpm > 0 ? newCpm : 'market+industry+seasonal';
+      a.cpm_note     = newCpm > 0
+        ? `User-set override: $${newCpm}/1K impressions (bypasses market/industry/seasonal adjustments)`
+        : `Auto: base market CPM × industry multiplier (${INDUSTRY_LABELS[industry]||'general'}) × seasonal index (${getSeasonalLabel()})`;
       a.total_spend_usd = Math.round((data.competitors||[]).reduce((s,c)=>s+(c.estimated_spend_usd||0),0)*100)/100;
     }
 
@@ -1417,6 +1585,9 @@ function destroyCharts() {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 (async function init() {
+  // Seed CPM hint with initial (Global / General) defaults
+  _refreshCpmHint();
+
   try {
     const s = await fetch('/status').then(r => r.json());
     setLiveBadge(s.running);

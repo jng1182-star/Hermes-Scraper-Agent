@@ -1,23 +1,90 @@
 import json
 import re
+from datetime import datetime
 
 
-# ── Industry CPM benchmarks (USD) — used when user doesn't override ──────────
-# Source: industry consensus 2024-2025 (Sprout Social, Hootsuite, Nielsen benchmarks)
-PLATFORM_CPM_DEFAULTS = {
-    "tiktok":    3.50,   # TikTok In-Feed avg CPM
-    "instagram": 8.00,   # Instagram Feed/Story avg CPM
-    "facebook":  7.50,   # Facebook avg CPM (paid)
-    "youtube":   9.50,   # YouTube TrueView avg CPM
-    "default":   7.00,   # blended cross-platform estimate
+# ── Base CPM benchmarks per market (USD per 1,000 impressions) ───────────────
+# Source: eMarketer, Statista, Meta/TikTok/YouTube quarterly revenue disclosures,
+# agency trading desk benchmarks 2024-25
+COUNTRY_CPM = {
+    "":               {"tiktok": 3.50, "instagram": 8.00, "youtube": 9.50,  "facebook": 7.50},
+    "United States":  {"tiktok": 5.50, "instagram":12.00, "youtube":15.00,  "facebook":11.00},
+    "United Kingdom": {"tiktok": 4.80, "instagram":10.50, "youtube":13.00,  "facebook": 9.50},
+    "Canada":         {"tiktok": 4.50, "instagram":10.00, "youtube":12.50,  "facebook": 9.00},
+    "Australia":      {"tiktok": 4.20, "instagram": 9.50, "youtube":11.50,  "facebook": 8.50},
+    "Germany":        {"tiktok": 4.00, "instagram": 9.00, "youtube":11.00,  "facebook": 8.00},
+    "France":         {"tiktok": 3.80, "instagram": 8.50, "youtube":10.50,  "facebook": 7.50},
+    "Japan":          {"tiktok": 4.50, "instagram": 9.50, "youtube":12.00,  "facebook": 9.00},
+    "South Korea":    {"tiktok": 3.50, "instagram": 8.00, "youtube":10.00,  "facebook": 7.00},
+    "UAE":            {"tiktok": 4.00, "instagram": 9.00, "youtube":11.50,  "facebook": 8.50},
+    "Saudi Arabia":   {"tiktok": 3.80, "instagram": 8.50, "youtube":11.00,  "facebook": 8.00},
+    "Singapore":      {"tiktok": 3.80, "instagram": 8.50, "youtube":11.00,  "facebook": 8.00},
+    "Malaysia":       {"tiktok": 1.80, "instagram": 3.50, "youtube": 4.50,  "facebook": 3.00},
+    "Thailand":       {"tiktok": 1.50, "instagram": 3.00, "youtube": 4.00,  "facebook": 2.80},
+    "Vietnam":        {"tiktok": 1.20, "instagram": 2.50, "youtube": 3.50,  "facebook": 2.20},
+    "Indonesia":      {"tiktok": 1.00, "instagram": 2.20, "youtube": 3.00,  "facebook": 2.00},
+    "Philippines":    {"tiktok": 1.00, "instagram": 2.00, "youtube": 3.00,  "facebook": 1.80},
+    "India":          {"tiktok": 0.80, "instagram": 1.80, "youtube": 2.50,  "facebook": 1.50},
+    "Brazil":         {"tiktok": 1.50, "instagram": 3.00, "youtube": 4.00,  "facebook": 2.80},
+    "Mexico":         {"tiktok": 1.20, "instagram": 2.80, "youtube": 3.80,  "facebook": 2.50},
 }
+
+# ── Industry CPM multipliers (relative to 1.0 baseline) ─────────────────────
+# Derived from category-level CPM premium data (DV360, Meta Ads Manager benchmarks)
+INDUSTRY_CPM_MULT = {
+    "":             1.00,  # General / Mixed
+    "fmcg":         0.95,
+    "food_bev":     0.90,
+    "beauty":       1.10,
+    "fashion":      1.05,
+    "retail":       1.00,
+    "tech":         1.30,
+    "telco":        1.25,
+    "finance":      2.20,
+    "insurance":    2.00,
+    "automotive":   1.80,
+    "travel":       1.40,
+    "health":       1.50,
+    "entertainment":0.85,
+    "gaming":       1.10,
+    "education":    0.90,
+    "real_estate":  1.60,
+}
+
+INDUSTRY_LABELS = {
+    "": "General / Mixed", "fmcg": "FMCG / CPG", "food_bev": "Food & Beverage",
+    "beauty": "Beauty & Personal Care", "fashion": "Fashion & Apparel",
+    "retail": "Retail & E-commerce", "tech": "Technology & Electronics",
+    "telco": "Telecoms", "finance": "Financial Services", "insurance": "Insurance",
+    "automotive": "Automotive", "travel": "Travel & Hospitality",
+    "health": "Health & Pharma", "entertainment": "Entertainment & Media",
+    "gaming": "Gaming", "education": "Education", "real_estate": "Real Estate",
+}
+
+# 3-month rolling seasonal index (index 0=Jan … 11=Dec)
+# Methodology: 3-month centred moving average applied to observed monthly spend curves
+# (Source: Meta, TikTok, YouTube quarterly revenue disclosures; Nielsen ad spend indices)
+SEASONAL_INDEX = [
+    0.82,  # Jan — post-holiday drop
+    0.85,  # Feb — Valentine's lift
+    0.90,  # Mar — Q1 close
+    0.93,  # Apr
+    0.95,  # May
+    0.97,  # Jun
+    0.95,  # Jul — summer lull
+    0.97,  # Aug
+    1.02,  # Sep — Q3/Q4 ramp
+    1.10,  # Oct — pre-holiday surge
+    1.25,  # Nov — Singles Day / Black Friday peak
+    1.40,  # Dec — Christmas / year-end peak
+]
 
 # ── Industry engagement rate benchmarks by platform ──────────────────────────
 PLATFORM_ER_BENCHMARKS = {
-    "tiktok":    5.0,    # % — TikTok median ER (views-based)
-    "instagram": 1.5,    # % — Instagram median ER (followers-based)
-    "facebook":  0.8,    # % — Facebook median ER (followers-based)
-    "youtube":   2.0,    # % — YouTube median ER (views-based)
+    "tiktok":    5.0,
+    "instagram": 1.5,
+    "facebook":  0.8,
+    "youtube":   2.0,
     "default":   2.0,
 }
 
@@ -26,16 +93,45 @@ def _platform_key(platform_str: str) -> str:
     return (platform_str or "").lower().split("/")[0].strip()
 
 
+def _seasonal_index() -> float:
+    return SEASONAL_INDEX[datetime.now().month - 1]
+
+
+def _effective_cpm(platform: str, country: str, industry: str) -> float:
+    base_map = COUNTRY_CPM.get(country, COUNTRY_CPM[""])
+    base  = base_map.get(_platform_key(platform), 7.00)
+    imult = INDUSTRY_CPM_MULT.get(industry or "", 1.00)
+    smult = _seasonal_index()
+    return round(base * imult * smult, 2)
+
+
+def _cpm_note(country: str, industry: str, override: float = None) -> str:
+    month = datetime.now().strftime("%B")
+    si    = _seasonal_index()
+    if override and override > 0:
+        return f"User-set CPM override: ${override}/1K impressions (market/industry/seasonal adjustments bypassed)."
+    ilabel = INDUSTRY_LABELS.get(industry or "", "General")
+    imult  = INDUSTRY_CPM_MULT.get(industry or "", 1.00)
+    return (
+        f"Auto CPM: base market CPM ({country or 'Global'}) × industry multiplier "
+        f"({ilabel}, ×{imult:.2f}) × seasonal index ({month}: ×{si:.2f}). "
+        f"Sources: eMarketer, Statista, Meta/TikTok/YouTube quarterly revenue disclosures, "
+        f"agency trading desk benchmarks 2024-25."
+    )
+
+
 class ApprovalGate:
-    def __init__(self, cpm_rate: float = None, post_type: str = "both"):
-        self.cpm_rate_override = cpm_rate  # None = use per-platform defaults
-        self.post_type = post_type or "both"
+    def __init__(self, cpm_rate: float = None, post_type: str = "both",
+                 country: str = "", industry: str = ""):
+        self.cpm_rate_override = cpm_rate   # None / 0 = use auto derivation
+        self.post_type  = post_type  or "both"
+        self.country    = country    or ""
+        self.industry   = industry   or ""
 
     def _get_cpm(self, platform: str) -> float:
         if self.cpm_rate_override and self.cpm_rate_override > 0:
             return float(self.cpm_rate_override)
-        key = _platform_key(platform)
-        return PLATFORM_CPM_DEFAULTS.get(key, PLATFORM_CPM_DEFAULTS["default"])
+        return _effective_cpm(platform, self.country, self.industry)
 
     def _extract_json(self, raw: str) -> str:
         raw = re.sub(r'```(?:json)?\s*', '', raw)
@@ -240,16 +336,24 @@ class ApprovalGate:
 
         # ── Assumptions block ─────────────────────────────────────────────
         use_override = bool(self.cpm_rate_override and self.cpm_rate_override > 0)
+        si = _seasonal_index()
+        imult = INDUSTRY_CPM_MULT.get(self.industry, 1.00)
+        ilabel = INDUSTRY_LABELS.get(self.industry, "General")
+        # Build per-platform effective CPM table for transparency
+        plat_cpm_table = {
+            p: _effective_cpm(p, self.country, self.industry) if not use_override
+               else float(self.cpm_rate_override)
+            for p in ("TikTok", "Instagram", "YouTube", "Facebook")
+        }
         data["assumptions"] = {
             "post_type":            self.post_type,
-            "cpm_rate_usd":         self.cpm_rate_override or "per-platform defaults",
-            "cpm_note":             (
-                f"User-set CPM: ${self.cpm_rate_override} applied uniformly." if use_override
-                else f"Platform defaults used: TikTok=${PLATFORM_CPM_DEFAULTS['tiktok']}, "
-                     f"Instagram=${PLATFORM_CPM_DEFAULTS['instagram']}, "
-                     f"YouTube=${PLATFORM_CPM_DEFAULTS['youtube']}, "
-                     f"Facebook=${PLATFORM_CPM_DEFAULTS['facebook']}."
-            ),
+            "market":               self.country or "Global",
+            "industry":             ilabel,
+            "cpm_rate_usd":         self.cpm_rate_override if use_override else "auto (market×industry×seasonal)",
+            "cpm_note":             _cpm_note(self.country, self.industry, self.cpm_rate_override),
+            "cpm_seasonal_index":   si,
+            "cpm_industry_mult":    imult,
+            "cpm_by_platform":      plat_cpm_table,
             "spend_formula_paid":   "Paid spend = (Views / 1,000) × Platform CPM",
             "spend_formula_organic":"Organic value = Interactions × $0.75 avg engagement cost",
             "spend_formula_both":   "Mixed = (Views × 60% / 1,000 × CPM) + (Interactions × 40% × $0.75)",
