@@ -1,9 +1,42 @@
 import json
 import os
+import signal
+import threading
 from pathlib import Path
 from crewai import Crew, Process
 from agents import SocialAgents
 from tasks import SocialTasks
+
+# Per-phase caps — Scraper has none (stall watchdog handles it)
+_ANALYST_TIMEOUT  = int(os.getenv("ANALYST_TIMEOUT",  "600"))  # 10 min
+_REPORTER_TIMEOUT = int(os.getenv("REPORTER_TIMEOUT", "360"))  # 6 min
+_GATE_TIMEOUT     = int(os.getenv("GATE_TIMEOUT",     "120"))  # 2 min
+
+
+def _run_with_timeout(fn, timeout_secs: int, phase_name: str):
+    """Run fn() in the current thread with a background timer that raises RuntimeError on timeout."""
+    result      = [None]
+    exc_holder  = [None]
+    done_evt    = threading.Event()
+
+    def _target():
+        try:
+            result[0] = fn()
+        except Exception as e:
+            exc_holder[0] = e
+        finally:
+            done_evt.set()
+
+    t = threading.Thread(target=_target, daemon=True, name=f"phase-{phase_name}")
+    t.start()
+    if not done_evt.wait(timeout=timeout_secs):
+        raise RuntimeError(
+            f"[PHASE TIMEOUT] {phase_name} exceeded {timeout_secs}s cap. "
+            "Will retry from checkpoint."
+        )
+    if exc_holder[0]:
+        raise exc_holder[0]
+    return result[0]
 
 _CHECKPOINT_DIR = Path("data/checkpoints")
 _PHASE_NAMES    = ["scraper", "analyst", "reporter"]
@@ -65,46 +98,52 @@ class SocialListeningCrew:
             task3 = self.tasks.reporting_task(reporter, prior_context=cp_analyst)
             crew  = Crew(agents=[reporter], tasks=[task3],
                          process=Process.sequential, verbose=True)
-            raw = crew.kickoff()
+            raw = _run_with_timeout(crew.kickoff, _REPORTER_TIMEOUT, "reporter")
             _save_checkpoint("reporter", str(raw))
             return raw
 
         elif cp_scraper:
-            # Scraper done — run analyst + reporter
+            # Scraper done — run analyst + reporter sequentially with caps
             print("[RESUME] Scraper output restored from checkpoint. Running Analyst + Reporter.", flush=True)
             task2 = self.tasks.analysis_task(analyst, prior_context=cp_scraper)
-            task3 = self.tasks.reporting_task(reporter)
-            crew  = Crew(agents=[analyst, reporter], tasks=[task2, task3],
-                         process=Process.sequential, verbose=True)
-            raw = crew.kickoff()
-            # Save analyst checkpoint from task2 output
+            crew_analyst = Crew(agents=[analyst], tasks=[task2],
+                                process=Process.sequential, verbose=True)
+            _run_with_timeout(crew_analyst.kickoff, _ANALYST_TIMEOUT, "analyst")
             try:
                 _save_checkpoint("analyst", str(task2.output))
             except Exception:
                 pass
+
+            task3 = self.tasks.reporting_task(reporter)
+            crew_reporter = Crew(agents=[reporter], tasks=[task3],
+                                 process=Process.sequential, verbose=True)
+            raw = _run_with_timeout(crew_reporter.kickoff, _REPORTER_TIMEOUT, "reporter")
             _save_checkpoint("reporter", str(raw))
             return raw
 
         else:
-            # Full run — hook task callbacks to checkpoint each phase
+            # Full run — scraper first (no cap), then analyst + reporter with caps
             task1 = self.tasks.extraction_task(scraper, self.query, self.params)
-            task2 = self.tasks.analysis_task(analyst)
-            task3 = self.tasks.reporting_task(reporter)
-
-            crew  = Crew(
-                agents=[scraper, analyst, reporter],
-                tasks=[task1, task2, task3],
-                process=Process.sequential,
-                verbose=True,
-            )
-            raw = crew.kickoff()
-
-            # Save checkpoints after full run (for future resume)
+            crew_scraper = Crew(agents=[scraper], tasks=[task1],
+                                process=Process.sequential, verbose=True)
+            crew_scraper.kickoff()  # no timeout — stall watchdog covers this
             try:
-                _save_checkpoint("scraper",  str(task1.output))
-                _save_checkpoint("analyst",  str(task2.output))
-                _save_checkpoint("reporter", str(raw))
+                _save_checkpoint("scraper", str(task1.output))
             except Exception:
                 pass
 
+            task2 = self.tasks.analysis_task(analyst)
+            crew_analyst = Crew(agents=[analyst], tasks=[task2],
+                                process=Process.sequential, verbose=True)
+            _run_with_timeout(crew_analyst.kickoff, _ANALYST_TIMEOUT, "analyst")
+            try:
+                _save_checkpoint("analyst", str(task2.output))
+            except Exception:
+                pass
+
+            task3 = self.tasks.reporting_task(reporter)
+            crew_reporter = Crew(agents=[reporter], tasks=[task3],
+                                 process=Process.sequential, verbose=True)
+            raw = _run_with_timeout(crew_reporter.kickoff, _REPORTER_TIMEOUT, "reporter")
+            _save_checkpoint("reporter", str(raw))
             return raw

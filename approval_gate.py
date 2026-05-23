@@ -79,14 +79,65 @@ SEASONAL_INDEX = [
     1.40,  # Dec — Christmas / year-end peak
 ]
 
-# ── Industry engagement rate benchmarks by platform ──────────────────────────
-PLATFORM_ER_BENCHMARKS = {
-    "tiktok":    5.0,
-    "instagram": 1.5,
-    "facebook":  0.8,
-    "youtube":   2.0,
-    "default":   2.0,
+# ── Average view-through rates by platform (used for paid reach normalisation) ─
+# "Of people who saw the ad, what fraction watched it?" — proxy for paid reach.
+# Source: Meta/TikTok/YT ad benchmarks, agency trading desks 2024-25.
+PLATFORM_AVG_VIEW_RATE = {
+    "tiktok":    0.26,   # TikTok: ~20-30% average view-through
+    "instagram": 0.30,   # IG Reels / Stories: ~25-35%
+    "youtube":   0.32,   # YT True-View: ~25-40%
+    "facebook":  0.22,   # FB Feed video: ~18-25%
+    "default":   0.25,
 }
+
+# ── Industry × Platform ER benchmarks (3-month rolling, %) ──────────────────
+# View-based (TikTok/YT): interactions / views × 100
+# Follower-based (IG/FB):  interactions / followers × 100
+# Source: Socialinsider, Sprout Social, Rival IQ industry reports 2024-25
+# Each entry: { platform: { industry: benchmark_pct } }
+INDUSTRY_ER_BENCHMARKS = {
+    "tiktok": {
+        "":             5.0,  "fmcg":        5.5,  "food_bev":   6.0,
+        "beauty":       7.0,  "fashion":     6.5,  "retail":     5.5,
+        "tech":         4.5,  "telco":       4.0,  "finance":    3.5,
+        "insurance":    3.0,  "automotive":  4.5,  "travel":     6.5,
+        "health":       5.5,  "entertainment":8.0, "gaming":     7.5,
+        "education":    5.0,  "real_estate": 3.5,
+    },
+    "instagram": {
+        "":             1.5,  "fmcg":        1.8,  "food_bev":   2.2,
+        "beauty":       2.5,  "fashion":     2.0,  "retail":     1.6,
+        "tech":         1.2,  "telco":       1.0,  "finance":    0.9,
+        "insurance":    0.8,  "automotive":  1.3,  "travel":     2.3,
+        "health":       1.8,  "entertainment":2.8, "gaming":     2.5,
+        "education":    1.5,  "real_estate": 1.1,
+    },
+    "facebook": {
+        "":             0.8,  "fmcg":        0.9,  "food_bev":   1.0,
+        "beauty":       1.1,  "fashion":     0.9,  "retail":     0.8,
+        "tech":         0.6,  "telco":       0.5,  "finance":    0.5,
+        "insurance":    0.4,  "automotive":  0.7,  "travel":     1.0,
+        "health":       0.8,  "entertainment":1.2, "gaming":     1.1,
+        "education":    0.7,  "real_estate": 0.5,
+    },
+    "youtube": {
+        "":             2.0,  "fmcg":        2.2,  "food_bev":   2.5,
+        "beauty":       3.0,  "fashion":     2.5,  "retail":     2.0,
+        "tech":         1.8,  "telco":       1.5,  "finance":    1.5,
+        "insurance":    1.2,  "automotive":  2.0,  "travel":     2.8,
+        "health":       2.2,  "entertainment":3.5, "gaming":     3.0,
+        "education":    2.0,  "real_estate": 1.3,
+    },
+}
+
+def _er_benchmark(platform_key: str, industry: str) -> float:
+    """Return 3-month rolling ER benchmark for a platform+industry pair."""
+    plat_map = INDUSTRY_ER_BENCHMARKS.get(platform_key, INDUSTRY_ER_BENCHMARKS.get("default", {}))
+    if not plat_map:
+        # Fallback flat benchmarks
+        flat = {"tiktok":5.0,"instagram":1.5,"facebook":0.8,"youtube":2.0}
+        return flat.get(platform_key, 2.0)
+    return plat_map.get(industry or "", plat_map.get("", 2.0))
 
 
 def _platform_key(platform_str: str) -> str:
@@ -225,32 +276,39 @@ class ApprovalGate:
                 er_formula_label = "impressions (est.)"
 
             eng_rate = round((interactions / er_denominator) * 100, 4)
-            benchmark_er = PLATFORM_ER_BENCHMARKS.get(plat_key, PLATFORM_ER_BENCHMARKS["default"])
+            benchmark_er = _er_benchmark(plat_key, self.industry)
             er_vs_benchmark = round(eng_rate - benchmark_er, 2)
 
-            # ── Estimated Ad Spend (CPM × impressions/views / 1000) ───────
-            # CPM = cost per 1,000 impressions. Views/reach is the impression proxy.
-            # For PAID posts: apply CPM to views (impressions proxy)
-            # For ORGANIC posts: no direct spend; estimate amplification value
-            #   = interactions × avg engagement cost (industry: ~$0.50–1.50 per engagement)
-            # For BOTH: split 60% paid / 40% organic assumption if no explicit split
+            # ── Estimated Ad Spend ────────────────────────────────────────
+            # Paid reach = views / avg_view_rate  (normalises raw views to
+            # estimated unique paid impressions based on platform view-through rates)
+            # Spend = (paid_reach / 1,000) × Platform CPM
+            # Organic: amplification value = interactions × avg engagement cost
+            # Both: 60% paid / 40% organic split assumption
+            avg_vr = PLATFORM_AVG_VIEW_RATE.get(plat_key, PLATFORM_AVG_VIEW_RATE["default"])
             AVG_ENGAGEMENT_COST = 0.75  # USD per interaction (industry blended avg)
 
             if post_type_c == "paid":
-                spend = round((max(views, 0) / 1000) * cpm, 2)
-                spend_note = f"Paid: {max(views,0):,} impressions / 1,000 × ${cpm} CPM"
+                paid_reach = round(max(views, 0) / avg_vr) if avg_vr > 0 else max(views, 0)
+                spend = round((paid_reach / 1000) * cpm, 2)
+                spend_note = (
+                    f"Paid: ({max(views,0):,} views / {avg_vr:.0%} avg view rate) = "
+                    f"{paid_reach:,} paid impressions / 1,000 × ${cpm} CPM"
+                )
             elif post_type_c == "organic":
                 spend = round(interactions * AVG_ENGAGEMENT_COST, 2)
                 spend_note = f"Organic value: {interactions:,} interactions × ${AVG_ENGAGEMENT_COST} avg engagement cost"
             else:
-                # Both: CPM-based spend on paid impressions portion
-                paid_impressions = round(views * 0.60)
-                spend_paid_part  = round((paid_impressions / 1000) * cpm, 2)
+                # Both: derive paid reach for 60% impression share, organic for rest
+                paid_views = round(views * 0.60)
+                paid_reach = round(paid_views / avg_vr) if avg_vr > 0 else paid_views
+                spend_paid_part  = round((paid_reach / 1000) * cpm, 2)
                 org_value_part   = round(interactions * 0.40 * AVG_ENGAGEMENT_COST, 2)
                 spend = round(spend_paid_part + org_value_part, 2)
                 spend_note = (
-                    f"Mixed: {paid_impressions:,} est. paid impressions × ${cpm} CPM + "
-                    f"{interactions:,} interactions × ${ AVG_ENGAGEMENT_COST} × 40%"
+                    f"Mixed: ({paid_views:,} paid views / {avg_vr:.0%} view rate) = "
+                    f"{paid_reach:,} impressions × ${cpm} CPM + "
+                    f"{interactions:,} interactions × ${AVG_ENGAGEMENT_COST} × 40%"
                 )
 
             comp["estimated_spend_usd"]  = spend
@@ -354,15 +412,19 @@ class ApprovalGate:
             "cpm_seasonal_index":   si,
             "cpm_industry_mult":    imult,
             "cpm_by_platform":      plat_cpm_table,
-            "spend_formula_paid":   "Paid spend = (Views / 1,000) × Platform CPM",
+            "spend_formula_paid":   "Paid spend = (Views / Avg Platform View Rate) / 1,000 × Platform CPM",
             "spend_formula_organic":"Organic value = Interactions × $0.75 avg engagement cost",
-            "spend_formula_both":   "Mixed = (Views × 60% / 1,000 × CPM) + (Interactions × 40% × $0.75)",
+            "spend_formula_both":   "Mixed = (Views × 60% / Avg View Rate / 1,000 × CPM) + (Interactions × 40% × $0.75)",
+            "avg_view_rates":       {k: f"{v:.0%}" for k, v in PLATFORM_AVG_VIEW_RATE.items()},
             "engagement_rate_formula": (
                 "ER = (Interactions / Views) × 100  [TikTok, YouTube — view-based]\n"
                 "ER = (Interactions / Followers) × 100  [Instagram, Facebook — follower-based]\n"
                 "Interactions = Likes + Comments + Shares + Saves"
             ),
-            "benchmark_note":       "Industry ER benchmarks: TikTok 5%, Instagram 1.5%, Facebook 0.8%, YouTube 2%",
+            "benchmark_note": (
+                f"ER benchmarks: 3-month rolling industry standard ({ilabel}). "
+                "Source: Socialinsider, Sprout Social, Rival IQ industry reports 2024-25."
+            ),
             "data_source":          "Web search results via Tavily/DuckDuckGo — estimates only, not official platform data.",
             "total_interactions":   total_interactions,
             "total_impressions":    total_impressions,

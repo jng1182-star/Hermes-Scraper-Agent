@@ -419,15 +419,34 @@
               <button class="dd-pill active" data-view="all">All Brands</button>
               <button class="dd-pill" data-view="mine">My Brands</button>
               <button class="dd-pill" data-view="competitors">Competitors</button>
-              <button class="dd-pill" data-view="vs">My Brand vs Competitors</button>
+              <button class="dd-pill" data-view="vs">My Brands vs Competitors</button>
             </div>
           </div>
-          <div class="dd-group">
+
+          <!-- vs-compare panel: shown only when "My Brands vs Competitors" pill is active -->
+          <div class="dd-vs-panel" id="ddVsPanel" style="display:none;">
+            <div class="dd-vs-selects">
+              <div class="dd-vs-col">
+                <span class="dd-vs-label">My Brands</span>
+                <select class="dd-multi-select" id="ddMyBrandsPick" multiple size="3"></select>
+              </div>
+              <div class="dd-vs-sep">vs</div>
+              <div class="dd-vs-col">
+                <span class="dd-vs-label">Competitor Brands</span>
+                <select class="dd-multi-select" id="ddCompBrandsPick" multiple size="3"></select>
+              </div>
+            </div>
+            <button class="dd-execute-btn" id="ddVsExecute">Execute ▶</button>
+          </div>
+
+          <!-- single-brand picker: shown for all / mine / competitors views -->
+          <div class="dd-group" id="ddBrandGroup">
             <span class="dd-label">Brand</span>
             <select class="dd-select" id="ddBrandPick">
               <option value="">All</option>
             </select>
           </div>
+
           <div class="dd-group">
             <span class="dd-label">Platform</span>
             <div class="dd-pills" id="ddPlatform">

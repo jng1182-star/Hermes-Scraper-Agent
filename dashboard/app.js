@@ -22,10 +22,12 @@ const State = {
   activePostTypeFilter: 'all', // all | paid | organic  (results page)
   // Drill-down filter state
   dd: {
-    view:      'all',   // all | mine | competitors | vs
-    brand:     '',      // specific brand name, '' = all
-    platform:  'all',   // all | TikTok | Instagram | YouTube | Facebook
-    postType:  'all',   // all | paid | organic
+    view:        'all',   // all | mine | competitors | vs
+    brand:       '',      // specific brand name (non-vs views), '' = all
+    platform:    'all',   // all | TikTok | Instagram | YouTube | Facebook
+    postType:    'all',   // all | paid | organic
+    vsMyBrands:  [],      // selected "my brand" names for vs view
+    vsCompBrands:[],      // selected competitor names for vs view
   },
   agentStates: { scraper: 'idle', analyst: 'idle', reporter: 'idle', gate: 'idle' },
   lastLogs: [],
@@ -940,10 +942,26 @@ function platformMeta(s) {
   return PLATFORM_META[key]||{cls:'ch-default',icon:'pi-default',label:s||'Social'};
 }
 
-// ── Benchmark ER lines ────────────────────────────────────────────────────────
-const BENCH_ER = { tiktok:5.0, instagram:1.5, facebook:0.8, youtube:2.0 };
-function benchmarkFor(platform) {
-  return BENCH_ER[(platform||'').toLowerCase().replace(/[^a-z]/,'')]||2.0;
+// ── Average view-through rates by platform ───────────────────────────────────
+const PLATFORM_AVG_VIEW_RATE = {
+  tiktok:0.26, instagram:0.30, youtube:0.32, facebook:0.22, default:0.25,
+};
+
+// ── ER benchmarks: 3-month rolling by platform × industry ───────────────────
+// Source: Socialinsider, Sprout Social, Rival IQ industry reports 2024-25
+const INDUSTRY_ER_BENCHMARKS = {
+  tiktok:    {'':5.0,fmcg:5.5,food_bev:6.0,beauty:7.0,fashion:6.5,retail:5.5,tech:4.5,telco:4.0,finance:3.5,insurance:3.0,automotive:4.5,travel:6.5,health:5.5,entertainment:8.0,gaming:7.5,education:5.0,real_estate:3.5},
+  instagram: {'':1.5,fmcg:1.8,food_bev:2.2,beauty:2.5,fashion:2.0,retail:1.6,tech:1.2,telco:1.0,finance:0.9,insurance:0.8,automotive:1.3,travel:2.3,health:1.8,entertainment:2.8,gaming:2.5,education:1.5,real_estate:1.1},
+  facebook:  {'':0.8,fmcg:0.9,food_bev:1.0,beauty:1.1,fashion:0.9,retail:0.8,tech:0.6,telco:0.5,finance:0.5,insurance:0.4,automotive:0.7,travel:1.0,health:0.8,entertainment:1.2,gaming:1.1,education:0.7,real_estate:0.5},
+  youtube:   {'':2.0,fmcg:2.2,food_bev:2.5,beauty:3.0,fashion:2.5,retail:2.0,tech:1.8,telco:1.5,finance:1.5,insurance:1.2,automotive:2.0,travel:2.8,health:2.2,entertainment:3.5,gaming:3.0,education:2.0,real_estate:1.3},
+};
+
+function benchmarkFor(platform, industry) {
+  const pk  = (platform||'').toLowerCase().replace(/[^a-z]/g,'');
+  const ind = industry || '';
+  const platMap = INDUSTRY_ER_BENCHMARKS[pk];
+  if (!platMap) return 2.0;
+  return platMap[ind] ?? platMap[''] ?? 2.0;
 }
 
 function renderResults(data) {
@@ -989,7 +1007,7 @@ function renderResults(data) {
 
   // Reset platform filter and drill-down state
   State.activePlatforms = new Set();
-  State.dd = { view: 'all', brand: '', platform: 'all', postType: 'all' };
+  State.dd = { view: 'all', brand: '', platform: 'all', postType: 'all', vsMyBrands: [], vsCompBrands: [] };
   buildContextBar(params, comp);
   buildDrilldownBar(params, comp);
   renderResultsFiltered();
@@ -1057,8 +1075,11 @@ function buildDrilldownBar(params, comp) {
   if (!bar) return;
   bar.style.display = 'flex';
 
-  // Populate brand picker
-  const brandSel = document.getElementById('ddBrandPick');
+  // ── Populate single-brand picker (non-vs views) ──────────────────────────
+  const brandSel   = document.getElementById('ddBrandPick');
+  const brandGroup = document.getElementById('ddBrandGroup');
+  const vsPanel    = document.getElementById('ddVsPanel');
+
   if (brandSel) {
     const brands = [...new Set(comp.map(c => c.name).filter(Boolean))].sort();
     brandSel.innerHTML = '<option value="">All</option>' +
@@ -1067,18 +1088,63 @@ function buildDrilldownBar(params, comp) {
     brandSel.onchange = () => { State.dd.brand = brandSel.value; renderResultsFiltered(); };
   }
 
-  // View pills
+  // ── Populate vs multi-selects ────────────────────────────────────────────
+  const myBrandNames  = params.advertisers || (params.advertiser ? [params.advertiser] : []);
+  const compBrandNames = params.competitors || [];
+  const myBrandsSel   = document.getElementById('ddMyBrandsPick');
+  const compBrandsSel = document.getElementById('ddCompBrandsPick');
+
+  if (myBrandsSel) {
+    // Fallback: if scan_params has no advertisers, show all comp names that match _isMyBrand
+    const srcMine = myBrandNames.length
+      ? myBrandNames
+      : [...new Set(comp.filter(c => _isMyBrand(c)).map(c => c.name).filter(Boolean))];
+    myBrandsSel.innerHTML = srcMine.map(b => `<option value="${esc(b)}">${esc(b)}</option>`).join('');
+    // Pre-select all
+    Array.from(myBrandsSel.options).forEach(o => { o.selected = true; });
+    State.dd.vsMyBrands = srcMine.slice();
+  }
+  if (compBrandsSel) {
+    const srcComp = compBrandNames.length
+      ? compBrandNames
+      : [...new Set(comp.filter(c => !_isMyBrand(c)).map(c => c.name).filter(Boolean))];
+    compBrandsSel.innerHTML = srcComp.map(b => `<option value="${esc(b)}">${esc(b)}</option>`).join('');
+    Array.from(compBrandsSel.options).forEach(o => { o.selected = true; });
+    State.dd.vsCompBrands = srcComp.slice();
+  }
+
+  // ── Execute button ───────────────────────────────────────────────────────
+  const executeBtn = document.getElementById('ddVsExecute');
+  if (executeBtn) {
+    executeBtn.onclick = () => {
+      State.dd.vsMyBrands  = Array.from(myBrandsSel.selectedOptions).map(o => o.value);
+      State.dd.vsCompBrands = Array.from(compBrandsSel.selectedOptions).map(o => o.value);
+      renderResultsFiltered();
+    };
+  }
+
+  // ── Helper: toggle between single-brand picker and vs-panel ─────────────
+  function _syncVsVisibility() {
+    const isVs = State.dd.view === 'vs';
+    if (vsPanel)    vsPanel.style.display    = isVs ? 'flex' : 'none';
+    if (brandGroup) brandGroup.style.display = isVs ? 'none' : '';
+  }
+  _syncVsVisibility();
+
+  // ── View pills ───────────────────────────────────────────────────────────
   bar.querySelectorAll('#ddView .dd-pill').forEach(btn => {
     btn.classList.toggle('active', btn.dataset.view === State.dd.view);
     btn.onclick = () => {
       bar.querySelectorAll('#ddView .dd-pill').forEach(b => b.classList.remove('active'));
       btn.classList.add('active');
       State.dd.view = btn.dataset.view;
-      renderResultsFiltered();
+      _syncVsVisibility();
+      if (State.dd.view !== 'vs') renderResultsFiltered();
+      // vs view: user picks selections and clicks Execute; don't auto-render yet
     };
   });
 
-  // Platform pills
+  // ── Platform pills ───────────────────────────────────────────────────────
   bar.querySelectorAll('#ddPlatform .dd-pill').forEach(btn => {
     btn.classList.toggle('active', btn.dataset.plat === State.dd.platform);
     btn.onclick = () => {
@@ -1089,7 +1155,7 @@ function buildDrilldownBar(params, comp) {
     };
   });
 
-  // Post type pills
+  // ── Post type pills ──────────────────────────────────────────────────────
   bar.querySelectorAll('#ddPostType .dd-pill').forEach(btn => {
     btn.classList.toggle('active', btn.dataset.pt === State.dd.postType);
     btn.onclick = () => {
@@ -1100,15 +1166,19 @@ function buildDrilldownBar(params, comp) {
     };
   });
 
-  // Reset button
+  // ── Reset button ─────────────────────────────────────────────────────────
   const resetBtn = document.getElementById('ddReset');
   if (resetBtn) {
     resetBtn.onclick = () => {
-      State.dd = { view: 'all', brand: '', platform: 'all', postType: 'all' };
+      State.dd = { view: 'all', brand: '', platform: 'all', postType: 'all', vsMyBrands: [], vsCompBrands: [] };
       if (brandSel) brandSel.value = '';
+      // Re-select all options in vs multi-selects
+      if (myBrandsSel)  Array.from(myBrandsSel.options).forEach(o => { o.selected = true; });
+      if (compBrandsSel) Array.from(compBrandsSel.options).forEach(o => { o.selected = true; });
       bar.querySelectorAll('.dd-pill[data-view]').forEach(b => b.classList.toggle('active', b.dataset.view === 'all'));
       bar.querySelectorAll('.dd-pill[data-plat]').forEach(b => b.classList.toggle('active', b.dataset.plat === 'all'));
       bar.querySelectorAll('.dd-pill[data-pt]').forEach(b   => b.classList.toggle('active', b.dataset.pt   === 'all'));
+      _syncVsVisibility();
       renderResultsFiltered();
     };
   }
@@ -1131,11 +1201,23 @@ function filteredComp() {
     all = all.filter(c => myBrands.has((c.name||'').toLowerCase().trim()));
   } else if (dd.view === 'competitors') {
     all = all.filter(c => !myBrands.has((c.name||'').toLowerCase().trim()));
+  } else if (dd.view === 'vs') {
+    // Multi-select vs: keep only selected my-brands + selected competitor brands
+    const selMine = new Set((dd.vsMyBrands || []).map(b => (b||'').toLowerCase().trim()).filter(Boolean));
+    const selComp = new Set((dd.vsCompBrands || []).map(b => (b||'').toLowerCase().trim()).filter(Boolean));
+    const anyMine = selMine.size > 0;
+    const anyComp = selComp.size > 0;
+    if (anyMine || anyComp) {
+      all = all.filter(c => {
+        const n = (c.name||'').toLowerCase().trim();
+        return (anyMine && selMine.has(n)) || (anyComp && selComp.has(n));
+      });
+    }
+    // If both sets empty (nothing selected yet) show all — colours differentiate
   }
-  // 'vs' shows all but colours mine vs competitors differently — no row filter
 
-  // ── Specific brand pick ───────────────────────────────────────────
-  if (dd.brand) {
+  // ── Specific brand pick (non-vs views only) ───────────────────────
+  if (dd.view !== 'vs' && dd.brand) {
     const b = dd.brand.toLowerCase().trim();
     all = all.filter(c => (c.name||'').toLowerCase().trim() === b);
   }
@@ -1144,7 +1226,6 @@ function filteredComp() {
   if (dd.platform !== 'all') {
     all = all.filter(c => c.platform === dd.platform);
   } else if (State.activePlatforms.size > 0) {
-    // Legacy platform toggle from scan summary bar
     all = all.filter(c => State.activePlatforms.has(c.platform));
   }
 
@@ -1203,9 +1284,10 @@ function renderResultsFiltered() {
     ? `${topSpenderSos}% of total est. spend · ${topSpenderEntry.platform||''}`
     : 'largest est. media value';
 
-  // Benchmark comparison
+  // Benchmark comparison (industry-adjusted)
+  const scanIndustry = (data.scan_params || {}).industry || '';
   const avgBench = comp.length
-    ? comp.reduce((s,c)=>s+benchmarkFor(c.platform),0)/comp.length : 2.0;
+    ? comp.reduce((s,c)=>s+benchmarkFor(c.platform, scanIndustry),0)/comp.length : 2.0;
   const diff = avgEngage - avgBench;
   const kpiBench = document.getElementById('kpiBenchmark');
   if (kpiBench) {
@@ -1228,7 +1310,7 @@ function renderResultsFiltered() {
   const labels  = comp.map(c => c.name || c.handle || '?');
   const spends  = comp.map(c => c.estimated_spend_usd || 0);
   const engages = comp.map(c => c.engagement_rate || 0);
-  const benchmarks = comp.map(c => benchmarkFor(c.platform));
+  const benchmarks = comp.map(c => benchmarkFor(c.platform, scanIndustry));
 
   destroyCharts();
 
@@ -1296,7 +1378,7 @@ function renderResultsFiltered() {
       : bgColors[i % bgColors.length];
     const pt = c.post_type || 'both';
     const ptBadge = `<span class="post-type-badge ${pt}">${esc(pt)}</span>`;
-    const bench = benchmarkFor(c.platform);
+    const bench = benchmarkFor(c.platform, scanIndustry);
     const erDiff = (c.engagement_rate||0) - bench;
     const erColor = erDiff >= 0 ? 'var(--green)' : 'var(--red)';
     const erDiffStr = (erDiff >= 0 ? '+' : '') + erDiff.toFixed(2) + '%';
@@ -1538,19 +1620,25 @@ function renderCalcTree(data) {
       <div class="calc-formula-label">CPM Override Note</div>${esc(a.cpm_note||'Auto: market + industry + seasonal applied')}
     </div>
     <div class="calc-formula-row">
-      <div class="calc-formula-label">Paid Spend Formula</div>${esc(a.spend_formula_paid||'views / 1,000 × platform CPM')}
+      <div class="calc-formula-label">Paid Spend Formula</div>${esc(a.spend_formula_paid||'(Views / Avg Platform View Rate) / 1,000 × Platform CPM')}
+    </div>
+    <div class="calc-formula-row">
+      <div class="calc-formula-label">Avg View-Through Rates</div>${(() => {
+        const vr = a.avg_view_rates || {TikTok:'26%',Instagram:'30%',YouTube:'32%',Facebook:'22%'};
+        return Object.entries(vr).filter(([k])=>k!=='default').map(([k,v])=>`${esc(k)}: ${esc(String(v))}`).join(' · ');
+      })()}
     </div>
     <div class="calc-formula-row">
       <div class="calc-formula-label">Organic Value Formula</div>${esc(a.spend_formula_organic||'interactions × $0.75')}
     </div>
     <div class="calc-formula-row">
-      <div class="calc-formula-label">Mixed Formula</div>${esc(a.spend_formula_both||'(views×60%/1K×CPM) + (interactions×40%×$0.75)')}
+      <div class="calc-formula-label">Mixed Formula</div>${esc(a.spend_formula_both||'(Views×60%/Avg View Rate/1K×CPM) + (Interactions×40%×$0.75)')}
     </div>
     <div class="calc-formula-row">
       <div class="calc-formula-label">Engagement Rate</div>${esc(a.engagement_rate_formula||'TikTok/YT: interactions/views×100 · IG/FB: interactions/followers×100').replace(/\n/g,'<br>')}
     </div>
     <div class="calc-formula-row">
-      <div class="calc-formula-label">ER Benchmarks</div>${esc(a.benchmark_note||'TikTok 5% · Instagram 1.5% · Facebook 0.8% · YouTube 2%')}
+      <div class="calc-formula-label">ER Benchmarks</div>${esc(a.benchmark_note||'3-month rolling industry standard. Source: Socialinsider, Sprout Social, Rival IQ 2024-25.')}
     </div>`;
 
   if (a.brand_breakdowns && a.brand_breakdowns.length) {

@@ -19,8 +19,9 @@ from approval_gate import ApprovalGate
 # Injected by server.py before each run
 _state_hook = None  # callable(node_id: str, state: str) | None
 
-STALL_TIMEOUT = int(os.getenv("STALL_TIMEOUT", "180"))
-MAX_RETRIES   = int(os.getenv("STALL_MAX_RETRIES", "2"))
+STALL_TIMEOUT  = int(os.getenv("STALL_TIMEOUT",    "180"))
+MAX_RETRIES    = int(os.getenv("STALL_MAX_RETRIES", "2"))
+GATE_TIMEOUT   = int(os.getenv("GATE_TIMEOUT",      "120"))
 
 
 SUPPORTED_PLATFORMS = ["TikTok", "Instagram", "YouTube", "Facebook"]
@@ -263,7 +264,18 @@ def run_pipeline(params: dict):
         _state_hook("gate", "active")
     print("Running Approval Gate…", flush=True)
     gate = ApprovalGate(cpm_rate=cpm_rate, post_type=post_type, country=country, industry=industry)
-    final_json_str = gate.process_final_report(str(raw_output))
+
+    import concurrent.futures as _cf
+    with _cf.ThreadPoolExecutor(max_workers=1) as _pool:
+        _fut = _pool.submit(gate.process_final_report, str(raw_output))
+        try:
+            final_json_str = _fut.result(timeout=GATE_TIMEOUT)
+        except _cf.TimeoutError:
+            raise RuntimeError(
+                f"[PHASE TIMEOUT] Approval Gate exceeded {GATE_TIMEOUT}s. "
+                "Raw output saved — check data/report_raw.txt."
+            )
+
     if _state_hook:
         _state_hook("gate", "done")
 

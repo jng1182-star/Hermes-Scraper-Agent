@@ -2049,3 +2049,70 @@ a.post-link:hover {
   transition: color 0.15s, border-color 0.15s;
 }
 .dd-reset:hover { color: var(--text); border-color: var(--text2); }
+
+/* ── vs-compare panel ───────────────────────────────────────────────────── */
+.dd-vs-panel {
+  display: flex;
+  align-items: flex-end;
+  gap: 12px;
+  background: var(--bg3);
+  border: 1px solid var(--border2);
+  border-radius: 8px;
+  padding: 10px 14px;
+  flex-wrap: wrap;
+}
+.dd-vs-selects {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+.dd-vs-col {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.dd-vs-label {
+  font-size: 0.65rem;
+  font-family: var(--mono);
+  color: var(--text3);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.dd-multi-select {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--text2);
+  font-size: 0.72rem;
+  font-family: var(--mono);
+  border-radius: 6px;
+  padding: 4px 6px;
+  min-width: 140px;
+  outline: none;
+  cursor: pointer;
+}
+.dd-multi-select:focus { border-color: var(--accent); }
+.dd-multi-select option { padding: 3px 4px; }
+.dd-multi-select option:checked { background: var(--accent); color: #fff; }
+.dd-vs-sep {
+  font-size: 0.72rem;
+  font-family: var(--mono);
+  color: var(--text3);
+  padding-top: 22px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+.dd-execute-btn {
+  background: var(--accent);
+  border: none;
+  color: #fff;
+  font-size: 0.72rem;
+  font-family: var(--mono);
+  padding: 6px 14px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  transition: background 0.15s;
+  align-self: flex-end;
+}
+.dd-execute-btn:hover { background: var(--accent-h); }
