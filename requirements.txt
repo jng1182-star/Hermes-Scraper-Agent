@@ -1,0 +1,8 @@
+crewai>=1.0
+crewai-tools>=0.14.0
+tavily-python>=0.5.0
+duckduckgo-search>=6.0
+pydantic>=2.0
+fastapi
+uvicorn[standard]>=0.29
+python-dotenv

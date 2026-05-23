@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+*.pyo
+.env
+data/report.json
+data/golden_dataset.json
+graphify-out/
+.DS_Store
+*.egg-info/
+.venv/
+venv/

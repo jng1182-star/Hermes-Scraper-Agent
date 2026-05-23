@@ -1,0 +1,481 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Hermes — Competitive Intelligence</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div class="app-shell">
+
+  <!-- ═══════════════════════ HEADER ═══════════════════════ -->
+  <header class="app-header">
+    <div class="header-inner">
+      <div class="logo">HER<span>MES</span></div>
+
+      <nav class="nav-tabs" role="tablist">
+        <button class="nav-tab active" data-page="configure" role="tab">
+          <span class="status-dot" id="dot-configure"></span>
+          Configure &amp; Run
+        </button>
+        <button class="nav-tab" data-page="network" role="tab">
+          <span class="status-dot" id="dot-network"></span>
+          Network View
+        </button>
+        <button class="nav-tab" data-page="results" role="tab">
+          <span class="status-dot" id="dot-results"></span>
+          Results
+        </button>
+      </nav>
+
+      <div class="header-right">
+        <div class="live-badge" id="liveBadge">
+          <div class="dot"></div>
+          <span id="liveText">Offline</span>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <!-- ═══════════════════ PAGE 1: CONFIGURE ═════════════════════ -->
+  <div id="page-configure" class="page active">
+    <div class="inner" style="padding-top:36px; padding-bottom:60px;">
+
+      <!-- Scan Configuration Card -->
+      <div class="config-card fade-in">
+        <div class="config-card-title">Scan Configuration</div>
+
+        <!-- Row 1: Advertiser + Competitors -->
+        <div class="form-row">
+          <div class="form-group">
+            <label class="form-label" for="advertiser">Your Brand (Advertiser)</label>
+            <input class="form-input" id="advertiser" type="text" placeholder="e.g. Nike" autocomplete="off">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Competitor Brands</label>
+            <div class="tag-input-wrap" id="tagWrap">
+              <input class="tag-input" id="tagInput" placeholder="Type brand, press Enter…" autocomplete="off">
+            </div>
+          </div>
+        </div>
+
+        <!-- Row 2: Country + CPM -->
+        <div class="form-row">
+          <div class="form-group">
+            <label class="form-label" for="country">Country / Market</label>
+            <select class="form-input" id="country">
+              <option value="">Global</option>
+              <option value="Singapore">Singapore</option>
+              <option value="United States">United States</option>
+              <option value="United Kingdom">United Kingdom</option>
+              <option value="Australia">Australia</option>
+              <option value="Philippines">Philippines</option>
+              <option value="Indonesia">Indonesia</option>
+              <option value="Malaysia">Malaysia</option>
+              <option value="Thailand">Thailand</option>
+              <option value="Vietnam">Vietnam</option>
+              <option value="India">India</option>
+              <option value="Japan">Japan</option>
+              <option value="South Korea">South Korea</option>
+              <option value="UAE">UAE</option>
+              <option value="Saudi Arabia">Saudi Arabia</option>
+              <option value="Germany">Germany</option>
+              <option value="France">France</option>
+              <option value="Brazil">Brazil</option>
+              <option value="Mexico">Mexico</option>
+              <option value="Canada">Canada</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="cpmRate">CPM Rate ($ per 1,000 impressions)</label>
+            <div class="cpm-wrap">
+              <span class="cpm-prefix">$</span>
+              <input class="form-input" id="cpmRate" type="number" value="15.00" min="0.01" step="0.01">
+            </div>
+          </div>
+        </div>
+
+        <!-- Row 3: Platforms -->
+        <div class="form-row full" style="margin-bottom:20px;">
+          <div class="form-group">
+            <label class="form-label">Platforms</label>
+            <div class="platform-grid">
+              <label class="platform-option checked">
+                <input type="checkbox" value="TikTok" checked> <span class="plabel">TikTok</span>
+              </label>
+              <label class="platform-option checked">
+                <input type="checkbox" value="Instagram" checked> <span class="plabel">Instagram</span>
+              </label>
+              <label class="platform-option">
+                <input type="checkbox" value="YouTube"> <span class="plabel">YouTube</span>
+              </label>
+              <label class="platform-option">
+                <input type="checkbox" value="Facebook"> <span class="plabel">Facebook</span>
+              </label>
+              <label class="platform-option">
+                <input type="checkbox" value="X / Twitter"> <span class="plabel">X / Twitter</span>
+              </label>
+              <label class="platform-option">
+                <input type="checkbox" value="LinkedIn"> <span class="plabel">LinkedIn</span>
+              </label>
+            </div>
+          </div>
+        </div>
+
+        <!-- Row 4: Date Range -->
+        <div class="form-row full" style="margin-bottom:20px;">
+          <div class="form-group">
+            <label class="form-label">Date Range</label>
+            <div class="date-presets">
+              <button class="date-preset" data-days="7">Last 7 days</button>
+              <button class="date-preset" data-days="14">Last 14 days</button>
+              <button class="date-preset active" data-days="30">Last 30 days</button>
+              <button class="date-preset" data-days="90">Last 90 days</button>
+              <button class="date-preset" data-days="0">Custom</button>
+            </div>
+            <div class="date-custom" id="dateCustom">
+              <input class="form-input" type="date" id="dateFrom">
+              <span style="color:var(--text3);font-size:0.8rem;">to</span>
+              <input class="form-input" type="date" id="dateTo">
+            </div>
+          </div>
+        </div>
+
+        <!-- Row 5: Depth + Keywords -->
+        <div class="form-row">
+          <div class="form-group">
+            <label class="form-label">Analysis Depth</label>
+            <div class="depth-options">
+              <label class="depth-option">
+                <input type="radio" name="depth" value="quick">
+                <div>
+                  <div class="dlabel">Quick</div>
+                  <div class="dsub">gemma4:e4b · faster</div>
+                </div>
+              </label>
+              <label class="depth-option active">
+                <input type="radio" name="depth" value="deep" checked>
+                <div>
+                  <div class="dlabel">Deep</div>
+                  <div class="dsub">gemma4:26b · thorough</div>
+                </div>
+              </label>
+            </div>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="keywords">Keywords / Topics (optional)</label>
+            <input class="form-input" id="keywords" type="text" placeholder='e.g. "summer campaign, new drop, collab"'>
+          </div>
+        </div>
+
+        <!-- Run -->
+        <div class="run-section">
+          <label style="display:flex;align-items:center;gap:8px;cursor:pointer;">
+            <input type="file" id="reportUpload" accept=".json" style="display:none">
+            <button class="btn-secondary" onclick="document.getElementById('reportUpload').click()">
+              ↑ Upload report.json
+            </button>
+          </label>
+          <button class="btn-ghost" id="resetBtn" title="Clear all fields">↺ Reset</button>
+          <button class="btn-primary" id="runBtn">
+            <span id="runBtnIcon">▶</span>
+            <span id="runBtnText">Run Analysis</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- Log Panel -->
+      <div class="log-panel" id="logPanel">
+        <div class="log-panel-inner">
+          <div class="log-header">
+            <div class="log-spinner running" id="logSpinner"></div>
+            <span class="log-status-text" id="logStatus">Analysis running…</span>
+          </div>
+          <pre class="log-output" id="logOutput"></pre>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ═══════════════════ PAGE 2: NETWORK VIEW ════════════════════ -->
+  <div id="page-network" class="page">
+    <div class="network-header">
+      <div class="network-title">Agent Network · Live Pipeline</div>
+      <div class="network-meta">
+        <div class="elapsed-badge" id="elapsedBadge" style="display:none;">
+          <span class="elapsed-icon">⏱</span>
+          <span id="elapsedTime">0:00</span>
+        </div>
+        <div class="agent-legend">
+          <div class="legend-item"><div class="legend-dot" style="background:#1f6feb"></div>Active</div>
+          <div class="legend-item"><div class="legend-dot" style="background:#22c55e"></div>Done</div>
+          <div class="legend-item"><div class="legend-dot" style="background:#2e5080"></div>Idle</div>
+        </div>
+        <button class="btn-stop" id="stopBtn" disabled title="Stop running analysis">■ Stop</button>
+      </div>
+    </div>
+    <!-- Timeout / retry banner -->
+    <div class="timeout-banner" id="timeoutBanner" style="display:none;">
+      <span class="timeout-icon">⚠</span>
+      <span id="timeoutMsg">Agent stalled — restarting…</span>
+      <span class="retry-badge" id="retryBadge"></span>
+    </div>
+
+    <div class="network-body">
+
+      <!-- Left: canvas -->
+      <div class="network-canvas-wrap">
+        <canvas id="networkCanvas"></canvas>
+      </div>
+
+      <!-- Right: agent deck + log -->
+      <div class="network-right-panel">
+
+        <!-- Agent Cards -->
+        <div class="agent-deck">
+
+          <div class="agent-card" id="acard-scraper" data-agent="scraper" style="--acolor:#1f6feb;--acolor-lt:rgba(31,111,235,0.10);">
+            <div class="acard-stripe"></div>
+            <div class="acard-inner">
+              <div class="acard-top">
+                <div class="acard-icon">⬡</div>
+                <div class="acard-info">
+                  <div class="acard-name">SCRAPER</div>
+                  <div class="acard-role">Social Data Scraper</div>
+                </div>
+                <div class="acard-badge idle" id="abadge-scraper">IDLE</div>
+              </div>
+              <div class="acard-log" id="alog-scraper">Awaiting activation…</div>
+              <div class="acard-bar-wrap">
+                <div class="acard-bar" id="abar-scraper"></div>
+              </div>
+            </div>
+          </div>
+
+          <div class="agent-card" id="acard-analyst" data-agent="analyst" style="--acolor:#38bdf8;--acolor-lt:rgba(56,189,248,0.10);">
+            <div class="acard-stripe"></div>
+            <div class="acard-inner">
+              <div class="acard-top">
+                <div class="acard-icon">◈</div>
+                <div class="acard-info">
+                  <div class="acard-name">ANALYST</div>
+                  <div class="acard-role">Engagement Analyst</div>
+                </div>
+                <div class="acard-badge idle" id="abadge-analyst">IDLE</div>
+              </div>
+              <div class="acard-log" id="alog-analyst">Awaiting data from Scraper…</div>
+              <div class="acard-bar-wrap">
+                <div class="acard-bar" id="abar-analyst"></div>
+              </div>
+            </div>
+          </div>
+
+          <div class="agent-card" id="acard-reporter" data-agent="reporter" style="--acolor:#a78bfa;--acolor-lt:rgba(167,139,250,0.10);">
+            <div class="acard-stripe"></div>
+            <div class="acard-inner">
+              <div class="acard-top">
+                <div class="acard-icon">◎</div>
+                <div class="acard-info">
+                  <div class="acard-name">REPORTER</div>
+                  <div class="acard-role">Intelligence Reporter</div>
+                </div>
+                <div class="acard-badge idle" id="abadge-reporter">IDLE</div>
+              </div>
+              <div class="acard-log" id="alog-reporter">Awaiting analysis…</div>
+              <div class="acard-bar-wrap">
+                <div class="acard-bar" id="abar-reporter"></div>
+              </div>
+            </div>
+          </div>
+
+          <div class="agent-card" id="acard-gate" data-agent="gate" style="--acolor:#22c55e;--acolor-lt:rgba(34,197,94,0.10);">
+            <div class="acard-stripe"></div>
+            <div class="acard-inner">
+              <div class="acard-top">
+                <div class="acard-icon">⬟</div>
+                <div class="acard-info">
+                  <div class="acard-name">APPROVAL GATE</div>
+                  <div class="acard-role">Math · Sanitize · Score</div>
+                </div>
+                <div class="acard-badge idle" id="abadge-gate">IDLE</div>
+              </div>
+              <div class="acard-log" id="alog-gate">Awaiting pipeline output…</div>
+              <div class="acard-bar-wrap">
+                <div class="acard-bar" id="abar-gate"></div>
+              </div>
+            </div>
+          </div>
+
+        </div><!-- /agent-deck -->
+
+        <!-- Live Log -->
+        <div class="network-log-panel" id="networkLogPanel">
+          <div class="network-log-header">
+            <span class="network-log-title">LIVE LOG</span>
+            <span class="network-log-hint">agent thoughts · tool calls · errors</span>
+          </div>
+          <pre class="network-log-output" id="networkLogOutput">Waiting for analysis to start…</pre>
+        </div>
+
+      </div><!-- /network-right-panel -->
+
+    </div><!-- /network-body -->
+  </div>
+
+  <!-- ═══════════════════ PAGE 3: RESULTS ═════════════════════════ -->
+  <div id="page-results" class="page">
+    <div class="inner">
+
+      <!-- No data state -->
+      <div class="no-data-state" id="noDataState">
+        <div class="nd-icon">📊</div>
+        <h3>No Results Yet</h3>
+        <p>Run an analysis or upload a report.json to see results here.</p>
+      </div>
+
+      <!-- Results content (hidden until data loads) -->
+      <div id="resultsContent" style="display:none;">
+
+        <!-- Context bar -->
+        <div class="context-bar" id="contextBar"></div>
+
+        <!-- KPI cards -->
+        <div class="kpi-grid">
+          <div class="kpi-card">
+            <div class="kpi-label">Competitors</div>
+            <div class="kpi-value" id="kpiCount">—</div>
+          </div>
+          <div class="kpi-card" style="--accent:#2563eb;">
+            <div class="kpi-label">Est. Total Spend</div>
+            <div class="kpi-value accent" id="kpiSpend">—</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-label">Avg. Engagement</div>
+            <div class="kpi-value green" id="kpiEngage">—</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-label">Top Platform</div>
+            <div class="kpi-value" id="kpiPlatform" style="font-size:1.2rem;">—</div>
+          </div>
+        </div>
+
+        <!-- Charts row 1 -->
+        <div class="charts-grid" style="margin-bottom:20px;">
+          <div class="chart-card">
+            <div class="chart-card-title">Spend Distribution (USD)</div>
+            <canvas id="spendChart" height="220"></canvas>
+          </div>
+          <div class="chart-card">
+            <div class="chart-card-title">Engagement Rate (%)</div>
+            <canvas id="engageChart" height="220"></canvas>
+          </div>
+        </div>
+
+        <!-- Charts row 2 -->
+        <div class="charts-grid" style="margin-bottom:20px;">
+          <div class="chart-card">
+            <div class="chart-card-title">Platform Breakdown</div>
+            <canvas id="platformChart" height="220"></canvas>
+          </div>
+          <div class="chart-card">
+            <div class="chart-card-title">Sentiment Distribution</div>
+            <canvas id="sentimentChart" height="220"></canvas>
+          </div>
+        </div>
+
+        <!-- Content Intelligence section -->
+        <div class="table-card" style="margin-bottom:20px;">
+          <div class="table-card-header">
+            <div class="table-card-title">Content Intelligence</div>
+            <span style="font-size:0.72rem;color:var(--text3);font-family:var(--mono);">Top posts · hashtags · themes per brand</span>
+          </div>
+          <div id="contentIntelBody" style="padding:0;"></div>
+        </div>
+
+        <!-- Competitor metrics table -->
+        <div class="table-card">
+          <div class="table-card-header">
+            <div class="table-card-title">Engagement Metrics</div>
+          </div>
+          <div style="overflow-x:auto;">
+            <table class="results-table">
+              <thead>
+                <tr>
+                  <th>Brand</th>
+                  <th>Handle</th>
+                  <th>Platform</th>
+                  <th>Likes</th>
+                  <th>Comments</th>
+                  <th>Shares</th>
+                  <th>Views</th>
+                  <th>Engagement %</th>
+                  <th>Est. Spend</th>
+                  <th>Sentiment</th>
+                </tr>
+              </thead>
+              <tbody id="resultsTableBody"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Top Posts by Channel -->
+        <div class="section-divider">
+          <span class="section-divider-label">Top Posts by Platform</span>
+        </div>
+        <div id="topPostsSection" style="display:none; margin-bottom:28px;">
+          <div id="topPostsGrid"></div>
+        </div>
+
+        <!-- Calculation Tree / Assumptions -->
+        <div class="table-card" id="calcTreeCard" style="margin-top:20px;display:none;">
+          <div class="table-card-header">
+            <div class="table-card-title">Calculation Tree &amp; Assumptions</div>
+            <div style="display:flex;align-items:center;gap:12px;">
+              <label style="font-size:0.75rem;color:var(--text3);font-family:var(--mono);display:flex;align-items:center;gap:6px;">
+                CPM Rate
+                <span style="color:var(--text3);">$</span>
+                <input type="number" id="cpmOverride" step="0.5" min="0.01"
+                  style="width:72px;background:var(--bg3);border:1px solid var(--border);border-radius:4px;padding:3px 8px;color:var(--text);font-size:0.82rem;font-family:var(--mono);">
+                <button class="btn-secondary" id="recalcBtn" style="padding:4px 10px;font-size:0.72rem;">↺ Recalc</button>
+              </label>
+            </div>
+          </div>
+          <div id="calcTreeBody" style="padding:16px 20px;"></div>
+        </div>
+
+        <!-- Export -->
+        <div class="export-row">
+          <button class="btn-secondary" id="exportJson">↓ Export JSON</button>
+          <button class="btn-secondary" id="exportCsv">↓ Export CSV</button>
+        </div>
+
+      </div>
+    </div>
+  </div>
+
+</div><!-- /app-shell -->
+
+<!-- Node Popover -->
+<div class="node-popover" id="nodePopover">
+  <div class="node-popover-inner">
+    <div class="popover-header">
+      <div class="popover-agent-name" id="popoverName"></div>
+      <div class="popover-role" id="popoverRole"></div>
+    </div>
+    <div class="popover-body">
+      <div class="popover-status-badge idle" id="popoverBadge"></div>
+      <div class="popover-sep"></div>
+      <div class="popover-log" id="popoverLog"></div>
+      <div class="popover-hint">Hover to inspect · run analysis to activate</div>
+    </div>
+  </div>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>
