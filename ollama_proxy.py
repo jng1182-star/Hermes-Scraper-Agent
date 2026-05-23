@@ -30,7 +30,7 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
             self.send_response(403)
             self.send_header("Content-Type", "text/plain")
             self.end_headers()
-            self.wfile.write(b"403 Forbidden — invalid token\n")
+            self.wfile.write(b"403 Forbidden - invalid token\n")
             return
 
         length  = int(self.headers.get("Content-Length", 0))

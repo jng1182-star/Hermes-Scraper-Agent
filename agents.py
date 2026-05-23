@@ -13,11 +13,20 @@ os.environ["OLLAMA_HOST"] = _OLLAMA_HOST
 
 
 def _make_llm(model_name: str) -> LLM:
-    """Create a CrewAI LLM object pointing at local/remote Ollama."""
+    """Create a CrewAI LLM object pointing at local/remote Ollama.
+
+    When OLLAMA_HOST is a remote ngrok URL the proxy requires X-Hermes-Token.
+    When running locally the header is ignored by Ollama — safe either way.
+    """
+    headers = {}
+    token = os.getenv("HERMES_TUNNEL_TOKEN", "")
+    if token:
+        headers["X-Hermes-Token"] = token
     return LLM(
         model=model_name,
         base_url=_OLLAMA_BASE_URL,
-        api_key="ollama",          # Ollama doesn't require a real key
+        api_key="ollama",
+        default_headers=headers if headers else None,
     )
 
 
