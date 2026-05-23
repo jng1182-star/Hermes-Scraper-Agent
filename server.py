@@ -36,6 +36,27 @@ _run_state = {
 _state_lock = threading.Lock()
 _stop_flag  = threading.Event()   # set to request graceful abort
 _worker_thread_id: Optional[int] = None
+_worker_thread: Optional[threading.Thread] = None   # reference for join/kill
+
+
+def _kill_ollama_now():
+    """Kill the Ollama runner process to unblock any in-flight LLM call."""
+    import subprocess
+    try:
+        r = subprocess.run(["pgrep", "-f", "ollama runner"], capture_output=True, text=True)
+        for pid_str in r.stdout.strip().splitlines():
+            try:
+                os.kill(int(pid_str), 9)   # SIGKILL — instant
+            except (ValueError, ProcessLookupError):
+                pass
+    except Exception:
+        pass
+    # Also stop model via ollama CLI (best-effort)
+    try:
+        subprocess.run(["ollama", "stop", "gemma4:e4b"],  capture_output=True, timeout=3)
+        subprocess.run(["ollama", "stop", "gemma4:26b"], capture_output=True, timeout=3)
+    except Exception:
+        pass
 
 # Map CrewAI Agent.role → dashboard node IDs
 _ROLE_TO_NODE = {
@@ -109,9 +130,10 @@ def _run_worker(params: dict):
     import ctypes
     import main as _main
 
-    global _worker_thread_id
+    global _worker_thread_id, _worker_thread
     _stop_flag.clear()
-    _worker_thread_id = threading.current_thread().ident
+    _worker_thread_id  = threading.current_thread().ident
+    _worker_thread     = threading.current_thread()
 
     with _state_lock:
         _run_state.update(
@@ -142,8 +164,8 @@ def _run_worker(params: dict):
             for aid, s in _run_state["agent_states"].items():
                 if s == "active":
                     _run_state["agent_states"][aid] = "done"
-    except RuntimeError as e:
-        if "stopped by user" in str(e).lower():
+    except (RuntimeError, SystemExit) as e:
+        if _stop_flag.is_set() or "stopped by user" in str(e).lower():
             with _state_lock:
                 _run_state["logs"].append("[STOP] Analysis cancelled by user.")
                 for aid in _run_state["agent_states"]:
@@ -153,13 +175,20 @@ def _run_worker(params: dict):
                 _run_state["error"] = str(e)
                 _run_state["logs"].append(f"ERROR: {e}")
     except Exception as e:
-        with _state_lock:
-            _run_state["error"] = str(e)
-            _run_state["logs"].append(f"ERROR: {e}")
+        if _stop_flag.is_set():
+            with _state_lock:
+                _run_state["logs"].append("[STOP] Analysis cancelled by user.")
+                for aid in _run_state["agent_states"]:
+                    _run_state["agent_states"][aid] = "idle"
+        else:
+            with _state_lock:
+                _run_state["error"] = str(e)
+                _run_state["logs"].append(f"ERROR: {e}")
     finally:
         sys.stdout, sys.stderr = old_out, old_err
         _main._state_hook = None
         _worker_thread_id = None
+        _worker_thread    = None
         _stop_flag.clear()
         with _state_lock:
             _run_state["running"] = False
@@ -242,15 +271,41 @@ class Handler(BaseHTTPRequestHandler):
                 is_running = _run_state["running"]
             if is_running:
                 _stop_flag.set()
+                # 1. Kill Ollama runner to unblock any in-flight LLM call
+                _kill_ollama_now()
+                # 2. Inject async exception into the worker thread
                 tid = _worker_thread_id
                 if tid:
                     try:
                         ctypes.pythonapi.PyThreadState_SetAsyncExc(
                             ctypes.c_ulong(tid),
-                            ctypes.py_object(RuntimeError),
+                            ctypes.py_object(SystemExit),  # SystemExit is harder to swallow
                         )
                     except Exception:
                         pass
+                # 3. Keep injecting every 500ms in background until thread dies
+                wt = _worker_thread
+                def _force_stop(tid=tid, wt=wt):
+                    for _ in range(20):   # up to 10s
+                        time.sleep(0.5)
+                        if wt is None or not wt.is_alive():
+                            break
+                        if tid:
+                            try:
+                                ctypes.pythonapi.PyThreadState_SetAsyncExc(
+                                    ctypes.c_ulong(tid),
+                                    ctypes.py_object(SystemExit),
+                                )
+                            except Exception:
+                                pass
+                    # Final state cleanup if thread still hasn't ended
+                    with _state_lock:
+                        if _run_state["running"]:
+                            _run_state["running"] = False
+                            _run_state["logs"].append("[STOP] Force-stopped by user.")
+                            for aid in _run_state["agent_states"]:
+                                _run_state["agent_states"][aid] = "idle"
+                threading.Thread(target=_force_stop, daemon=True).start()
                 self._json(200, {"status": "stopping"})
             else:
                 self._json(200, {"status": "not_running"})

@@ -16,6 +16,7 @@ const State = {
   elapsedInterval: null,      // client-side 1s tick
   elapsedStart: null,         // Date.now() when run started
   reportData: null,
+  activePlatforms: new Set(), // currently selected platform filter pills
   agentStates: { scraper: 'idle', analyst: 'idle', reporter: 'idle', gate: 'idle' },
   lastLogs: [],
 };
@@ -918,141 +919,26 @@ function renderResults(data) {
   document.getElementById('noDataState').style.display = 'none';
   document.getElementById('resultsContent').style.display = 'block';
 
-  const comp = data.competitors;
+  const comp   = data.competitors;
   const params = data.scan_params || {};
 
-  // Context bar
+  // Reset platform filter on each new report so all platforms start selected
+  State.activePlatforms = new Set();
+
+  // Context bar (also initialises activePlatforms to all)
   buildContextBar(params, comp);
 
-  // KPIs
-  const totalSpend  = comp.reduce((s, c) => s + (c.estimated_spend_usd || 0), 0);
-  const avgEngage   = comp.reduce((s, c) => s + (c.engagement_rate || 0), 0) / comp.length;
-  const platformCts = {};
-  comp.forEach(c => { const p = c.platform || 'Unknown'; platformCts[p] = (platformCts[p] || 0) + 1; });
-  const topPlatform = Object.entries(platformCts).sort((a,b) => b[1]-a[1])[0]?.[0] || '—';
+  // Render all dynamic content using the filter (starts with all selected)
+  renderResultsFiltered();
 
-  document.getElementById('kpiCount').textContent    = comp.length;
-  document.getElementById('kpiSpend').textContent    = '$' + totalSpend.toLocaleString(undefined, {maximumFractionDigits:0});
-  document.getElementById('kpiEngage').textContent   = avgEngage.toFixed(2) + '%';
-  document.getElementById('kpiPlatform').textContent = topPlatform;
-
-  // Charts
-  const labels    = comp.map(c => c.name || c.handle || '?');
-  const spends    = comp.map(c => c.estimated_spend_usd || 0);
-  const engages   = comp.map(c => c.engagement_rate || 0);
-  const bgColors  = labels.map((_, i) => BRAND_COLORS[i % BRAND_COLORS.length]);
-
-  destroyCharts();
-
-  Charts.spend = new Chart(document.getElementById('spendChart').getContext('2d'), {
-    type: 'bar',
-    data: {
-      labels,
-      datasets: [{ data: spends, backgroundColor: bgColors, borderRadius: 5, borderSkipped: false }],
-    },
-    options: { ...CHART_OPTS },
-  });
-
-  Charts.engage = new Chart(document.getElementById('engageChart').getContext('2d'), {
-    type: 'line',
-    data: {
-      labels,
-      datasets: [{
-        data: engages,
-        borderColor: C.accent,
-        backgroundColor: C.accentLt,
-        tension: 0.4,
-        fill: true,
-        pointBackgroundColor: C.accent,
-        pointRadius: 5,
-        pointBorderColor: '#050a14',
-        pointBorderWidth: 2,
-      }],
-    },
-    options: { ...CHART_OPTS },
-  });
-
-  // Platform donut
-  const platLabels = Object.keys(platformCts);
-  const platData   = platLabels.map(k => platformCts[k]);
-  Charts.platform = new Chart(document.getElementById('platformChart').getContext('2d'), {
-    type: 'doughnut',
-    data: {
-      labels: platLabels,
-      datasets: [{ data: platData, backgroundColor: bgColors, hoverOffset: 6, borderColor: '#060d1c', borderWidth: 2 }],
-    },
-    options: {
-      responsive: true,
-      cutout: '62%',
-      plugins: { legend: { display: true, position: 'right', labels: { font: { size: 11 }, color: '#8b949e' } } },
-    },
-  });
-
-  // Sentiment bar
-  const sentCts = { Positive: 0, Neutral: 0, Negative: 0 };
-  comp.forEach(c => { sentCts[c.sentiment] = (sentCts[c.sentiment] || 0) + 1; });
-  Charts.sentiment = new Chart(document.getElementById('sentimentChart').getContext('2d'), {
-    type: 'bar',
-    data: {
-      labels: Object.keys(sentCts),
-      datasets: [{
-        data: Object.values(sentCts),
-        backgroundColor: ['rgba(34,197,94,0.18)', 'rgba(245,158,11,0.18)', 'rgba(248,81,73,0.18)'],
-        borderColor:     [C.green, C.amber, C.red],
-        borderWidth: 2,
-        borderRadius: 5,
-        borderSkipped: false,
-      }],
-    },
-    options: {
-      ...CHART_OPTS,
-      plugins: { legend: { display: false } },
-    },
-  });
-
-  // Content intelligence cards
-  renderContentIntel(comp, bgColors);
-
-  // Table
-  const tbody = document.getElementById('resultsTableBody');
-  tbody.innerHTML = '';
-  comp.forEach((c, i) => {
-    const m = c.metrics || {};
-    const sentClass = (c.sentiment || '').toLowerCase();
-    const color = bgColors[i % bgColors.length];
-    tbody.innerHTML += `
-      <tr>
-        <td><span style="display:inline-flex;align-items:center;gap:7px;">
-          <span style="width:8px;height:8px;border-radius:50%;background:${color};display:inline-block;flex-shrink:0;"></span>
-          <strong>${esc(c.name || '—')}</strong>
-        </span></td>
-        <td style="color:#64748b;">${esc(c.handle || '—')}</td>
-        <td><span class="platform-badge">${esc(c.platform || 'Multi')}</span></td>
-        <td>${fmt(m.likes)}</td>
-        <td>${fmt(m.comments)}</td>
-        <td>${fmt(m.shares)}</td>
-        <td>${fmt(m.views)}</td>
-        <td><strong>${(c.engagement_rate || 0).toFixed(2)}%</strong></td>
-        <td style="color:#2563eb;font-weight:700;">$${(c.estimated_spend_usd || 0).toLocaleString(undefined,{maximumFractionDigits:0})}</td>
-        <td><span class="sentiment-badge ${sentClass}">${esc(c.sentiment || '—')}</span></td>
-      </tr>`;
-  });
-
-  // Top posts by channel
-  renderTopPosts(data);
-  // Load TikTok embed script once after DOM is populated
+  // TikTok embed script
   if (!document.getElementById('tiktok-embed-js')) {
     const s = document.createElement('script');
-    s.id  = 'tiktok-embed-js';
-    s.src = 'https://www.tiktok.com/embed.js';
-    s.async = true;
+    s.id = 'tiktok-embed-js'; s.src = 'https://www.tiktok.com/embed.js'; s.async = true;
     document.body.appendChild(s);
   } else if (window.tiktokEmbed) {
-    window.tiktokEmbed.render(); // re-render if script already loaded
+    window.tiktokEmbed.render();
   }
-
-  // Calculation tree
-  renderCalcTree(data);
 
   // Mark results dot done
   document.getElementById('dot-results').className = 'status-dot done';
@@ -1386,16 +1272,153 @@ document.addEventListener('DOMContentLoaded', () => {});
 
 function buildContextBar(params, comp) {
   const bar = document.getElementById('contextBar');
+
+  // Derive all platforms present in data (union of params + actual competitor data)
+  const paramPlats = params.platforms || [];
+  const dataPlats  = [...new Set(comp.map(c => c.platform).filter(Boolean))];
+  const allPlats   = [...new Set([...paramPlats, ...dataPlats])];
+
+  // Initialise activePlatforms to all on first build
+  if (State.activePlatforms.size === 0) {
+    allPlats.forEach(p => State.activePlatforms.add(p));
+  }
+
   const parts = [];
   if (params.advertiser) parts.push(`<strong>${esc(params.advertiser)}</strong>`);
   if (params.competitors && params.competitors.length)
     parts.push('vs ' + params.competitors.map(c => `<span class="ctx-badge">${esc(c)}</span>`).join(' '));
   if (params.country) parts.push(`<span class="ctx-sep">·</span> ${esc(params.country)}`);
-  if (params.platforms && params.platforms.length)
-    parts.push(`<span class="ctx-sep">·</span> ${params.platforms.map(p => `<span class="ctx-badge">${esc(p)}</span>`).join(' ')}`);
   if (params.date_range) parts.push(`<span class="ctx-sep">·</span> ${esc(params.date_range)}`);
+
+  // Platform filter pills — always shown if platforms exist
+  let pillsHtml = '';
+  if (allPlats.length) {
+    const pillList = allPlats.map(p => {
+      const active = State.activePlatforms.has(p);
+      const pm = platformMeta(p);
+      return `<button class="ctx-plat-pill ${pm.cls} ${active ? 'active' : ''}" data-plat="${esc(p)}">${esc(p)}</button>`;
+    }).join('');
+    pillsHtml = `<span class="ctx-sep">·</span><span class="ctx-pills-wrap">${pillList}</span>`;
+  }
+
   if (!parts.length && comp.length) parts.push(`${comp.length} competitor(s) analysed`);
-  bar.innerHTML = parts.join(' ') || 'Scan complete';
+  bar.innerHTML = (parts.join(' ') || 'Scan complete') + pillsHtml;
+
+  // Wire pill clicks
+  bar.querySelectorAll('.ctx-plat-pill').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const plat = btn.dataset.plat;
+      if (State.activePlatforms.has(plat)) {
+        // Don't allow deselecting the last pill
+        if (State.activePlatforms.size === 1) return;
+        State.activePlatforms.delete(plat);
+        btn.classList.remove('active');
+      } else {
+        State.activePlatforms.add(plat);
+        btn.classList.add('active');
+      }
+      renderResultsFiltered();
+    });
+  });
+}
+
+// Re-render KPIs, charts, table, top posts using current platform filter
+function filteredComp() {
+  if (!State.reportData) return [];
+  const all = State.reportData.competitors || [];
+  if (State.activePlatforms.size === 0) return all;
+  return all.filter(c => State.activePlatforms.has(c.platform));
+}
+
+function renderResultsFiltered() {
+  const data = State.reportData;
+  if (!data) return;
+  const comp     = filteredComp();
+  const bgColors = comp.map((_, i) => BRAND_COLORS[i % BRAND_COLORS.length]);
+
+  // KPIs
+  const totalSpend  = comp.reduce((s, c) => s + (c.estimated_spend_usd || 0), 0);
+  const avgEngage   = comp.length ? comp.reduce((s, c) => s + (c.engagement_rate || 0), 0) / comp.length : 0;
+  const platformCts = {};
+  comp.forEach(c => { const p = c.platform || 'Unknown'; platformCts[p] = (platformCts[p] || 0) + 1; });
+  const topPlatform = Object.entries(platformCts).sort((a,b) => b[1]-a[1])[0]?.[0] || '—';
+
+  document.getElementById('kpiCount').textContent    = comp.length;
+  document.getElementById('kpiSpend').textContent    = '$' + totalSpend.toLocaleString(undefined, {maximumFractionDigits:0});
+  document.getElementById('kpiEngage').textContent   = avgEngage.toFixed(2) + '%';
+  document.getElementById('kpiPlatform').textContent = topPlatform;
+
+  // Charts
+  const labels  = comp.map(c => c.name || c.handle || '?');
+  const spends  = comp.map(c => c.estimated_spend_usd || 0);
+  const engages = comp.map(c => c.engagement_rate || 0);
+
+  destroyCharts();
+
+  Charts.spend = new Chart(document.getElementById('spendChart').getContext('2d'), {
+    type: 'bar',
+    data: { labels, datasets: [{ data: spends, backgroundColor: bgColors, borderRadius: 5, borderSkipped: false }] },
+    options: { ...CHART_OPTS },
+  });
+  Charts.engage = new Chart(document.getElementById('engageChart').getContext('2d'), {
+    type: 'line',
+    data: { labels, datasets: [{ data: engages, borderColor: C.accent, backgroundColor: C.accentLt,
+      tension: 0.4, fill: true, pointBackgroundColor: C.accent, pointRadius: 5,
+      pointBorderColor: '#050a14', pointBorderWidth: 2 }] },
+    options: { ...CHART_OPTS },
+  });
+
+  const platLabels = Object.keys(platformCts);
+  const platData   = platLabels.map(k => platformCts[k]);
+  Charts.platform = new Chart(document.getElementById('platformChart').getContext('2d'), {
+    type: 'doughnut',
+    data: { labels: platLabels, datasets: [{ data: platData, backgroundColor: bgColors,
+      hoverOffset: 6, borderColor: '#060d1c', borderWidth: 2 }] },
+    options: { responsive: true, cutout: '62%',
+      plugins: { legend: { display: true, position: 'right', labels: { font: { size: 11 }, color: '#8b949e' } } } },
+  });
+
+  const sentCts = { Positive: 0, Neutral: 0, Negative: 0 };
+  comp.forEach(c => { sentCts[c.sentiment] = (sentCts[c.sentiment] || 0) + 1; });
+  Charts.sentiment = new Chart(document.getElementById('sentimentChart').getContext('2d'), {
+    type: 'bar',
+    data: { labels: Object.keys(sentCts), datasets: [{
+      data: Object.values(sentCts),
+      backgroundColor: ['rgba(34,197,94,0.18)', 'rgba(245,158,11,0.18)', 'rgba(248,81,73,0.18)'],
+      borderColor: [C.green, C.amber, C.red], borderWidth: 2, borderRadius: 5, borderSkipped: false,
+    }] },
+    options: { ...CHART_OPTS, plugins: { legend: { display: false } } },
+  });
+
+  // Content intel
+  renderContentIntel(comp, bgColors);
+
+  // Table
+  const tbody = document.getElementById('resultsTableBody');
+  tbody.innerHTML = comp.map((c, i) => {
+    const m = c.metrics || {};
+    const sentClass = (c.sentiment || '').toLowerCase();
+    const color = bgColors[i % bgColors.length];
+    return `<tr>
+      <td><span style="display:inline-flex;align-items:center;gap:7px;">
+        <span style="width:8px;height:8px;border-radius:50%;background:${color};display:inline-block;flex-shrink:0;"></span>
+        <strong>${esc(c.name || '—')}</strong>
+      </span></td>
+      <td style="color:#64748b;">${esc(c.handle || '—')}</td>
+      <td><span class="platform-badge">${esc(c.platform || 'Multi')}</span></td>
+      <td>${fmt(m.likes)}</td><td>${fmt(m.comments)}</td>
+      <td>${fmt(m.shares)}</td><td>${fmt(m.views)}</td>
+      <td><strong>${(c.engagement_rate || 0).toFixed(2)}%</strong></td>
+      <td style="color:#2563eb;font-weight:700;">$${(c.estimated_spend_usd || 0).toLocaleString(undefined,{maximumFractionDigits:0})}</td>
+      <td><span class="sentiment-badge ${sentClass}">${esc(c.sentiment || '—')}</span></td>
+    </tr>`;
+  }).join('');
+
+  // Top posts (pass filtered data object)
+  renderTopPosts({ competitors: comp });
+
+  // Calc tree (always uses full data — assumptions are scan-wide)
+  renderCalcTree(data);
 }
 
 function destroyCharts() {

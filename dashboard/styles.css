@@ -1018,6 +1018,48 @@ select.form-input { cursor: pointer; }
   font-weight: 600;
 }
 
+/* Platform filter pills */
+.ctx-pills-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex-wrap: wrap;
+}
+.ctx-plat-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-family: var(--mono);
+  font-size: 0.65rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  padding: 3px 10px;
+  border-radius: 20px;
+  border: 1px solid var(--border);
+  background: var(--bg3);
+  color: var(--text3);
+  cursor: pointer;
+  transition: var(--transition);
+  user-select: none;
+}
+.ctx-plat-pill:hover { border-color: var(--accent); color: var(--text2); }
+.ctx-plat-pill.active {
+  background: rgba(31,111,235,0.12);
+  border-color: rgba(31,111,235,0.4);
+  color: var(--accent);
+}
+/* Per-platform active colours */
+.ctx-plat-pill.ch-tiktok.active   { background: rgba(255,0,80,0.10); border-color: rgba(255,0,80,0.4); color: #ff0050; }
+.ctx-plat-pill.ch-instagram.active{ background: rgba(225,48,108,0.10); border-color: rgba(225,48,108,0.4); color: #e1306c; }
+.ctx-plat-pill.ch-youtube.active  { background: rgba(255,0,0,0.10); border-color: rgba(255,0,0,0.4); color: #ff4444; }
+.ctx-plat-pill.ch-twitter.active,
+.ctx-plat-pill.ch-x.active        { background: rgba(29,155,240,0.10); border-color: rgba(29,155,240,0.4); color: #1d9bf0; }
+.ctx-plat-pill.ch-facebook.active { background: rgba(24,119,242,0.10); border-color: rgba(24,119,242,0.4); color: #1877f2; }
+.ctx-plat-pill.ch-linkedin.active { background: rgba(10,102,194,0.10); border-color: rgba(10,102,194,0.4); color: #0a66c2; }
+/* Deselected = faded out */
+.ctx-plat-pill:not(.active) { opacity: 0.4; }
+.ctx-plat-pill:not(.active):hover { opacity: 0.7; }
+
 .no-data-state {
   text-align: center;
   padding: 80px 20px;
