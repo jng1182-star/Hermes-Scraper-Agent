@@ -1,30 +1,31 @@
 import os
 from crewai import Agent
+from crewai.llm import LLM
 from tools.social_search_tool import SocialSearchTool
 
-# Ollama host — override via OLLAMA_HOST env var for remote/cloud setups
+# Ollama host — CrewAI native Ollama provider reads OLLAMA_HOST env var.
+# Append /v1 for OpenAI-compatible endpoint that CrewAI uses.
 _OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://127.0.0.1:11434").rstrip("/")
+_OLLAMA_BASE_URL = _OLLAMA_HOST + "/v1"
 
-LLM_QUICK = "ollama/gemma4:e4b"
-LLM_DEEP  = "ollama/gemma4:26b"
+# Ensure env var is set for the native provider's env-var lookup
+os.environ["OLLAMA_HOST"] = _OLLAMA_HOST
 
-# Force-set OLLAMA_API_BASE so litellm routes to correct host.
-# Use force-assign (not setdefault) — OLLAMA_HOST may differ from a stale env var.
-os.environ["OLLAMA_API_BASE"] = _OLLAMA_HOST
 
-# Also configure litellm at runtime in case it was already imported
-try:
-    import litellm
-    litellm.api_base = _OLLAMA_HOST
-    litellm.drop_params = True          # ignore unsupported params silently
-except Exception:
-    pass
+def _make_llm(model_name: str) -> LLM:
+    """Create a CrewAI LLM object pointing at local/remote Ollama."""
+    return LLM(
+        model=model_name,
+        base_url=_OLLAMA_BASE_URL,
+        api_key="ollama",          # Ollama doesn't require a real key
+    )
 
 
 class SocialAgents:
     def __init__(self, depth: str = "deep"):
         self.search_tool = SocialSearchTool()
-        self.llm = LLM_DEEP if depth == "deep" else LLM_QUICK
+        model = "ollama/gemma4:26b" if depth == "deep" else "ollama/gemma4:e4b"
+        self.llm = _make_llm(model)
 
     def scraper_agent(self) -> Agent:
         return Agent(

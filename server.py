@@ -13,12 +13,10 @@ from pathlib import Path
 from socketserver import ThreadingMixIn
 from typing import Optional
 
-# ── Set Ollama base BEFORE litellm/crewai are imported ───────────────────────
-# litellm reads OLLAMA_API_BASE at import time; must be set early.
+# ── Ensure OLLAMA_HOST is set before crewai imports ──────────────────────────
+# CrewAI's native Ollama provider reads OLLAMA_HOST to set base_url.
 _ollama_host = os.getenv("OLLAMA_HOST", "http://127.0.0.1:11434").rstrip("/")
-os.environ["OLLAMA_API_BASE"] = _ollama_host
-# Also suppress OpenAI key warnings — we are not using OpenAI
-os.environ.setdefault("OPENAI_API_KEY", "sk-placeholder-not-used")
+os.environ["OLLAMA_HOST"] = _ollama_host
 
 HOST = os.getenv("HOST", "0.0.0.0")
 PORT = int(os.getenv("PORT", "8000"))

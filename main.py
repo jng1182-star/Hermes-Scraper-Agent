@@ -8,10 +8,9 @@ from dotenv import load_dotenv
 # Load .env FIRST so OLLAMA_HOST is available before any crewai/litellm import
 load_dotenv()
 
-# Ensure Ollama base URL is set before litellm is imported via crew/agents
+# Ensure OLLAMA_HOST is set before crewai is imported (native provider reads it)
 _ollama_host = os.getenv("OLLAMA_HOST", "http://127.0.0.1:11434").rstrip("/")
-os.environ["OLLAMA_API_BASE"] = _ollama_host
-os.environ.setdefault("OPENAI_API_KEY", "sk-placeholder-not-used")
+os.environ["OLLAMA_HOST"] = _ollama_host
 
 from crew import SocialListeningCrew
 from approval_gate import ApprovalGate
