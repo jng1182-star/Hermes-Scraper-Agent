@@ -472,6 +472,7 @@ document.getElementById('runBtn').addEventListener('click', async () => {
   setPartialPill(false);
   resetAgentCards();
   updateDots('running');
+  lockForm(true);
 
   const elapsedBadge = document.getElementById('elapsedBadge');
   if (elapsedBadge) elapsedBadge.style.display = 'flex';
@@ -585,6 +586,7 @@ async function pollStatus() {
         setLogStatus('error', 'Analysis failed — see log above.');
         updateDots('error');
         if (banner) banner.style.display = 'none';
+        lockForm(false);
       } else if (s.report_ready) {
         setLogStatus('done', 'Analysis complete — loading results…');
         updateDots('done');
@@ -594,8 +596,10 @@ async function pollStatus() {
           try {
             const rep = await fetch('/report').then(r => r.json());
             State.reportData = rep;
+            saveRun(rep);
+            lockForm(false);
             showPage('results');
-          } catch(e) {}
+          } catch(e) { lockForm(false); }
         }, 1000);
       } else {
         setLogStatus('done', 'Finished.'); updateDots('idle');
@@ -656,6 +660,32 @@ function resetRunBtn() {
   if (stopBtn) { stopBtn.disabled = true; stopBtn.textContent = '■ Stop'; }
 }
 
+function lockForm(locked) {
+  const cfg = document.getElementById('page-configure');
+  if (!cfg) return;
+  cfg.classList.toggle('form-locked', locked);
+  cfg.querySelectorAll('input:not(#resetBtn), select, textarea').forEach(el => {
+    el.disabled = locked;
+  });
+  cfg.querySelectorAll('.platform-option, .depth-option, .date-preset').forEach(el => {
+    el.style.pointerEvents = locked ? 'none' : '';
+    el.style.opacity       = locked ? '0.5'  : '';
+  });
+  cfg.querySelectorAll('.tag-input-wrap').forEach(el => {
+    el.style.pointerEvents = locked ? 'none' : '';
+    el.style.opacity       = locked ? '0.5'  : '';
+  });
+  const fileZone = document.getElementById('fileUploadZone');
+  if (fileZone) {
+    fileZone.style.pointerEvents = locked ? 'none' : '';
+    fileZone.style.opacity       = locked ? '0.5'  : '';
+  }
+  const runBtn = document.getElementById('runBtn');
+  if (runBtn) runBtn.disabled = locked;
+  const resetBtn = document.getElementById('resetBtn');
+  if (resetBtn) resetBtn.disabled = false; // always clickable
+}
+
 function resetForm() {
   document.getElementById('keywords').value = '';
   document.getElementById('cpmRate').value  = '0';
@@ -696,6 +726,7 @@ function resetForm() {
   State.postType = 'both';
 
   showLogPanel(false);
+  lockForm(false);
 }
 
 document.getElementById('resetBtn').addEventListener('click', resetForm);
@@ -1767,6 +1798,186 @@ function renderCalcTree(data) {
     renderResults(data);
   });
 })();
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// SAVED RUNS
+// ═══════════════════════════════════════════════════════════════════════════════
+
+const SAVED_RUNS_KEY = 'hermes_saved_runs';
+
+function loadSavedRuns() {
+  try { return JSON.parse(localStorage.getItem(SAVED_RUNS_KEY) || '[]'); }
+  catch(e) { return []; }
+}
+
+function persistSavedRuns(runs) {
+  try { localStorage.setItem(SAVED_RUNS_KEY, JSON.stringify(runs)); } catch(e) {}
+}
+
+function saveRun(report) {
+  if (!report || !report.competitors) return;
+  const runs = loadSavedRuns();
+  const sp   = report.scan_params || {};
+  const entry = {
+    id:        Date.now(),
+    ts:        new Date().toISOString(),
+    label:     buildRunLabel(sp),
+    params:    sp,
+    report:    report,
+  };
+  runs.unshift(entry);
+  if (runs.length > 50) runs.length = 50; // cap at 50
+  persistSavedRuns(runs);
+  renderSavedRunsList();
+  // flash dot
+  const dot = document.getElementById('dot-saved');
+  if (dot) { dot.className = 'status-dot done'; setTimeout(() => dot.className = 'status-dot', 3000); }
+}
+
+function buildRunLabel(sp) {
+  const brands = [...(sp.advertisers||[]), ...(sp.competitors||[])].slice(0,3).join(', ') || 'Unknown brands';
+  const market = sp.country || 'Global';
+  const dr     = sp.date_range || '';
+  return `${brands} · ${market} · ${dr}`;
+}
+
+function buildRunCsv(report) {
+  const sp    = report.scan_params || {};
+  const comps = report.competitors || [];
+  const total = comps.reduce((s,c) => s + (c.estimated_spend_usd||0), 0);
+
+  // Sheet 1 header: scan metadata
+  const metaRows = [
+    ['Run Date', new Date().toLocaleString()],
+    ['Brands', [...(sp.advertisers||[]), ...(sp.competitors||[])].join(', ')],
+    ['Market', sp.country || 'Global'],
+    ['Industry', sp.industry || 'General'],
+    ['Date Range', sp.date_range || ''],
+    ['Platforms', (sp.platforms||[]).join(', ')],
+    ['Content Type', sp.post_type || ''],
+    ['Analysis Depth', sp.depth || ''],
+    [],
+  ].map(r => r.map(v => `"${String(v||'').replace(/"/g,'""')}"`).join(','));
+
+  const cols = [
+    'Brand','Handle','Platform','Type','Impressions','Interactions',
+    'Likes','Comments','Shares','Saves','Followers',
+    'Eng. Rate (%)','Benchmark ER (%)','ER vs Benchmark (%)','Est. Value (USD)',
+    'Share of Spend (%)','CPM Used','Sentiment',
+  ];
+
+  const dataRows = comps.map(c => {
+    const m   = c.metrics || {};
+    const interactions = (m.likes||0)+(m.comments||0)+(m.shares||0)+(m.saves||0);
+    const sos = total > 0 ? ((c.estimated_spend_usd||0)/total*100).toFixed(2) : '0';
+    return [
+      c.name, c.handle, c.platform, c.post_type,
+      m.views, interactions, m.likes, m.comments, m.shares, m.saves, m.followers,
+      c.engagement_rate, c.benchmark_er_pct, c.er_vs_benchmark,
+      c.estimated_spend_usd, sos, c.cpm_used, c.sentiment,
+    ].map(v => `"${String(v||'').replace(/"/g,'""')}"`).join(',');
+  });
+
+  return [...metaRows, cols.join(','), ...dataRows].join('\n');
+}
+
+function downloadRunCsv(entry) {
+  const csv  = buildRunCsv(entry.report);
+  const blob = new Blob([csv], { type: 'text/csv' });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  const ts   = new Date(entry.ts).toISOString().slice(0,16).replace('T','_').replace(':','-');
+  a.href = url; a.download = `hermes-run-${ts}.csv`;
+  document.body.appendChild(a); a.click();
+  document.body.removeChild(a); URL.revokeObjectURL(url);
+}
+
+function deleteRun(id) {
+  const runs = loadSavedRuns().filter(r => r.id !== id);
+  persistSavedRuns(runs);
+  renderSavedRunsList();
+}
+
+function renderSavedRunsList() {
+  const runs     = loadSavedRuns();
+  const list     = document.getElementById('savedRunsList');
+  const empty    = document.getElementById('savedRunsEmpty');
+  if (!list) return;
+
+  if (!runs.length) {
+    if (empty) empty.style.display = 'flex';
+    list.innerHTML = '';
+    return;
+  }
+  if (empty) empty.style.display = 'none';
+
+  list.innerHTML = runs.map(entry => {
+    const sp     = entry.params || {};
+    const comps  = (entry.report.competitors || []);
+    const total  = comps.reduce((s,c) => s + (c.estimated_spend_usd||0), 0);
+    const avgER  = comps.length ? (comps.reduce((s,c) => s + (c.engagement_rate||0), 0) / comps.length) : 0;
+    const brands = [...(sp.advertisers||[]), ...(sp.competitors||[])];
+    const tsLabel = new Date(entry.ts).toLocaleString('en-SG', { dateStyle:'medium', timeStyle:'short' });
+
+    return `
+    <div class="saved-run-card" data-id="${entry.id}">
+      <div class="src-top">
+        <div class="src-meta">
+          <div class="src-label">${esc(entry.label)}</div>
+          <div class="src-ts">${tsLabel}</div>
+        </div>
+        <div class="src-actions">
+          <button class="btn-secondary src-load-btn" data-id="${entry.id}" title="Load into Results">↗ Load</button>
+          <button class="btn-secondary src-csv-btn"  data-id="${entry.id}" title="Download CSV">↓ CSV</button>
+          <button class="btn-ghost    src-del-btn"   data-id="${entry.id}" title="Delete">✕</button>
+        </div>
+      </div>
+      <div class="src-pills">
+        ${brands.slice(0,6).map(b => `<span class="src-pill">${esc(b)}</span>`).join('')}
+        ${brands.length > 6 ? `<span class="src-pill muted">+${brands.length-6} more</span>` : ''}
+      </div>
+      <div class="src-stats">
+        <div class="src-stat"><span class="src-stat-label">Posts</span><span class="src-stat-val">${comps.length}</span></div>
+        <div class="src-stat"><span class="src-stat-label">Est. Value</span><span class="src-stat-val">$${fmtShort(total)}</span></div>
+        <div class="src-stat"><span class="src-stat-label">Avg ER</span><span class="src-stat-val">${avgER.toFixed(2)}%</span></div>
+        <div class="src-stat"><span class="src-stat-label">Market</span><span class="src-stat-val">${esc(sp.country||'Global')}</span></div>
+        <div class="src-stat"><span class="src-stat-label">Platforms</span><span class="src-stat-val">${(sp.platforms||[]).join(', ')||'—'}</span></div>
+        <div class="src-stat"><span class="src-stat-label">Range</span><span class="src-stat-val">${esc(sp.date_range||'—')}</span></div>
+      </div>
+    </div>`;
+  }).join('');
+
+  // Wire up buttons
+  list.querySelectorAll('.src-load-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const id    = parseInt(btn.dataset.id);
+      const entry = loadSavedRuns().find(r => r.id === id);
+      if (!entry) return;
+      State.reportData = entry.report;
+      showPage('results');
+    });
+  });
+  list.querySelectorAll('.src-csv-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const id    = parseInt(btn.dataset.id);
+      const entry = loadSavedRuns().find(r => r.id === id);
+      if (entry) downloadRunCsv(entry);
+    });
+  });
+  list.querySelectorAll('.src-del-btn').forEach(btn => {
+    btn.addEventListener('click', () => deleteRun(parseInt(btn.dataset.id)));
+  });
+}
+
+document.getElementById('clearSavedBtn').addEventListener('click', () => {
+  if (confirm('Delete all saved runs?')) {
+    persistSavedRuns([]);
+    renderSavedRunsList();
+  }
+});
+
+// Load saved runs on init
+renderSavedRunsList();
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // EXPORT

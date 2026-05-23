@@ -207,7 +207,7 @@ body {
 
 .config-grid {
   display: grid;
-  grid-cols: 1fr;
+  grid-template-columns: 1fr;
   gap: 24px;
 }
 
@@ -2142,3 +2142,117 @@ a.post-link:hover {
   align-self: flex-end;
 }
 .dd-execute-btn:hover { background: var(--accent-h); }
+
+/* ── Saved Runs Page ─────────────────────────────────────────────────────── */
+.saved-runs-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 20px;
+}
+.saved-runs-title {
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: var(--text);
+  letter-spacing: 0.03em;
+}
+.saved-runs-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 60px 20px;
+  color: var(--text3);
+  text-align: center;
+}
+.saved-runs-empty h3 { margin: 0; font-size: 1rem; color: var(--text2); }
+.saved-runs-empty p  { margin: 0; font-size: 0.82rem; }
+.saved-run-card {
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 18px 20px;
+  margin-bottom: 14px;
+  transition: border-color 0.15s;
+}
+.saved-run-card:hover { border-color: var(--accent); }
+.src-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.src-meta { flex: 1; min-width: 0; }
+.src-label {
+  font-size: 0.88rem;
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.src-ts {
+  font-size: 0.72rem;
+  color: var(--text3);
+  font-family: var(--mono);
+  margin-top: 3px;
+}
+.src-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+.src-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 14px;
+}
+.src-pill {
+  font-size: 0.68rem;
+  font-family: var(--mono);
+  background: var(--bg3);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 2px 8px;
+  color: var(--text2);
+  letter-spacing: 0.03em;
+}
+.src-pill.muted { color: var(--text3); }
+.src-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 24px;
+}
+.src-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.src-stat-label {
+  font-size: 0.65rem;
+  font-family: var(--mono);
+  color: var(--text3);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.src-stat-val {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--text);
+}
+
+/* Form locked state overlay hint */
+#page-configure.form-locked .config-card::after {
+  content: 'Run in progress — click Reset to change inputs';
+  position: absolute;
+  top: 12px; right: 16px;
+  font-size: 0.7rem;
+  font-family: var(--mono);
+  color: var(--accent);
+  letter-spacing: 0.03em;
+  pointer-events: none;
+}

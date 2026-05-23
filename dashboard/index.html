@@ -30,6 +30,10 @@
           <span class="status-dot" id="dot-results"></span>
           Results
         </button>
+        <button class="nav-tab" data-page="saved" role="tab">
+          <span class="status-dot" id="dot-saved"></span>
+          Saved Runs
+        </button>
       </nav>
 
       <div class="header-right">
@@ -611,6 +615,22 @@
         </div>
 
       </div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════ PAGE 4: SAVED RUNS ═══════════════════════════════ -->
+  <div id="page-saved" class="page">
+    <div class="inner" style="padding-top:36px; padding-bottom:60px;">
+      <div class="saved-runs-header">
+        <div class="saved-runs-title">Saved Runs</div>
+        <button class="btn-ghost" id="clearSavedBtn" title="Delete all saved runs">✕ Clear All</button>
+      </div>
+      <div class="saved-runs-empty" id="savedRunsEmpty">
+        <div class="nd-icon">🗂</div>
+        <h3>No saved runs yet</h3>
+        <p>Runs are saved automatically when analysis completes.</p>
+      </div>
+      <div id="savedRunsList"></div>
     </div>
   </div>
 
