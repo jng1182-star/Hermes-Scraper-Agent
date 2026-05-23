@@ -223,6 +223,31 @@ class Handler(BaseHTTPRequestHandler):
                 }
             self._json(200, payload)
 
+        elif p == "/debug":
+            import subprocess
+            ollama_host = os.getenv("OLLAMA_HOST", "NOT SET")
+            token = os.getenv("HERMES_TUNNEL_TOKEN", "")
+            # Test connectivity to Ollama
+            try:
+                import urllib.request
+                req = urllib.request.Request(
+                    ollama_host.rstrip("/") + "/api/version",
+                    headers={"X-Hermes-Token": token} if token else {},
+                )
+                with urllib.request.urlopen(req, timeout=5) as r:
+                    ollama_status = f"OK {r.status}"
+                    ollama_body   = r.read(100).decode()
+            except Exception as e:
+                ollama_status = f"FAIL: {e}"
+                ollama_body   = ""
+            self._json(200, {
+                "OLLAMA_HOST":         ollama_host,
+                "HERMES_TOKEN_SET":    bool(token),
+                "OLLAMA_BASE_URL":     ollama_host.rstrip("/") + "/v1",
+                "ollama_connectivity": ollama_status,
+                "ollama_response":     ollama_body,
+            })
+
         elif p == "/report":
             rp = Path("data/report.json")
             if rp.exists():
