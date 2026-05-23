@@ -32,6 +32,7 @@ const State = {
   agentStates: { scraper: 'idle', analyst: 'idle', reporter: 'idle', gate: 'idle' },
   lastLogs: [],
   uploadedFiles: [],
+  partialShown: false,   // true once partial results have been rendered this run
 };
 
 const Charts = { spend: null, sov: null, engage: null, platform: null, sentiment: null };
@@ -467,6 +468,8 @@ document.getElementById('runBtn').addEventListener('click', async () => {
   document.getElementById('logOutput').textContent = '';
 
   State.agentStates = { scraper: 'idle', analyst: 'idle', reporter: 'idle', gate: 'idle' };
+  State.partialShown = false;
+  setPartialPill(false);
   resetAgentCards();
   updateDots('running');
 
@@ -557,10 +560,26 @@ async function pollStatus() {
 
     setLiveBadge(s.running);
 
+    // ── Partial results: render as soon as scraper/analyst checkpoint is ready ──
+    if (s.running && s.partial_report && s.partial_report.competitors && s.partial_report.competitors.length) {
+      if (!State.partialShown) {
+        State.partialShown = true;
+        // Tag scan_params so results page knows it came from params
+        if (!s.partial_report.scan_params && State.reportData && State.reportData.scan_params) {
+          s.partial_report.scan_params = State.reportData.scan_params;
+        }
+        State.reportData = s.partial_report;
+        showPage('results');
+      }
+      setPartialPill(true, s.partial_report._partial_phase || 'scraper');
+    }
+
     if (!s.running) {
       clearInterval(State.pollInterval); State.pollInterval = null;
       if (State.elapsedInterval) { clearInterval(State.elapsedInterval); State.elapsedInterval = null; }
       resetRunBtn();
+      State.partialShown = false;
+      setPartialPill(false);
 
       if (s.error) {
         setLogStatus('error', 'Analysis failed — see log above.');
@@ -700,6 +719,21 @@ function setLiveBadge(running) {
   const text  = document.getElementById('liveText');
   if (running) { badge.classList.add('connected'); text.textContent = 'Live'; }
   else         { badge.classList.remove('connected'); text.textContent = 'Idle'; }
+}
+
+function setPartialPill(visible, phase) {
+  const pill = document.getElementById('partialPill');
+  if (!pill) return;
+  if (visible) {
+    const phaseLabel = phase === 'reporter' ? 'Reporter' : phase === 'analyst' ? 'Analyst' : 'Scraper';
+    pill.querySelector('span:last-child').textContent = `Partial Results · ${phaseLabel} done`;
+    pill.style.display = 'flex';
+    // Clicking pill navigates to results page
+    pill.onclick = () => showPage('results');
+  } else {
+    pill.style.display = 'none';
+    pill.onclick = null;
+  }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════

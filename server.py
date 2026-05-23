@@ -109,6 +109,43 @@ def _patch_crewai_agent():
 _patch_crewai_agent()
 
 
+# ── Partial results helper ────────────────────────────────────────────────────
+
+def _try_partial_report() -> Optional[dict]:
+    """Return whatever structured competitor data is available from checkpoints.
+    Priority: reporter cp → analyst cp → scraper cp (raw, best-effort parse).
+    Returns None if nothing parseable is available yet."""
+    cp_dir = Path("data/checkpoints")
+    for phase in ("reporter", "analyst", "scraper"):
+        cp = cp_dir / f"{phase}.json"
+        if not cp.exists():
+            continue
+        try:
+            raw = json.loads(cp.read_text(encoding="utf-8")).get("output", "")
+            # Try to extract a competitors array from the text
+            import re as _re
+            # Strip markdown code fences
+            cleaned = _re.sub(r"```(?:json)?\s*", "", raw)
+            cleaned = _re.sub(r"```", "", cleaned).strip()
+            start = cleaned.find("{")
+            end   = cleaned.rfind("}") + 1
+            if start != -1 and end > start:
+                data = json.loads(cleaned[start:end])
+                if "competitors" in data and data["competitors"]:
+                    data["_partial_phase"] = phase
+                    return data
+            # Try array
+            start = cleaned.find("[")
+            end   = cleaned.rfind("]") + 1
+            if start != -1 and end > start:
+                lst = json.loads(cleaned[start:end])
+                if lst:
+                    return {"competitors": lst, "_partial_phase": phase}
+        except Exception:
+            continue
+    return None
+
+
 # ── Pipeline runner ───────────────────────────────────────────────────────────
 
 def _pipeline_hook(node_id: str, state: str):
@@ -289,10 +326,11 @@ class Handler(BaseHTTPRequestHandler):
         if p == "/status":
             report_path = Path("data/report.json")
             with _state_lock:
-                start = _run_state["start_ts"]
+                start   = _run_state["start_ts"]
+                running = _run_state["running"]
                 elapsed = round(time.monotonic() - start) if start else 0
                 payload = {
-                    "running":      _run_state["running"],
+                    "running":      running,
                     "report_ready": report_path.exists(),
                     "error":        _run_state["error"],
                     "logs":         list(_run_state["logs"])[-100:],
@@ -300,6 +338,7 @@ class Handler(BaseHTTPRequestHandler):
                     "timed_out":    _run_state["timed_out"],
                     "retry_count":  _run_state["retry_count"],
                     "elapsed_secs": elapsed,
+                    "partial_report": _try_partial_report() if running else None,
                 }
             self._json(200, payload)
 

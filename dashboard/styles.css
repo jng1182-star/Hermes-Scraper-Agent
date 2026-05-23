@@ -173,6 +173,32 @@ body {
   animation: pulse-dot 2s ease-in-out infinite;
 }
 
+.partial-pill {
+  font-family: var(--mono);
+  font-size: 0.65rem;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--amber);
+  background: var(--amber-lt);
+  border: 1px solid rgba(245,158,11,0.30);
+  border-radius: 20px;
+  padding: 3px 10px 3px 8px;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.partial-pill:hover { background: rgba(245,158,11,0.20); }
+.partial-dot {
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  background: var(--amber);
+  animation: pulse-dot 1.4s ease-in-out infinite;
+  flex-shrink: 0;
+}
+
 /* ── Page 1: Configure ──────────────────────────────────────────────────── */
 #page-configure {
   background: var(--bg2);
