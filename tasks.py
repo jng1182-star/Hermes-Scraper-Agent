@@ -74,9 +74,19 @@ class SocialTasks:
             agent=agent,
         )
 
-    def analysis_task(self, agent) -> Task:
+    def analysis_task(self, agent, prior_context: str = None) -> Task:
+        prefix = ""
+        if prior_context:
+            # Truncate to avoid token overflow; enough for the analyst to work from
+            snippet = prior_context[:6000]
+            prefix = (
+                f"[RESUMED FROM CHECKPOINT]\n"
+                f"The scraper already collected the following data. Do NOT re-run searches. "
+                f"Analyse this data directly:\n\n{snippet}\n\n"
+            )
         return Task(
             description=(
+                prefix +
                 "Analyse the extracted social media data and structure it PER COMPETITOR BRAND. "
                 "For each brand produce ONE record per platform (or one combined record if data spans platforms):\n\n"
                 "- name: brand name (never 'Unknown')\n"
@@ -112,9 +122,18 @@ class SocialTasks:
             agent=agent,
         )
 
-    def reporting_task(self, agent) -> Task:
+    def reporting_task(self, agent, prior_context: str = None) -> Task:
+        prefix = ""
+        if prior_context:
+            snippet = prior_context[:6000]
+            prefix = (
+                f"[RESUMED FROM CHECKPOINT]\n"
+                f"The analyst already structured the following data. Do NOT re-analyse. "
+                f"Format it directly into the required JSON schema:\n\n{snippet}\n\n"
+            )
         return Task(
             description=(
+                prefix +
                 "Format the analysed competitor data into a single valid JSON object. "
                 "Output ONLY the JSON — no markdown, no code fences, no extra text.\n\n"
                 "Use this exact schema:\n"

@@ -13,7 +13,7 @@ load_dotenv()
 _ollama_host = os.getenv("OLLAMA_HOST", "http://127.0.0.1:11434").rstrip("/")
 os.environ["OLLAMA_HOST"] = _ollama_host
 
-from crew import SocialListeningCrew
+from crew import SocialListeningCrew, clear_checkpoints
 from approval_gate import ApprovalGate
 
 # Injected by server.py before each run
@@ -79,7 +79,7 @@ def _kill_ollama_runner():
         pass
 
 
-HARD_DEADLINE = int(os.getenv("HARD_DEADLINE", "570"))   # 9.5 min — leaves 30s for gate
+# No hard deadline — pipeline runs until complete. Stall watchdog handles frozen LLMs.
 
 
 def run_pipeline(params: dict):
@@ -114,35 +114,48 @@ def run_pipeline(params: dict):
         params["uploaded_context"] = uploaded_context
 
     print(f"Starting Analysis: {query}", flush=True)
+    # Fresh run — clear any stale checkpoints from a previous session
+    clear_checkpoints()
 
-    # ── Hard deadline — kill everything after HARD_DEADLINE seconds ──────────
+    # No hard deadline — let the pipeline run as long as needed.
+    # Stall watchdog (below) handles genuinely frozen LLM calls.
     _pipeline_start  = time.monotonic()
-    _deadline_stop   = threading.Event()
-    _deadline_hit    = threading.Event()
     _crew_thread_id  = [threading.current_thread().ident]
 
-    def _deadline_loop(stop_evt: threading.Event):
-        if stop_evt.wait(timeout=HARD_DEADLINE):
-            return  # cancelled cleanly
-        elapsed = time.monotonic() - _pipeline_start
-        print(f"\n[DEADLINE] {elapsed:.0f}s elapsed — hard limit reached. Aborting.\n", flush=True)
-        _deadline_hit.set()
-        _kill_ollama_runner()
-        tid = _crew_thread_id[0]
-        if tid:
-            try:
-                import ctypes
-                ctypes.pythonapi.PyThreadState_SetAsyncExc(
-                    ctypes.c_ulong(tid), ctypes.py_object(RuntimeError),
-                )
-            except Exception:
-                pass
+    # ── Ollama heartbeat — restart runner if it stops responding ─────────────
+    _heartbeat_stop = threading.Event()
 
-    deadline_thread = threading.Thread(
-        target=_deadline_loop, args=(_deadline_stop,),
-        daemon=True, name="deadline-watchdog",
+    def _ollama_heartbeat(stop_evt: threading.Event):
+        """Ping Ollama every 60s; if it stops responding, restart the runner."""
+        consecutive_fails = 0
+        while not stop_evt.wait(timeout=60):
+            try:
+                r = subprocess.run(
+                    ["ollama", "list"], capture_output=True, timeout=10
+                )
+                if r.returncode == 0:
+                    consecutive_fails = 0
+                else:
+                    consecutive_fails += 1
+            except Exception:
+                consecutive_fails += 1
+
+            if consecutive_fails >= 2:
+                print("[HEARTBEAT] Ollama not responding — attempting restart…", flush=True)
+                try:
+                    subprocess.Popen(["ollama", "serve"],
+                                     stdout=subprocess.DEVNULL,
+                                     stderr=subprocess.DEVNULL)
+                    time.sleep(5)
+                except Exception as e:
+                    print(f"[HEARTBEAT] Restart failed: {e}", flush=True)
+                consecutive_fails = 0
+
+    heartbeat_thread = threading.Thread(
+        target=_ollama_heartbeat, args=(_heartbeat_stop,),
+        daemon=True, name="ollama-heartbeat",
     )
-    deadline_thread.start()
+    heartbeat_thread.start()
 
     # ── Stall watchdog ────────────────────────────────────────────────────────
     _last_token_ts  = [time.monotonic()]
@@ -179,7 +192,7 @@ def run_pipeline(params: dict):
     except Exception:
         pass
 
-    # ── Retry loop with model fallback ────────────────────────────────────────
+    # ── Retry loop with checkpoint resume + model fallback ───────────────────
     raw_output     = None
     _attempt       = 0
     _current_depth = depth
@@ -200,8 +213,15 @@ def run_pipeline(params: dict):
         )
         watchdog.start()
 
+        # Resume from checkpoint on retries (skip agents that already completed)
+        is_resume = _attempt > 0
+        if is_resume:
+            print(f"\n[WATCHDOG] Retry {_attempt}/{MAX_RETRIES} — resuming from last checkpoint…\n", flush=True)
+
         try:
-            crew_instance = SocialListeningCrew(query, depth=_current_depth, params=params)
+            crew_instance = SocialListeningCrew(
+                query, depth=_current_depth, params=params, resume=is_resume
+            )
             raw_output    = crew_instance.run()
             _watchdog_stop.set()
             break
@@ -210,22 +230,24 @@ def run_pipeline(params: dict):
             _watchdog_stop.set()
             time.sleep(0.1)
 
-            # Propagate user-stop or deadline-hit immediately
-            if _deadline_hit.is_set() or "stopped by user" in str(exc).lower():
+            # Propagate user-stop immediately (no retry on explicit stop)
+            if "stopped by user" in str(exc).lower():
                 raise
 
             is_stall = (
                 _stall_flag.is_set()
                 or "None or empty" in str(exc)
                 or "Invalid response from LLM" in str(exc)
+                or "ngrok" in str(exc).lower()
+                or "ERR_NGROK" in str(exc)
+                or "incomplete HTTP response" in str(exc)
             )
             if is_stall:
                 _attempt += 1
                 if _attempt <= MAX_RETRIES:
-                    print(f"\n[WATCHDOG] Retry {_attempt}/{MAX_RETRIES}…\n", flush=True)
                     if _state_hook:
                         _state_hook("__stall__", f"retry:{_attempt}")
-                    time.sleep(5)
+                    time.sleep(3)
                     continue
                 else:
                     raise RuntimeError(
@@ -234,7 +256,7 @@ def run_pipeline(params: dict):
                     )
             raise
 
-    _deadline_stop.set()   # cancel deadline timer — we finished in time
+    _heartbeat_stop.set()  # stop Ollama heartbeat
 
     # ── Approval Gate ────────────────────────────────────────────────────────
     if _state_hook:

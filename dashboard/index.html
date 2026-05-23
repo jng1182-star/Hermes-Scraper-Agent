@@ -411,6 +411,44 @@
           </div>
         </div>
 
+        <!-- Drill-down filter bar -->
+        <div class="drilldown-bar" id="drilldownBar">
+          <div class="dd-group">
+            <span class="dd-label">View</span>
+            <div class="dd-pills" id="ddView">
+              <button class="dd-pill active" data-view="all">All Brands</button>
+              <button class="dd-pill" data-view="mine">My Brands</button>
+              <button class="dd-pill" data-view="competitors">Competitors</button>
+              <button class="dd-pill" data-view="vs">My Brand vs Competitors</button>
+            </div>
+          </div>
+          <div class="dd-group">
+            <span class="dd-label">Brand</span>
+            <select class="dd-select" id="ddBrandPick">
+              <option value="">All</option>
+            </select>
+          </div>
+          <div class="dd-group">
+            <span class="dd-label">Platform</span>
+            <div class="dd-pills" id="ddPlatform">
+              <button class="dd-pill active" data-plat="all">All</button>
+              <button class="dd-pill" data-plat="TikTok">TikTok</button>
+              <button class="dd-pill" data-plat="Instagram">Instagram</button>
+              <button class="dd-pill" data-plat="YouTube">YouTube</button>
+              <button class="dd-pill" data-plat="Facebook">Facebook</button>
+            </div>
+          </div>
+          <div class="dd-group">
+            <span class="dd-label">Type</span>
+            <div class="dd-pills" id="ddPostType">
+              <button class="dd-pill active" data-pt="all">All</button>
+              <button class="dd-pill" data-pt="paid">Paid</button>
+              <button class="dd-pill" data-pt="organic">Organic</button>
+            </div>
+          </div>
+          <button class="dd-reset" id="ddReset" title="Reset all filters">↺ Reset</button>
+        </div>
+
         <!-- KPI cards — professional labels -->
         <div class="kpi-grid">
           <div class="kpi-card">

@@ -14,10 +14,18 @@ from pathlib import Path
 from socketserver import ThreadingMixIn
 from typing import Optional
 
-# ── Ensure OLLAMA_HOST is set before crewai imports ──────────────────────────
-# CrewAI's native Ollama provider reads OLLAMA_HOST to set base_url.
+# ── Lock all LLM routing to local Ollama before any crewai/litellm import ────
+# CrewAI's llm_utils.py falls back to OPENAI_API_BASE / OPENAI_BASE_URL / BASE_URL
+# if those env vars exist — stale ngrok/cloud values from other tools override our
+# explicit base_url and cause ERR_NGROK_3004 errors. Nuke them here at process start.
 _ollama_host = os.getenv("OLLAMA_HOST", "http://127.0.0.1:11434").rstrip("/")
-os.environ["OLLAMA_HOST"] = _ollama_host
+_ollama_v1   = _ollama_host + "/v1"
+os.environ["OLLAMA_HOST"]             = _ollama_host
+os.environ["OPENAI_API_BASE"]         = _ollama_v1
+os.environ["OPENAI_BASE_URL"]         = _ollama_v1
+os.environ["CREWAI_TELEMETRY_OPT_OUT"] = "true"
+for _v in ("BASE_URL", "API_BASE", "HERMES_TUNNEL_TOKEN"):
+    os.environ.pop(_v, None)
 
 HOST = os.getenv("HOST", "0.0.0.0")
 PORT = int(os.getenv("PORT", "8000"))

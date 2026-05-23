@@ -5,19 +5,25 @@ from tools.social_search_tool import SocialSearchTool
 
 _OLLAMA_HOST     = os.getenv("OLLAMA_HOST", "http://127.0.0.1:11434").rstrip("/")
 _OLLAMA_BASE_URL = _OLLAMA_HOST + "/v1"
-os.environ["OLLAMA_HOST"] = _OLLAMA_HOST
+
+# ── Force all LLM routing to local Ollama ────────────────────────────────────
+# CrewAI's llm_utils.py reads OPENAI_API_BASE / OPENAI_BASE_URL / BASE_URL as
+# fallback base_url values and will override our explicit base_url param if
+# those env vars point to an ngrok or cloud endpoint.  Clear them and redirect
+# everything to 127.0.0.1 before any LLM object is constructed.
+for _stale_var in ("OPENAI_API_BASE", "OPENAI_BASE_URL", "BASE_URL", "API_BASE"):
+    os.environ.pop(_stale_var, None)
+os.environ["OLLAMA_HOST"]    = _OLLAMA_HOST
+os.environ["OPENAI_API_BASE"] = _OLLAMA_BASE_URL   # litellm fallback → local Ollama
+os.environ["OPENAI_BASE_URL"] = _OLLAMA_BASE_URL
+os.environ["CREWAI_TELEMETRY_OPT_OUT"] = "true"    # no phone-home calls
 
 
 def _make_llm(model_name: str) -> LLM:
-    headers = {}
-    token = os.getenv("HERMES_TUNNEL_TOKEN", "").strip()
-    if token:
-        headers["X-Hermes-Token"] = token
     return LLM(
         model=model_name,
         base_url=_OLLAMA_BASE_URL,
         api_key="ollama",
-        default_headers=headers if headers else None,
     )
 
 

@@ -1966,3 +1966,86 @@ a.post-link:hover {
   padding: 0;
   margin: 0;
 }
+
+/* ── Drill-down filter bar ───────────────────────────────────────────── */
+.drilldown-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 20px;
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px 16px;
+  margin-bottom: 18px;
+}
+.dd-group {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex-wrap: wrap;
+}
+.dd-label {
+  font-size: 0.68rem;
+  font-family: var(--mono);
+  color: var(--text3);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  white-space: nowrap;
+}
+.dd-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.dd-pill {
+  background: var(--bg3);
+  border: 1px solid var(--border);
+  color: var(--text2);
+  font-size: 0.72rem;
+  font-family: var(--mono);
+  padding: 3px 10px;
+  border-radius: 20px;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+  white-space: nowrap;
+}
+.dd-pill:hover { background: var(--bg4,#1c2a3d); color: var(--text); }
+.dd-pill.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+  font-weight: 600;
+}
+.dd-pill.mine-active {
+  background: var(--green);
+  border-color: var(--green);
+  color: #fff;
+  font-weight: 600;
+}
+.dd-select {
+  background: var(--bg3);
+  border: 1px solid var(--border);
+  color: var(--text2);
+  font-size: 0.72rem;
+  font-family: var(--mono);
+  padding: 4px 8px;
+  border-radius: 6px;
+  outline: none;
+  cursor: pointer;
+  max-width: 160px;
+}
+.dd-select:focus { border-color: var(--accent); }
+.dd-reset {
+  margin-left: auto;
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text3);
+  font-size: 0.68rem;
+  font-family: var(--mono);
+  padding: 3px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
+}
+.dd-reset:hover { color: var(--text); border-color: var(--text2); }

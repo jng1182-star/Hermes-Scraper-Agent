@@ -20,6 +20,13 @@ const State = {
   reportData: null,
   activePlatforms: new Set(),
   activePostTypeFilter: 'all', // all | paid | organic  (results page)
+  // Drill-down filter state
+  dd: {
+    view:      'all',   // all | mine | competitors | vs
+    brand:     '',      // specific brand name, '' = all
+    platform:  'all',   // all | TikTok | Instagram | YouTube | Facebook
+    postType:  'all',   // all | paid | organic
+  },
   agentStates: { scraper: 'idle', analyst: 'idle', reporter: 'idle', gate: 'idle' },
   lastLogs: [],
   uploadedFiles: [],
@@ -980,9 +987,11 @@ function renderResults(data) {
     });
   });
 
-  // Reset platform filter
+  // Reset platform filter and drill-down state
   State.activePlatforms = new Set();
+  State.dd = { view: 'all', brand: '', platform: 'all', postType: 'all' };
   buildContextBar(params, comp);
+  buildDrilldownBar(params, comp);
   renderResultsFiltered();
 
   // TikTok embed script
@@ -1043,14 +1052,120 @@ function buildContextBar(params, comp) {
   });
 }
 
+function buildDrilldownBar(params, comp) {
+  const bar = document.getElementById('drilldownBar');
+  if (!bar) return;
+  bar.style.display = 'flex';
+
+  // Populate brand picker
+  const brandSel = document.getElementById('ddBrandPick');
+  if (brandSel) {
+    const brands = [...new Set(comp.map(c => c.name).filter(Boolean))].sort();
+    brandSel.innerHTML = '<option value="">All</option>' +
+      brands.map(b => `<option value="${esc(b)}">${esc(b)}</option>`).join('');
+    brandSel.value = '';
+    brandSel.onchange = () => { State.dd.brand = brandSel.value; renderResultsFiltered(); };
+  }
+
+  // View pills
+  bar.querySelectorAll('#ddView .dd-pill').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.view === State.dd.view);
+    btn.onclick = () => {
+      bar.querySelectorAll('#ddView .dd-pill').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      State.dd.view = btn.dataset.view;
+      renderResultsFiltered();
+    };
+  });
+
+  // Platform pills
+  bar.querySelectorAll('#ddPlatform .dd-pill').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.plat === State.dd.platform);
+    btn.onclick = () => {
+      bar.querySelectorAll('#ddPlatform .dd-pill').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      State.dd.platform = btn.dataset.plat;
+      renderResultsFiltered();
+    };
+  });
+
+  // Post type pills
+  bar.querySelectorAll('#ddPostType .dd-pill').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.pt === State.dd.postType);
+    btn.onclick = () => {
+      bar.querySelectorAll('#ddPostType .dd-pill').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      State.dd.postType = btn.dataset.pt;
+      renderResultsFiltered();
+    };
+  });
+
+  // Reset button
+  const resetBtn = document.getElementById('ddReset');
+  if (resetBtn) {
+    resetBtn.onclick = () => {
+      State.dd = { view: 'all', brand: '', platform: 'all', postType: 'all' };
+      if (brandSel) brandSel.value = '';
+      bar.querySelectorAll('.dd-pill[data-view]').forEach(b => b.classList.toggle('active', b.dataset.view === 'all'));
+      bar.querySelectorAll('.dd-pill[data-plat]').forEach(b => b.classList.toggle('active', b.dataset.plat === 'all'));
+      bar.querySelectorAll('.dd-pill[data-pt]').forEach(b   => b.classList.toggle('active', b.dataset.pt   === 'all'));
+      renderResultsFiltered();
+    };
+  }
+}
+
 function filteredComp() {
   if (!State.reportData) return [];
+  const params   = State.reportData.scan_params || {};
+  const myBrands = new Set(
+    ((params.advertisers || (params.advertiser ? [params.advertiser] : [])))
+      .map(b => (b||'').toLowerCase().trim())
+      .filter(Boolean)
+  );
+  const dd = State.dd;
+
   let all = State.reportData.competitors || [];
-  if (State.activePlatforms.size > 0)
+
+  // ── View dimension ────────────────────────────────────────────────
+  if (dd.view === 'mine') {
+    all = all.filter(c => myBrands.has((c.name||'').toLowerCase().trim()));
+  } else if (dd.view === 'competitors') {
+    all = all.filter(c => !myBrands.has((c.name||'').toLowerCase().trim()));
+  }
+  // 'vs' shows all but colours mine vs competitors differently — no row filter
+
+  // ── Specific brand pick ───────────────────────────────────────────
+  if (dd.brand) {
+    const b = dd.brand.toLowerCase().trim();
+    all = all.filter(c => (c.name||'').toLowerCase().trim() === b);
+  }
+
+  // ── Platform dimension ────────────────────────────────────────────
+  if (dd.platform !== 'all') {
+    all = all.filter(c => c.platform === dd.platform);
+  } else if (State.activePlatforms.size > 0) {
+    // Legacy platform toggle from scan summary bar
     all = all.filter(c => State.activePlatforms.has(c.platform));
-  if (State.activePostTypeFilter !== 'all')
-    all = all.filter(c => !c.post_type || c.post_type === State.activePostTypeFilter || c.post_type === 'both');
+  }
+
+  // ── Post type dimension ───────────────────────────────────────────
+  const pt = dd.postType !== 'all' ? dd.postType : State.activePostTypeFilter;
+  if (pt !== 'all') {
+    all = all.filter(c => !c.post_type || c.post_type === pt || c.post_type === 'both');
+  }
+
   return all;
+}
+
+// Whether a brand entry belongs to "my brands" (for vs-view colouring)
+function _isMyBrand(comp) {
+  if (!State.reportData) return false;
+  const params   = State.reportData.scan_params || {};
+  const myBrands = new Set(
+    ((params.advertisers || (params.advertiser ? [params.advertiser] : [])))
+      .map(b => (b||'').toLowerCase().trim()).filter(Boolean)
+  );
+  return myBrands.has((comp.name||'').toLowerCase().trim());
 }
 
 function renderResultsFiltered() {
@@ -1169,12 +1284,16 @@ function renderResultsFiltered() {
   // ── Table ─────────────────────────────────────────────────────────────────
   const totalTableSpend = comp.reduce((s,c)=>(s+(c.estimated_spend_usd||0)),0);
   const sorted = [...comp].sort((a,b) => (b.estimated_spend_usd||0) - (a.estimated_spend_usd||0));
+  const isVsView = State.dd.view === 'vs';
   const tbody = document.getElementById('resultsTableBody');
   tbody.innerHTML = sorted.map((c, i) => {
     const m = c.metrics || {};
     const interactions = (m.likes||0) + (m.comments||0) + (m.shares||0) + (m.saves||0);
     const sentClass = (c.sentiment||'').toLowerCase();
-    const color = bgColors[i % bgColors.length];
+    // In vs-view: my brands = green, competitors = accent blue
+    const color = isVsView
+      ? (_isMyBrand(c) ? C.green : C.accent)
+      : bgColors[i % bgColors.length];
     const pt = c.post_type || 'both';
     const ptBadge = `<span class="post-type-badge ${pt}">${esc(pt)}</span>`;
     const bench = benchmarkFor(c.platform);
