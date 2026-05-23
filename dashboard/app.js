@@ -1913,12 +1913,6 @@ function downloadRunCsv(entry) {
   document.body.removeChild(a); URL.revokeObjectURL(url);
 }
 
-function deleteRun(id) {
-  const runs = loadSavedRuns().filter(r => r.id !== id);
-  persistSavedRuns(runs);
-  renderSavedRunsList();
-}
-
 function renderSavedRunsList() {
   const runs     = _savedRunsCache;
   const list     = document.getElementById('savedRunsList');
