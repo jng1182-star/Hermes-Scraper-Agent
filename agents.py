@@ -54,7 +54,7 @@ class SocialAgents:
                 "You distinguish clearly between PAID and ORGANIC content signals."
             ),
             tools=[self.search_tool],
-            llm=self.llm,
+            llm=self.scraper_llm,
             verbose=True,
         )
 
