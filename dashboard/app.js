@@ -215,6 +215,18 @@ function getFormParams() {
 }
 
 document.getElementById('runBtn').addEventListener('click', async () => {
+  // Validate — need at least an advertiser OR at least one competitor
+  const advertiser  = document.getElementById('advertiser').value.trim();
+  if (!advertiser && State.competitors.length === 0) {
+    const adv = document.getElementById('advertiser');
+    adv.focus();
+    adv.style.borderColor = 'var(--red)';
+    setTimeout(() => adv.style.borderColor = '', 2000);
+    setLogStatus('error', 'Enter at least a brand name to analyse.');
+    showLogPanel(true);
+    return;
+  }
+
   const btn = document.getElementById('runBtn');
   btn.disabled = true;
   document.getElementById('runBtnIcon').textContent = '⟳';
@@ -912,7 +924,23 @@ const CHART_OPTS = {
 
 function renderResults(data) {
   if (!data || !data.competitors || !data.competitors.length) {
-    document.getElementById('noDataState').style.display = 'block';
+    const nd = document.getElementById('noDataState');
+    const params = data && data.scan_params || {};
+    const hadQuery = params.advertiser || (params.competitors && params.competitors.length);
+    nd.innerHTML = hadQuery
+      ? `<div class="nd-icon">🔍</div>
+         <h3>No competitor data found</h3>
+         <p style="color:var(--text3);font-size:0.82rem;max-width:340px;margin:0 auto 18px;">
+           The agents couldn't extract structured data for <strong>${esc(params.advertiser || 'this brand')}</strong>
+           on the selected platforms. Try broader platforms, a longer date range, or a more well-known brand.
+         </p>
+         <button onclick="showPage('configure')" style="background:var(--accent);color:#fff;border:none;border-radius:6px;padding:8px 20px;cursor:pointer;font-size:0.8rem;">
+           ← Adjust & Re-run
+         </button>`
+      : `<div class="nd-icon">📊</div>
+         <h3>No Results Yet</h3>
+         <p style="color:var(--text3);font-size:0.82rem;">Run an analysis or upload a report.json to see results here.</p>`;
+    nd.style.display = 'block';
     document.getElementById('resultsContent').style.display = 'none';
     return;
   }
