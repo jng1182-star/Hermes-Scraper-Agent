@@ -19,7 +19,7 @@ def _make_llm(model_name: str) -> LLM:
     When running locally the header is ignored by Ollama — safe either way.
     """
     headers = {}
-    token = os.getenv("HERMES_TUNNEL_TOKEN", "")
+    token = os.getenv("HERMES_TUNNEL_TOKEN", "").strip()
     if token:
         headers["X-Hermes-Token"] = token
     return LLM(

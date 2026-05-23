@@ -226,7 +226,7 @@ class Handler(BaseHTTPRequestHandler):
         elif p == "/debug":
             import subprocess
             ollama_host = os.getenv("OLLAMA_HOST", "NOT SET")
-            token = os.getenv("HERMES_TUNNEL_TOKEN", "")
+            token = os.getenv("HERMES_TUNNEL_TOKEN", "").strip()
             # Test connectivity to Ollama
             try:
                 import urllib.request
