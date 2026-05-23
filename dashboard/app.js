@@ -1616,9 +1616,11 @@ function renderCalcTree(data) {
         <tbody>${cpmRows}</tbody>
       </table>
     </div>
-    <div class="calc-formula-row">
-      <div class="calc-formula-label">CPM Override Note</div>${esc(a.cpm_note||'Auto: market + industry + seasonal applied')}
-    </div>
+    ${(typeof a.cpm_rate_usd === 'number' && a.cpm_rate_usd > 0) ? `
+    <div class="calc-formula-row" style="border-left:3px solid var(--amber);padding-left:10px;">
+      <div class="calc-formula-label" style="color:var(--amber);">CPM Override Active</div>
+      ${esc('$' + a.cpm_rate_usd + '/1K impressions applied uniformly. Market/industry/seasonal adjustments bypassed.')}
+    </div>` : ''}
     <div class="calc-formula-row">
       <div class="calc-formula-label">Paid Spend Formula</div>${esc(a.spend_formula_paid||'(Views / Avg Platform View Rate) / 1,000 × Platform CPM')}
     </div>
