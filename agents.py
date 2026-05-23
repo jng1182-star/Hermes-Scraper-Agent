@@ -1,8 +1,15 @@
+import os
 from crewai import Agent
 from tools.social_search_tool import SocialSearchTool
 
-LLM_QUICK = "ollama/gemma4:e4b"
-LLM_DEEP  = "ollama/gemma4:26b"
+# Ollama host — override via OLLAMA_HOST env var for remote/cloud setups
+_OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://127.0.0.1:11434").rstrip("/")
+
+LLM_QUICK = f"ollama/gemma4:e4b"
+LLM_DEEP  = f"ollama/gemma4:26b"
+
+# Tell litellm (used by CrewAI) where Ollama lives
+os.environ.setdefault("OLLAMA_API_BASE", _OLLAMA_HOST)
 
 
 class SocialAgents:
