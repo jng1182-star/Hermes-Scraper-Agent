@@ -338,6 +338,7 @@ async function pollStatus() {
     if (!s.running) {
       clearInterval(State.pollInterval);
       State.pollInterval = null;
+      // Stop ticking but keep badge visible so user sees total elapsed time
       if (State.elapsedInterval) { clearInterval(State.elapsedInterval); State.elapsedInterval = null; }
       resetRunBtn();
 

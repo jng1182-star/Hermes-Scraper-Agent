@@ -5,11 +5,20 @@ from tools.social_search_tool import SocialSearchTool
 # Ollama host — override via OLLAMA_HOST env var for remote/cloud setups
 _OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://127.0.0.1:11434").rstrip("/")
 
-LLM_QUICK = f"ollama/gemma4:e4b"
-LLM_DEEP  = f"ollama/gemma4:26b"
+LLM_QUICK = "ollama/gemma4:e4b"
+LLM_DEEP  = "ollama/gemma4:26b"
 
-# Tell litellm (used by CrewAI) where Ollama lives
-os.environ.setdefault("OLLAMA_API_BASE", _OLLAMA_HOST)
+# Force-set OLLAMA_API_BASE so litellm routes to correct host.
+# Use force-assign (not setdefault) — OLLAMA_HOST may differ from a stale env var.
+os.environ["OLLAMA_API_BASE"] = _OLLAMA_HOST
+
+# Also configure litellm at runtime in case it was already imported
+try:
+    import litellm
+    litellm.api_base = _OLLAMA_HOST
+    litellm.drop_params = True          # ignore unsupported params silently
+except Exception:
+    pass
 
 
 class SocialAgents:
