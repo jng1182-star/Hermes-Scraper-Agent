@@ -25,7 +25,7 @@ const State = {
   uploadedFiles: [],
 };
 
-const Charts = { spend: null, engage: null, platform: null, sentiment: null };
+const Charts = { spend: null, sov: null, engage: null, platform: null, sentiment: null };
 
 // ── Colour palette ───────────────────────────────────────────────────────────
 const C = {
@@ -931,20 +931,30 @@ function renderResultsFiltered() {
   const totalSpend    = comp.reduce((s,c) => s + (c.estimated_spend_usd||0), 0);
   const avgEngage     = comp.length
     ? comp.reduce((s,c) => s+(c.engagement_rate||0), 0) / comp.length : 0;
-  // Dominant platform by views (impressions)
-  const platImpMap = {};
-  comp.forEach(c => {
-    const p = c.platform || 'Unknown';
-    platImpMap[p] = (platImpMap[p]||0) + ((c.metrics||{}).views||0);
-  });
-  const topPlatform = Object.entries(platImpMap).sort((a,b)=>b[1]-a[1])[0]?.[0] || '—';
 
-  const totalPosts = comp.reduce((s,c) => s + (c.top_posts||[]).length, 0);
-  document.getElementById('kpiCount').textContent    = comp.length;
-  document.getElementById('kpiPostCount').textContent= `${totalPosts} posts scanned across ${comp.length} brand${comp.length!==1?'s':''}`;
-  document.getElementById('kpiSpend').textContent    = '$' + totalSpend.toLocaleString(undefined,{maximumFractionDigits:0});
-  document.getElementById('kpiEngage').textContent   = avgEngage.toFixed(2) + '%';
-  document.getElementById('kpiPlatform').textContent = topPlatform;
+  // Unique brands (by name)
+  const uniqueBrands = new Set(comp.map(c => (c.name||'').toLowerCase().trim()).filter(Boolean));
+  const uniqueBrandCount = uniqueBrands.size || comp.length;
+
+  // Top spender for Share of Spend KPI
+  const topSpenderEntry = comp.length
+    ? comp.reduce((best,c) => (c.estimated_spend_usd||0) > (best.estimated_spend_usd||0) ? c : best, comp[0])
+    : null;
+  const topSpenderSos = totalSpend > 0 && topSpenderEntry
+    ? ((topSpenderEntry.estimated_spend_usd||0) / totalSpend * 100).toFixed(1)
+    : '—';
+
+  document.getElementById('kpiCount').textContent     = comp.length;
+  document.getElementById('kpiPostCount').textContent = `across ${uniqueBrandCount} brand${uniqueBrandCount!==1?'s':''}`;
+  document.getElementById('kpiSpend').textContent     = '$' + totalSpend.toLocaleString(undefined,{maximumFractionDigits:0});
+  document.getElementById('kpiEngage').textContent    = avgEngage.toFixed(2) + '%';
+
+  const kpiTop = document.getElementById('kpiTopSpender');
+  const kpiTopSub = document.getElementById('kpiTopSpenderSub');
+  if (kpiTop) kpiTop.textContent = topSpenderEntry ? esc(topSpenderEntry.name||'—') : '—';
+  if (kpiTopSub) kpiTopSub.textContent = totalSpend > 0 && topSpenderEntry
+    ? `${topSpenderSos}% of total est. spend · ${topSpenderEntry.platform||''}`
+    : 'largest est. media value';
 
   // Benchmark comparison
   const avgBench = comp.length
@@ -963,8 +973,8 @@ function renderResultsFiltered() {
   const tSub = document.getElementById('tableSubtitle');
   if (tSub) {
     const pt = params.post_type || 'both';
-    const label = pt === 'paid' ? 'Paid posts only' : pt === 'organic' ? 'Organic posts only' : 'Paid + Organic combined';
-    tSub.textContent = `${comp.length} brand${comp.length!==1?'s':''} · ${label} · sorted by est. media value`;
+    const label = pt === 'paid' ? 'Paid only' : pt === 'organic' ? 'Organic only' : 'Paid + Organic';
+    tSub.textContent = `${comp.length} entries across ${uniqueBrandCount} brand${uniqueBrandCount!==1?'s':''} · ${label} · sorted by est. media value`;
   }
 
   // ── Charts ───────────────────────────────────────────────────────────────
@@ -975,12 +985,27 @@ function renderResultsFiltered() {
 
   destroyCharts();
 
+  // Share of Spend — absolute est. media value per brand entry
   Charts.spend = new Chart(document.getElementById('spendChart').getContext('2d'), {
     type: 'bar',
     data: { labels, datasets: [{ data: spends, backgroundColor: bgColors, borderRadius:5, borderSkipped:false, label:'Est. Value (USD)' }] },
     options: { ...CHART_OPTS, plugins: { legend:{display:false}, tooltip:{callbacks:{label:ctx=>`$${Number(ctx.parsed.y).toLocaleString()}`}} } },
   });
 
+  // Share of Voice — total impressions per brand entry
+  const sovLabels = comp.map(c => c.name || c.handle || '?');
+  const sovViews  = comp.map(c => (c.metrics||{}).views||0);
+  const totalViews = sovViews.reduce((s,v)=>s+v,0);
+  Charts.sov = new Chart(document.getElementById('sovChart').getContext('2d'), {
+    type: 'bar',
+    data: { labels: sovLabels, datasets: [{ data: sovViews, backgroundColor: bgColors, borderRadius:5, borderSkipped:false, label:'Impressions' }] },
+    options: { ...CHART_OPTS, plugins: { legend:{display:false}, tooltip:{callbacks:{label:ctx=>{
+      const pct = totalViews > 0 ? (ctx.parsed.y/totalViews*100).toFixed(1)+'%' : '';
+      return `${Number(ctx.parsed.y).toLocaleString()} views${pct?' · SoV: '+pct:''}`;
+    }}} } },
+  });
+
+  // Engagement Rate vs benchmark
   Charts.engage = new Chart(document.getElementById('engageChart').getContext('2d'), {
     type: 'bar',
     data: {
@@ -993,6 +1018,7 @@ function renderResultsFiltered() {
     options: { ...CHART_OPTS, plugins: { legend:{display:true,position:'top',labels:{color:'#8b949e',font:{size:10}}}, tooltip:{callbacks:{label:ctx=>`${ctx.dataset.label}: ${ctx.parsed.y.toFixed(2)}%`}} } },
   });
 
+  // Platform impression share — doughnut by platform
   const platViewMap = {};
   comp.forEach(c => {
     const p = c.platform || 'Unknown';
@@ -1005,24 +1031,16 @@ function renderResultsFiltered() {
     options: { responsive:true, cutout:'62%', plugins:{ legend:{display:true,position:'right',labels:{font:{size:11},color:'#8b949e'}}, tooltip:{callbacks:{label:ctx=>`${ctx.label}: ${Number(ctx.parsed).toLocaleString()} views`}} } },
   });
 
-  const sentCts = { Positive:0, Neutral:0, Negative:0 };
-  comp.forEach(c => { sentCts[c.sentiment] = (sentCts[c.sentiment]||0)+1; });
-  Charts.sentiment = new Chart(document.getElementById('sentimentChart').getContext('2d'), {
-    type: 'bar',
-    data: { labels: Object.keys(sentCts), datasets:[{ data:Object.values(sentCts),
-      backgroundColor:['rgba(34,197,94,0.18)','rgba(245,158,11,0.18)','rgba(248,81,73,0.18)'],
-      borderColor:[C.green,C.amber,C.red], borderWidth:2, borderRadius:5, borderSkipped:false }] },
-    options: { ...CHART_OPTS, plugins:{legend:{display:false}} },
-  });
-
   // ── Content Intel ─────────────────────────────────────────────────────────
   renderContentIntel(comp, bgColors);
 
   // ── Table ─────────────────────────────────────────────────────────────────
+  const totalTableSpend = comp.reduce((s,c)=>(s+(c.estimated_spend_usd||0)),0);
   const sorted = [...comp].sort((a,b) => (b.estimated_spend_usd||0) - (a.estimated_spend_usd||0));
   const tbody = document.getElementById('resultsTableBody');
   tbody.innerHTML = sorted.map((c, i) => {
     const m = c.metrics || {};
+    const interactions = (m.likes||0) + (m.comments||0) + (m.shares||0) + (m.saves||0);
     const sentClass = (c.sentiment||'').toLowerCase();
     const color = bgColors[i % bgColors.length];
     const pt = c.post_type || 'both';
@@ -1031,6 +1049,9 @@ function renderResultsFiltered() {
     const erDiff = (c.engagement_rate||0) - bench;
     const erColor = erDiff >= 0 ? 'var(--green)' : 'var(--red)';
     const erDiffStr = (erDiff >= 0 ? '+' : '') + erDiff.toFixed(2) + '%';
+    const sos = totalTableSpend > 0
+      ? ((c.estimated_spend_usd||0) / totalTableSpend * 100).toFixed(1) + '%'
+      : '—';
     return `<tr>
       <td><span style="display:inline-flex;align-items:center;gap:7px;">
         <span style="width:8px;height:8px;border-radius:50%;background:${color};display:inline-block;flex-shrink:0;"></span>
@@ -1039,15 +1060,17 @@ function renderResultsFiltered() {
       <td style="color:#64748b;">${esc(c.handle||'—')}</td>
       <td><span class="platform-badge">${esc(c.platform||'Multi')}</span></td>
       <td>${ptBadge}</td>
-      <td>${fmt(m.likes)}</td>
-      <td>${fmt(m.comments)}</td>
-      <td>${fmt(m.shares)}</td>
-      <td>${fmt(m.saves)}</td>
-      <td>${fmt(m.views)}</td>
-      <td>${fmt(m.followers)}</td>
+      <td>${fmtShort(m.views)}</td>
+      <td>${fmtShort(interactions)}</td>
+      <td>${fmtShort(m.likes)}</td>
+      <td>${fmtShort(m.comments)}</td>
+      <td>${fmtShort(m.shares)}</td>
+      <td>${fmtShort(m.saves)}</td>
+      <td>${fmtShort(m.followers)}</td>
       <td><strong>${(c.engagement_rate||0).toFixed(2)}%</strong></td>
       <td style="color:${erColor};font-size:0.78rem;">${erDiffStr}</td>
       <td style="color:#2563eb;font-weight:700;">$${(c.estimated_spend_usd||0).toLocaleString(undefined,{maximumFractionDigits:0})}</td>
+      <td style="color:var(--text2);font-weight:600;">${sos}</td>
       <td><span class="sentiment-badge ${sentClass}">${esc(c.sentiment||'—')}</span></td>
     </tr>`;
   }).join('');
@@ -1100,19 +1123,21 @@ function renderContentIntel(comp, bgColors) {
       html += `</ul>`;
     }
 
-    if (posts.length) {
+    // Only show posts with a real URL — skip AI-generated descriptions
+    const realPosts = posts.filter(p => typeof p === 'object' && p.url && p.url !== 'null' && p.url !== '');
+    if (realPosts.length) {
       html += `<div class="ci-section-label">Top Posts</div><ul class="ci-posts">`;
-      posts.forEach(p => {
-        const caption  = typeof p === 'object' ? (p.caption || p.text || p.description || '') : String(p);
-        const url      = typeof p === 'object' ? (p.url || null) : null;
-        const postType = typeof p === 'object' ? (p.post_type || pt) : pt;
-        const likes    = typeof p === 'object' && p.likes ? ` · ${fmtShort(p.likes)} likes` : '';
-        const views    = typeof p === 'object' && p.views ? ` · ${fmtShort(p.views)} views` : '';
+      realPosts.forEach(p => {
+        const url      = p.url;
+        const postType = p.post_type || pt;
+        const likes    = p.likes  ? `${fmtShort(p.likes)} likes` : '';
+        const views    = p.views  ? `${fmtShort(p.views)} views` : '';
+        const statParts = [likes, views].filter(Boolean);
+        const statStr  = statParts.length
+          ? `<span style="color:var(--text3);font-size:0.72rem;margin-left:6px;">${statParts.join(' · ')}</span>` : '';
         const typeBadge = `<span class="post-type-badge ${postType}" style="font-size:0.62rem;">${esc(postType)}</span>`;
-        const statStr = likes || views ? `<span style="color:var(--text3);font-size:0.72rem;">${likes}${views}</span>` : '';
-        html += url
-          ? `<li class="ci-post-item">${typeBadge}<a href="${esc(url)}" target="_blank" rel="noopener noreferrer" class="ci-post-link">${esc(caption)}</a>${statStr}</li>`
-          : `<li class="ci-post-item">${typeBadge}${esc(caption)}${statStr}</li>`;
+        let domain = ''; try { domain = new URL(url).hostname.replace('www.',''); } catch {}
+        html += `<li class="ci-post-item">${typeBadge}<a href="${esc(url)}" target="_blank" rel="noopener noreferrer" class="ci-post-link">${esc(domain||url)}</a>${statStr}</li>`;
       });
       html += `</ul>`;
     }
@@ -1347,11 +1372,15 @@ document.getElementById('exportJson').addEventListener('click', () => {
 
 document.getElementById('exportCsv').addEventListener('click', () => {
   if (!State.reportData||!State.reportData.competitors) return;
-  const cols = ['name','handle','platform','post_type','likes','comments','shares','saves','views','followers','engagement_rate','benchmark_er','er_vs_benchmark','estimated_spend_usd','cpm_used','sentiment'];
-  const rows = State.reportData.competitors.map(c => {
+  const allComp = filteredComp();
+  const totalCsvSpend = allComp.reduce((s,c)=>s+(c.estimated_spend_usd||0),0);
+  const cols = ['brand','handle','platform','post_type','impressions','interactions','likes','comments','shares','saves','followers','engagement_rate_pct','benchmark_er_pct','er_vs_benchmark_pct','est_value_usd','share_of_spend_pct','cpm_used','sentiment'];
+  const rows = allComp.map(c => {
     const m = c.metrics||{};
-    return [c.name,c.handle,c.platform,c.post_type,m.likes,m.comments,m.shares,m.saves,m.views,m.followers,
-            c.engagement_rate,c.benchmark_er_pct,c.er_vs_benchmark,c.estimated_spend_usd,c.cpm_used,c.sentiment]
+    const interactions = (m.likes||0)+(m.comments||0)+(m.shares||0)+(m.saves||0);
+    const sos = totalCsvSpend > 0 ? ((c.estimated_spend_usd||0)/totalCsvSpend*100).toFixed(2) : 0;
+    return [c.name,c.handle,c.platform,c.post_type,m.views,interactions,m.likes,m.comments,m.shares,m.saves,m.followers,
+            c.engagement_rate,c.benchmark_er_pct,c.er_vs_benchmark,c.estimated_spend_usd,sos,c.cpm_used,c.sentiment]
       .map(v=>`"${String(v||'').replace(/"/g,'""')}"`)
       .join(',');
   });

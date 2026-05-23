@@ -385,9 +385,9 @@
         <!-- KPI cards — professional labels -->
         <div class="kpi-grid">
           <div class="kpi-card">
-            <div class="kpi-label">Brands Analysed</div>
+            <div class="kpi-label">Posts Scanned</div>
             <div class="kpi-value" id="kpiCount">—</div>
-            <div class="kpi-sub" id="kpiPostCount" style="font-size:0.7rem;color:var(--text3);margin-top:4px;">— posts scanned</div>
+            <div class="kpi-sub" id="kpiPostCount" style="font-size:0.7rem;color:var(--text3);margin-top:4px;">across — brands</div>
           </div>
           <div class="kpi-card" style="--accent:#2563eb;">
             <div class="kpi-label">Est. Total Media Value</div>
@@ -400,9 +400,9 @@
             <div class="kpi-sub" id="kpiBenchmark" style="font-size:0.7rem;color:var(--text3);margin-top:4px;">vs. platform benchmarks</div>
           </div>
           <div class="kpi-card">
-            <div class="kpi-label">Dominant Platform</div>
-            <div class="kpi-value" id="kpiPlatform" style="font-size:1.2rem;">—</div>
-            <div class="kpi-sub" style="font-size:0.7rem;color:var(--text3);margin-top:4px;">by total impressions</div>
+            <div class="kpi-label">Share of Spend</div>
+            <div class="kpi-value" id="kpiTopSpender" style="font-size:1.1rem;">—</div>
+            <div class="kpi-sub" id="kpiTopSpenderSub" style="font-size:0.7rem;color:var(--text3);margin-top:4px;">largest est. media value</div>
           </div>
         </div>
 
@@ -410,11 +410,22 @@
         <div class="charts-grid" style="margin-bottom:20px;">
           <div class="chart-card">
             <div class="chart-card-title">
-              Estimated Media Value (USD)
-              <span class="chart-note">Paid CPM-based + Organic engagement value</span>
+              Share of Spend
+              <span class="chart-note">Est. media value per brand (paid CPM + organic engagement)</span>
             </div>
             <canvas id="spendChart" height="220"></canvas>
           </div>
+          <div class="chart-card">
+            <div class="chart-card-title">
+              Share of Voice
+              <span class="chart-note">Total impressions per brand vs competitive set</span>
+            </div>
+            <canvas id="sovChart" height="220"></canvas>
+          </div>
+        </div>
+
+        <!-- Charts row 2 -->
+        <div class="charts-grid" style="margin-bottom:20px;">
           <div class="chart-card">
             <div class="chart-card-title">
               Engagement Rate (%)
@@ -422,17 +433,12 @@
             </div>
             <canvas id="engageChart" height="220"></canvas>
           </div>
-        </div>
-
-        <!-- Charts row 2 -->
-        <div class="charts-grid" style="margin-bottom:20px;">
           <div class="chart-card">
-            <div class="chart-card-title">Platform Impression Share</div>
+            <div class="chart-card-title">
+              Platform Impression Share
+              <span class="chart-note">Total impressions by platform across all brands</span>
+            </div>
             <canvas id="platformChart" height="220"></canvas>
-          </div>
-          <div class="chart-card">
-            <div class="chart-card-title">Sentiment Distribution</div>
-            <canvas id="sentimentChart" height="220"></canvas>
           </div>
         </div>
 
@@ -448,7 +454,7 @@
         <!-- Competitor metrics table — expanded schema -->
         <div class="table-card">
           <div class="table-card-header">
-            <div class="table-card-title">Brand Engagement Metrics</div>
+            <div class="table-card-title">Competitive Intelligence Report</div>
             <span id="tableSubtitle" style="font-size:0.72rem;color:var(--text3);font-family:var(--mono);"></span>
           </div>
           <div style="overflow-x:auto;">
@@ -459,15 +465,17 @@
                   <th>Handle</th>
                   <th>Platform</th>
                   <th>Type</th>
+                  <th>Impressions</th>
+                  <th>Interactions</th>
                   <th>Likes</th>
                   <th>Comments</th>
                   <th>Shares</th>
                   <th>Saves</th>
-                  <th>Views</th>
                   <th>Followers</th>
                   <th>Eng. Rate</th>
                   <th>vs Benchmark</th>
                   <th>Est. Value</th>
+                  <th>SoS %</th>
                   <th>Sentiment</th>
                 </tr>
               </thead>
