@@ -30,8 +30,11 @@ def _make_llm(model_name: str) -> LLM:
 class SocialAgents:
     def __init__(self, depth: str = "deep"):
         self.search_tool = SocialSearchTool()
-        model = "ollama/gemma4:26b" if depth == "deep" else "ollama/gemma4:e4b"
-        self.llm = _make_llm(model)
+        # Scraper always uses e4b — it's structured data extraction, not deep reasoning.
+        # e4b fits fully in GPU; 26b runs mixed CPU/GPU on this machine and stalls at 600s.
+        self.scraper_llm = _make_llm("ollama/gemma4:e4b")
+        analyst_model = "ollama/gemma4:26b" if depth == "deep" else "ollama/gemma4:e4b"
+        self.llm = _make_llm(analyst_model)
 
     def scraper_agent(self) -> Agent:
         return Agent(

@@ -467,6 +467,10 @@ document.getElementById('runBtn').addEventListener('click', async () => {
   setLogStatus('running', 'Analysis running…');
   document.getElementById('logOutput').textContent = '';
 
+  // Enable Stop immediately — before waiting for fetch response
+  const stopBtn = document.getElementById('stopBtn');
+  if (stopBtn) { stopBtn.disabled = false; stopBtn.textContent = '■ Stop'; }
+
   State.agentStates = { scraper: 'idle', analyst: 'idle', reporter: 'idle', gate: 'idle' };
   State.partialShown = false;
   setPartialPill(false);
@@ -504,13 +508,16 @@ document.getElementById('runBtn').addEventListener('click', async () => {
   }
 
   State.pollInterval = setInterval(pollStatus, 2000);
-  const stopBtn = document.getElementById('stopBtn');
-  if (stopBtn) stopBtn.disabled = false;
   showPage('network');
 });
 
 document.getElementById('stopBtn').addEventListener('click', async () => {
   const stopBtn = document.getElementById('stopBtn');
+  if (stopBtn.disabled) return;
+  const confirmed = confirm(
+    'Stop the analysis?\n\nAny partial results already collected will still be available. The pipeline cannot be resumed — you will need to run again.'
+  );
+  if (!confirmed) return;
   stopBtn.disabled = true; stopBtn.textContent = '■ Stopping…';
   try { await fetch('/stop-analysis', { method: 'POST' }); } catch(e) {}
 });
@@ -1803,35 +1810,45 @@ function renderCalcTree(data) {
 // SAVED RUNS
 // ═══════════════════════════════════════════════════════════════════════════════
 
-const SAVED_RUNS_KEY = 'hermes_saved_runs';
+// ── Server-backed saved runs ──────────────────────────────────────────────────
+// Runs persist in data/saved_runs.json on the server — survive browser clears.
 
-function loadSavedRuns() {
-  try { return JSON.parse(localStorage.getItem(SAVED_RUNS_KEY) || '[]'); }
-  catch(e) { return []; }
+let _savedRunsCache = [];   // in-memory cache, refreshed on page load + after mutations
+
+async function _fetchSavedRuns() {
+  try {
+    const d = await fetch('/saved-runs').then(r => r.json());
+    _savedRunsCache = d.runs || [];
+  } catch(e) { _savedRunsCache = []; }
 }
 
-function persistSavedRuns(runs) {
-  try { localStorage.setItem(SAVED_RUNS_KEY, JSON.stringify(runs)); } catch(e) {}
-}
-
-function saveRun(report) {
+async function saveRun(report) {
   if (!report || !report.competitors) return;
-  const runs = loadSavedRuns();
-  const sp   = report.scan_params || {};
+  const sp    = report.scan_params || {};
   const entry = {
-    id:        Date.now(),
-    ts:        new Date().toISOString(),
-    label:     buildRunLabel(sp),
-    params:    sp,
-    report:    report,
+    id:     Date.now(),
+    ts:     new Date().toISOString(),
+    label:  buildRunLabel(sp),
+    params: sp,
+    report: report,
   };
-  runs.unshift(entry);
-  if (runs.length > 50) runs.length = 50; // cap at 50
-  persistSavedRuns(runs);
+  try {
+    await fetch('/saved-runs', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(entry),
+    });
+  } catch(e) {}
+  await _fetchSavedRuns();
   renderSavedRunsList();
-  // flash dot
   const dot = document.getElementById('dot-saved');
   if (dot) { dot.className = 'status-dot done'; setTimeout(() => dot.className = 'status-dot', 3000); }
+}
+
+async function deleteRun(id) {
+  try { await fetch(`/saved-runs/${id}`, { method: 'DELETE' }); } catch(e) {}
+  await _fetchSavedRuns();
+  renderSavedRunsList();
 }
 
 function buildRunLabel(sp) {
@@ -1881,6 +1898,10 @@ function buildRunCsv(report) {
   return [...metaRows, cols.join(','), ...dataRows].join('\n');
 }
 
+function findRun(id) {
+  return _savedRunsCache.find(r => r.id === id);
+}
+
 function downloadRunCsv(entry) {
   const csv  = buildRunCsv(entry.report);
   const blob = new Blob([csv], { type: 'text/csv' });
@@ -1899,7 +1920,7 @@ function deleteRun(id) {
 }
 
 function renderSavedRunsList() {
-  const runs     = loadSavedRuns();
+  const runs     = _savedRunsCache;
   const list     = document.getElementById('savedRunsList');
   const empty    = document.getElementById('savedRunsEmpty');
   if (!list) return;
@@ -1950,8 +1971,7 @@ function renderSavedRunsList() {
   // Wire up buttons
   list.querySelectorAll('.src-load-btn').forEach(btn => {
     btn.addEventListener('click', () => {
-      const id    = parseInt(btn.dataset.id);
-      const entry = loadSavedRuns().find(r => r.id === id);
+      const entry = findRun(parseInt(btn.dataset.id));
       if (!entry) return;
       State.reportData = entry.report;
       showPage('results');
@@ -1959,8 +1979,7 @@ function renderSavedRunsList() {
   });
   list.querySelectorAll('.src-csv-btn').forEach(btn => {
     btn.addEventListener('click', () => {
-      const id    = parseInt(btn.dataset.id);
-      const entry = loadSavedRuns().find(r => r.id === id);
+      const entry = findRun(parseInt(btn.dataset.id));
       if (entry) downloadRunCsv(entry);
     });
   });
@@ -1969,15 +1988,16 @@ function renderSavedRunsList() {
   });
 }
 
-document.getElementById('clearSavedBtn').addEventListener('click', () => {
-  if (confirm('Delete all saved runs?')) {
-    persistSavedRuns([]);
+document.getElementById('clearSavedBtn').addEventListener('click', async () => {
+  if (confirm('Delete all saved runs? This cannot be undone.')) {
+    try { await fetch('/saved-runs', { method: 'DELETE' }); } catch(e) {}
+    await _fetchSavedRuns();
     renderSavedRunsList();
   }
 });
 
-// Load saved runs on init
-renderSavedRunsList();
+// Load saved runs on init from server
+(async () => { await _fetchSavedRuns(); renderSavedRunsList(); })();
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // EXPORT
@@ -2042,15 +2062,22 @@ function destroyCharts() {
   // Seed CPM hint with initial (Global / General) defaults
   _refreshCpmHint();
 
+  // Load saved runs index
+  await _fetchSavedRuns();
+  renderSavedRunsList();
+
   try {
     const s = await fetch('/status').then(r => r.json());
     setLiveBadge(s.running);
     if (s.running) {
       updateDots('running');
+      lockForm(true);
+      const stopBtn = document.getElementById('stopBtn');
+      if (stopBtn) { stopBtn.disabled = false; stopBtn.textContent = '■ Stop'; }
       State.pollInterval = setInterval(pollStatus, 2000);
       showPage('network');
       showLogPanel(true);
-      setLogStatus('running', 'Analysis in progress…');
+      setLogStatus('running', 'Analysis in progress — reconnected to running session…');
     }
   } catch(e) {}
 

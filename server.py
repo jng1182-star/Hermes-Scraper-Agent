@@ -314,6 +314,24 @@ def _extract_file_text(path: Path, ext: str, raw_bytes: bytes) -> str:
     return ""
 
 
+_SAVED_RUNS_PATH = Path("data/saved_runs.json")
+_saved_runs_lock = threading.Lock()
+
+def _load_saved_runs() -> dict:
+    with _saved_runs_lock:
+        try:
+            if _SAVED_RUNS_PATH.exists():
+                return json.loads(_SAVED_RUNS_PATH.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+        return {"runs": []}
+
+def _save_saved_runs(payload: dict):
+    with _saved_runs_lock:
+        _SAVED_RUNS_PATH.parent.mkdir(parents=True, exist_ok=True)
+        _SAVED_RUNS_PATH.write_text(json.dumps(payload), encoding="utf-8")
+
+
 class _ThreadingServer(ThreadingMixIn, HTTPServer):
     daemon_threads = True
 
@@ -374,6 +392,9 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 self._json(200, {})
 
+        elif p == "/saved-runs":
+            self._json(200, _load_saved_runs())
+
         elif p == "/uploaded-files":
             up_dir = Path("data/uploads")
             files = []
@@ -410,6 +431,20 @@ class Handler(BaseHTTPRequestHandler):
 
         if p == "/upload-file":
             self._handle_file_upload(); return
+
+        elif p == "/saved-runs":
+            # Save a new run entry
+            entry = data if isinstance(data, dict) else {}
+            if not entry.get("id") or not entry.get("report"):
+                self._json(400, {"error": "missing id or report"}); return
+            runs = _load_saved_runs().get("runs", [])
+            # Deduplicate by id
+            runs = [r for r in runs if r.get("id") != entry["id"]]
+            runs.insert(0, entry)
+            if len(runs) > 50:
+                runs = runs[:50]
+            _save_saved_runs({"runs": runs})
+            self._json(200, {"status": "ok", "count": len(runs)})
 
         elif p == "/run-analysis":
             with _state_lock:
@@ -511,6 +546,25 @@ class Handler(BaseHTTPRequestHandler):
         except Exception as e:
             self._json(500, {"error": str(e)})
 
+    def do_DELETE(self):
+        p = self.path.split("?")[0]
+        if p == "/saved-runs":
+            # Clear all saved runs
+            _save_saved_runs({"runs": []})
+            self._json(200, {"status": "ok"})
+        elif p.startswith("/saved-runs/"):
+            # Delete single run by id
+            run_id = p.removeprefix("/saved-runs/")
+            try:
+                run_id = int(run_id)
+            except ValueError:
+                self._json(400, {"error": "invalid id"}); return
+            runs = [r for r in _load_saved_runs().get("runs", []) if r.get("id") != run_id]
+            _save_saved_runs({"runs": runs})
+            self._json(200, {"status": "ok", "count": len(runs)})
+        else:
+            self.send_error(404)
+
     def do_OPTIONS(self):
         self.send_response(200)
         self._cors()
@@ -527,7 +581,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def _cors(self):
         self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
         self.send_header("Access-Control-Allow-Headers", "Content-Type")
 
     def log_message(self, *_):
