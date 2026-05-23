@@ -215,8 +215,18 @@ function getFormParams() {
 }
 
 document.getElementById('runBtn').addEventListener('click', async () => {
+  // Auto-commit any unsubmitted competitor text (user typed but didn't press Enter)
+  const tagInputEl = document.getElementById('tagInput');
+  if (tagInputEl && tagInputEl.value.trim()) {
+    tagInputEl.value.split(',').forEach(v => {
+      const t = v.trim();
+      if (t) addTag(t);
+    });
+    tagInputEl.value = '';
+  }
+
   // Validate — need at least an advertiser OR at least one competitor
-  const advertiser  = document.getElementById('advertiser').value.trim();
+  const advertiser = document.getElementById('advertiser').value.trim();
   if (!advertiser && State.competitors.length === 0) {
     const adv = document.getElementById('advertiser');
     adv.focus();
