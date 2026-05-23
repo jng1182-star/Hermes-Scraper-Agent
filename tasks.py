@@ -64,8 +64,10 @@ class SocialTasks:
                 "- metrics: {likes, comments, shares, views} as integers (use 0 if not found)\n"
                 "- sentiment: overall audience sentiment — 'Positive', 'Neutral', or 'Negative' "
                 "  (infer from engagement tone, comments, caption language)\n"
-                "- top_posts: list of up to 3 post summaries, each as a short string describing "
-                "  the content (e.g. 'Summer campaign featuring athlete collab — 2.1M views')\n"
+                "- top_posts: list of up to 3 post objects. Each object has:\n"
+                "    { \"caption\": \"short description of the post\", \"url\": \"direct link to the post if found, else null\" }\n"
+                "  Example: { \"caption\": \"Summer campaign featuring athlete collab — 2.1M views\", \"url\": \"https://www.tiktok.com/@brand/video/123\" }\n"
+                "  If a URL was visible in the search results, include it. Otherwise set url to null.\n"
                 "- hashtags: list of up to 6 hashtags associated with this brand\n"
                 "- content_themes: list of up to 4 recurring content themes "
                 "  (e.g. ['Athlete endorsement', 'User-generated content', 'Product launch'])\n\n"
@@ -95,7 +97,7 @@ class SocialTasks:
                 '      "platform": "string",\n'
                 '      "metrics": {"likes": 0, "comments": 0, "shares": 0, "views": 0},\n'
                 '      "sentiment": "Positive|Neutral|Negative",\n'
-                '      "top_posts": ["string", "string"],\n'
+                '      "top_posts": [{"caption": "string", "url": "string or null"}],\n'
                 '      "hashtags": ["#string", "#string"],\n'
                 '      "content_themes": ["string", "string"]\n'
                 "    }\n"
@@ -103,7 +105,7 @@ class SocialTasks:
                 "}\n\n"
                 "Rules:\n"
                 "- Every competitor must have ALL fields\n"
-                "- top_posts: 1–3 items max, each a short plain-text description of a post or campaign\n"
+                "- top_posts: 1–3 items max. Each item is a JSON object: {\"caption\": \"...\", \"url\": \"https://... or null\"}\n"
                 "- hashtags: 1–6 items max, each starting with #\n"
                 "- content_themes: 1–4 items max, plain text labels\n"
                 "- Use 0 for any unknown numeric value\n"
@@ -112,7 +114,7 @@ class SocialTasks:
             expected_output=(
                 "A raw JSON object (no markdown) with competitors array. "
                 "Each entry has: name, handle, platform, metrics{likes,comments,shares,views}, "
-                "sentiment, top_posts[], hashtags[], content_themes[]."
+                "sentiment, top_posts[{caption,url}], hashtags[], content_themes[]."
             ),
             agent=agent,
         )

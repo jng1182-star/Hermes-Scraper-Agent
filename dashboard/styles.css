@@ -1306,10 +1306,171 @@ select.form-input { cursor: pointer; }
 }
 
 /* ── Top Posts by Channel ────────────────────────────────────────────────── */
+/* ── Top Posts — new visual embed layout ─────────────────────────────────── */
+
 .top-posts-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
-  gap: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+/* Brand row header */
+.tposts-brand-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 2px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 4px;
+}
+.tposts-brand-header .dot {
+  display: inline-block;
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.tposts-brand-name {
+  font-weight: 700;
+  font-size: 0.88rem;
+  color: var(--text);
+}
+.tposts-handle {
+  font-size: 0.72rem;
+  color: var(--text3);
+  margin-left: 2px;
+}
+.tposts-plat-label {
+  font-family: var(--mono);
+  font-size: 0.58rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ch-color, var(--accent));
+  background: rgba(31,111,235,0.08);
+  border: 1px solid rgba(31,111,235,0.2);
+  border-radius: 4px;
+  padding: 1px 6px;
+  margin-left: auto;
+}
+.tposts-plat-label.ch-tiktok   { color: #ff0050; background: rgba(255,0,80,0.08); border-color: rgba(255,0,80,0.2); }
+.tposts-plat-label.ch-instagram { color: #e1306c; background: rgba(225,48,108,0.08); border-color: rgba(225,48,108,0.2); }
+.tposts-plat-label.ch-youtube  { color: #ff0000; background: rgba(255,0,0,0.08); border-color: rgba(255,0,0,0.2); }
+.tposts-plat-label.ch-twitter,
+.tposts-plat-label.ch-x        { color: #1d9bf0; background: rgba(29,155,240,0.08); border-color: rgba(29,155,240,0.2); }
+.tposts-plat-label.ch-facebook { color: #1877f2; background: rgba(24,119,242,0.08); border-color: rgba(24,119,242,0.2); }
+.tposts-plat-label.ch-linkedin { color: #0a66c2; background: rgba(10,102,194,0.08); border-color: rgba(10,102,194,0.2); }
+
+/* Horizontal scroll row of post tiles */
+.tposts-row {
+  display: flex;
+  gap: 14px;
+  overflow-x: auto;
+  padding-bottom: 8px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+.tposts-row::-webkit-scrollbar { height: 4px; }
+.tposts-row::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+/* Individual post tile */
+.post-tile {
+  flex: 0 0 280px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  transition: var(--transition);
+  position: relative;
+}
+.post-tile:hover { border-color: var(--accent); box-shadow: 0 0 0 1px rgba(31,111,235,0.2); }
+
+/* Rank badge */
+.post-tile-rank {
+  position: absolute;
+  top: 8px; left: 8px;
+  font-family: var(--mono);
+  font-size: 0.58rem;
+  font-weight: 700;
+  color: #fff;
+  background: rgba(0,0,0,0.55);
+  border-radius: 4px;
+  padding: 2px 6px;
+  z-index: 2;
+  backdrop-filter: blur(4px);
+}
+
+/* Embed container (iframe / tiktok blockquote) */
+.post-tile-embed {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  background: var(--bg);
+  overflow: hidden;
+}
+.post-tile-embed.post-tile-tiktok {
+  aspect-ratio: 9 / 16;
+  max-height: 480px;
+}
+.post-tile-embed iframe {
+  width: 100%;
+  height: 100%;
+  border: none;
+  display: block;
+}
+.post-tile-embed .tiktok-embed {
+  width: 100% !important;
+  margin: 0 !important;
+}
+
+/* Caption below embed */
+.post-tile-caption {
+  padding: 8px 12px;
+  font-size: 0.72rem;
+  color: var(--text2);
+  line-height: 1.4;
+  flex: 1;
+}
+
+/* Link card (non-embeddable platforms) */
+.post-tile-linkcard {
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  flex: 1;
+  min-height: 120px;
+  position: relative;
+}
+.post-tile-nourl {
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 80px;
+  position: relative;
+}
+.post-tile-cta {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--mono);
+  font-size: 0.65rem;
+  font-weight: 600;
+  color: var(--accent);
+  text-decoration: none;
+  border: 1px solid rgba(31,111,235,0.3);
+  border-radius: 4px;
+  padding: 4px 10px;
+  transition: var(--transition);
+  align-self: flex-start;
+  margin-top: auto;
+}
+.post-tile-cta:hover { background: rgba(31,111,235,0.1); border-color: var(--accent); }
+.post-tile-domain {
+  font-size: 0.55rem;
+  color: var(--text3);
+  margin-left: 2px;
 }
 
 .channel-card {
@@ -1417,6 +1578,23 @@ select.form-input { cursor: pointer; }
   line-height: 1.45;
   word-break: break-word;
   margin-bottom: 4px;
+}
+
+a.post-link {
+  display: block;
+  color: var(--accent);
+  text-decoration: none;
+  transition: color 0.15s, opacity 0.15s;
+}
+a.post-link:hover {
+  color: var(--cyan);
+  text-decoration: underline;
+}
+.post-link-icon {
+  font-size: 0.65rem;
+  opacity: 0.7;
+  margin-left: 3px;
+  vertical-align: super;
 }
 
 .post-meta {

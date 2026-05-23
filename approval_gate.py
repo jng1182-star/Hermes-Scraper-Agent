@@ -90,12 +90,35 @@ class ApprovalGate:
             comp.setdefault("content_themes", [])
 
             # Sanitise list fields
-            for list_field in ("top_posts", "hashtags", "content_themes"):
+            for list_field in ("hashtags", "content_themes"):
                 val = comp[list_field]
                 if not isinstance(val, list):
                     comp[list_field] = [str(val)] if val else []
                 else:
                     comp[list_field] = [str(x) for x in val if x]
+
+            # Sanitise top_posts — preserve {caption, url} objects; coerce plain strings
+            raw_posts = comp.get("top_posts", [])
+            if not isinstance(raw_posts, list):
+                raw_posts = [raw_posts] if raw_posts else []
+            clean_posts = []
+            for p in raw_posts:
+                if isinstance(p, dict):
+                    clean_posts.append({
+                        "caption": str(p.get("caption") or p.get("text") or p.get("description") or ""),
+                        "url":     str(p["url"]) if p.get("url") else None,
+                    })
+                elif isinstance(p, str) and p:
+                    # Legacy plain string — check if it looks like a URL embedded in text
+                    import re as _re
+                    url_match = _re.search(r'https?://\S+', p)
+                    if url_match:
+                        url = url_match.group(0).rstrip('.,;)')
+                        caption = p.replace(url, '').strip(' —:-')
+                        clean_posts.append({"caption": caption or p, "url": url})
+                    else:
+                        clean_posts.append({"caption": p, "url": None})
+            comp["top_posts"] = clean_posts
 
             brand_calcs.append({
                 "brand":       comp.get("name", "?"),

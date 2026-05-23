@@ -1040,6 +1040,16 @@ function renderResults(data) {
 
   // Top posts by channel
   renderTopPosts(data);
+  // Load TikTok embed script once after DOM is populated
+  if (!document.getElementById('tiktok-embed-js')) {
+    const s = document.createElement('script');
+    s.id  = 'tiktok-embed-js';
+    s.src = 'https://www.tiktok.com/embed.js';
+    s.async = true;
+    document.body.appendChild(s);
+  } else if (window.tiktokEmbed) {
+    window.tiktokEmbed.render(); // re-render if script already loaded
+  }
 
   // Calculation tree
   renderCalcTree(data);
@@ -1133,6 +1143,84 @@ function platformMeta(platformStr) {
   return PLATFORM_META[key] || { cls: 'ch-default', icon: 'pi-default', label: platformStr || 'Social' };
 }
 
+// ── Post embed helpers ────────────────────────────────────────────────────────
+
+function _ytVideoId(url) {
+  try {
+    const u = new URL(url);
+    if (u.hostname.includes('youtu.be')) return u.pathname.slice(1).split('?')[0];
+    return u.searchParams.get('v') || null;
+  } catch { return null; }
+}
+
+function _tiktokVideoId(url) {
+  // https://www.tiktok.com/@handle/video/1234567890
+  const m = url.match(/\/video\/(\d+)/);
+  return m ? m[1] : null;
+}
+
+function buildPostEmbed(url, caption, platform, idx) {
+  const plat = (platform || '').toLowerCase();
+  const rankBadge = `<span class="post-tile-rank">#${idx + 1}</span>`;
+
+  // YouTube — native iframe embed
+  if (plat.includes('youtube') || url.includes('youtu')) {
+    const vid = _ytVideoId(url);
+    if (vid) {
+      return `
+        <div class="post-tile-embed">
+          ${rankBadge}
+          <iframe src="https://www.youtube.com/embed/${esc(vid)}" frameborder="0"
+            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+            allowfullscreen loading="lazy"></iframe>
+        </div>
+        <div class="post-tile-caption">${esc(caption)}</div>`;
+    }
+  }
+
+  // TikTok — native blockquote oEmbed (loads tiktok.com/embed.js)
+  if (plat.includes('tiktok') || url.includes('tiktok.com')) {
+    const vid = _tiktokVideoId(url);
+    if (vid) {
+      // Use TikTok's official embed via blockquote + script
+      return `
+        <div class="post-tile-embed post-tile-tiktok">
+          ${rankBadge}
+          <blockquote class="tiktok-embed" cite="${esc(url)}"
+            data-video-id="${esc(vid)}" style="max-width:320px;min-width:240px;">
+            <section></section>
+          </blockquote>
+        </div>
+        <div class="post-tile-caption">${esc(caption)}</div>`;
+    }
+  }
+
+  // All other platforms — styled link card with "View Post" CTA
+  return buildPostLinkCard(url, caption, idx);
+}
+
+function buildPostNoUrl(caption, idx) {
+  return `
+    <div class="post-tile-nourl">
+      <span class="post-tile-rank">#${idx + 1}</span>
+      <div class="post-tile-caption">${esc(caption)}</div>
+    </div>`;
+}
+
+function buildPostLinkCard(url, caption, idx) {
+  // Extract domain for display
+  let domain = '';
+  try { domain = new URL(url).hostname.replace('www.', ''); } catch {}
+  return `
+    <div class="post-tile-linkcard">
+      <span class="post-tile-rank">#${idx + 1}</span>
+      <div class="post-tile-caption">${esc(caption)}</div>
+      <a class="post-tile-cta" href="${esc(url)}" target="_blank" rel="noopener noreferrer">
+        View Post ↗<span class="post-tile-domain">${esc(domain)}</span>
+      </a>
+    </div>`;
+}
+
 function renderTopPosts(data) {
   const section = document.getElementById('topPostsSection');
   const grid    = document.getElementById('topPostsGrid');
@@ -1160,54 +1248,41 @@ function renderTopPosts(data) {
   grid.className = 'top-posts-grid';
   grid.innerHTML = '';
 
-  Object.entries(byPlatform).forEach(([plat, brands]) => {
-    const pm = meta_outer(plat);
+  // Flatten all posts into a single embed-card grid, grouped by brand/platform header
+  comp.forEach((c, ci) => {
+    const posts = c.top_posts || [];
+    if (!posts.length) return;
+    const plat = c.platform || 'Social Media';
+    const pm   = meta_outer(plat);
+    const brandColor = BRAND_COLORS[ci % BRAND_COLORS.length];
 
-    brands.forEach(b => {
-      if (!b.posts.length) return;
-      const card = document.createElement('div');
-      card.className = `channel-card ${pm.cls}`;
+    // Brand row header
+    const header = document.createElement('div');
+    header.className = 'tposts-brand-header';
+    header.innerHTML = `
+      <span class="channel-platform-icon ${pm.icon}" style="font-size:1rem;margin-right:6px;"></span>
+      <span class="dot" style="background:${brandColor}"></span>
+      <span class="tposts-brand-name">${esc(c.name || '—')}</span>
+      ${c.handle ? `<span class="tposts-handle">${esc(c.handle)}</span>` : ''}
+      <span class="tposts-plat-label ${pm.cls}">${esc(pm.label)}</span>`;
+    grid.appendChild(header);
 
-      const postCount = Math.min(b.posts.length, 10);
+    // Post embed cards row
+    const row = document.createElement('div');
+    row.className = 'tposts-row';
 
-      let postsHtml = '<ul class="channel-posts-list">';
-      b.posts.slice(0, 10).forEach((post, idx) => {
-        const isTop = idx < 3;
-        const m = b.metrics;
-        const hasMetrics = m && (m.likes || m.views || m.comments);
-        postsHtml += `
-          <li class="channel-post-item">
-            <div class="post-rank ${isTop ? 'top' : ''}">#${idx + 1}</div>
-            <div class="post-content">
-              <div class="post-caption">${esc(post)}</div>
-              ${hasMetrics && idx === 0 ? `
-              <div class="post-meta">
-                ${m.likes    ? `<span class="post-stat">♥ <span>${fmt(m.likes)}</span></span>` : ''}
-                ${m.comments ? `<span class="post-stat">💬 <span>${fmt(m.comments)}</span></span>` : ''}
-                ${m.shares   ? `<span class="post-stat">↗ <span>${fmt(m.shares)}</span></span>` : ''}
-                ${m.views    ? `<span class="post-stat">👁 <span>${fmt(m.views)}</span></span>` : ''}
-              </div>` : ''}
-            </div>
-          </li>`;
-      });
-      postsHtml += '</ul>';
+    posts.slice(0, 10).forEach((post, idx) => {
+      const caption = typeof post === 'object' ? (post.caption || '') : String(post);
+      const postUrl = typeof post === 'object' ? (post.url || null) : null;
+      const embedHtml = postUrl ? buildPostEmbed(postUrl, caption, plat, idx) : buildPostNoUrl(caption, idx);
 
-      card.innerHTML = `
-        <div class="channel-card-header">
-          <span class="channel-platform-icon ${pm.icon}"></span>
-          <div class="channel-header-info">
-            <div class="channel-brand-name">
-              <span style="display:inline-block;width:7px;height:7px;border-radius:50%;background:${b.color};margin-right:5px;vertical-align:middle;"></span>
-              ${esc(b.name)}${b.handle ? ' <span style="font-weight:400;opacity:0.5;font-size:0.78rem;">· ' + esc(b.handle) + '</span>' : ''}
-            </div>
-            <div class="channel-platform-label">${esc(pm.label)}</div>
-          </div>
-          <span class="channel-post-count">${postCount} post${postCount !== 1 ? 's' : ''}</span>
-        </div>
-        ${postsHtml}`;
-
-      grid.appendChild(card);
+      const tile = document.createElement('div');
+      tile.className = 'post-tile';
+      tile.innerHTML = embedHtml;
+      row.appendChild(tile);
     });
+
+    grid.appendChild(row);
   });
 
   section.style.display = grid.children.length ? 'block' : 'none';
