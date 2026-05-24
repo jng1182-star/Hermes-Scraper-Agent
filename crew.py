@@ -7,8 +7,7 @@ from crewai import Crew, Process
 from agents import SocialAgents
 from tasks import SocialTasks
 
-# Per-phase caps
-_SCRAPER_TIMEOUT  = int(os.getenv("SCRAPER_TIMEOUT",  "120"))  # 2 min
+# Per-phase caps (scraper has no cap — runs until complete)
 _ANALYST_TIMEOUT  = int(os.getenv("ANALYST_TIMEOUT",  "300"))  # 5 min
 _REPORTER_TIMEOUT = int(os.getenv("REPORTER_TIMEOUT", "180"))  # 3 min
 _GATE_TIMEOUT     = int(os.getenv("GATE_TIMEOUT",     "120"))  # 2 min
@@ -127,7 +126,7 @@ class SocialListeningCrew:
             task1 = self.tasks.extraction_task(scraper, self.query, self.params)
             crew_scraper = Crew(agents=[scraper], tasks=[task1],
                                 process=Process.sequential, verbose=True)
-            _run_with_timeout(crew_scraper.kickoff, _SCRAPER_TIMEOUT, "scraper")
+            crew_scraper.kickoff()
             try:
                 _save_checkpoint("scraper", str(task1.output))
             except Exception:
