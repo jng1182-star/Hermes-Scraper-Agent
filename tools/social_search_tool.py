@@ -185,6 +185,15 @@ class SocialSearchTool(BaseTool):
 
         geo = f" {country}" if country else ""
 
+        # Lazy-load PaidAdLibTool — graceful fallback if playwright not installed
+        _paid_tool = None
+        if post_type in ("paid", "both"):
+            try:
+                from tools.paid_adlib_tool import PaidAdLibTool
+                _paid_tool = PaidAdLibTool()
+            except Exception:
+                pass
+
         results: list[dict] = []
 
         for brand in brands:
@@ -194,32 +203,58 @@ class SocialSearchTool(BaseTool):
                 "posts_found":   0,
             }
 
-            for platform in platforms:
-                # Build the search tasks for this brand-platform pair
-                search_tasks: list[tuple[str, str]] = []
+            # ── PAID: Playwright ad library scraper (one call per brand) ──────
+            if post_type in ("paid", "both") and _paid_tool is not None:
+                try:
+                    paid_raw  = _paid_tool._run(json.dumps({
+                        "brand":     brand,
+                        "country":   country,
+                        "platforms": platforms,
+                    }))
+                    paid_data = json.loads(paid_raw)
+                    for paid_plat in paid_data.get("platform_data", []):
+                        matched = next(
+                            (p for p in brand_entry["platform_data"]
+                             if p["platform"] == paid_plat["platform"]),
+                            None,
+                        )
+                        if matched:
+                            matched["raw_results"].extend(paid_plat.get("raw_results", []))
+                        else:
+                            brand_entry["platform_data"].append(paid_plat)
+                        brand_entry["posts_found"] += len(paid_plat.get("raw_results", []))
+                except Exception as e:
+                    print(f"[SocialSearch] PaidAdLibTool failed for '{brand}': {e}", flush=True)
 
-                if post_type in ("paid", "both"):
-                    q = _PAID_QUERIES[platform].format(brand=brand, geo=geo)
-                    search_tasks.append((q, "paid"))
+            for platform in platforms:
+                # ── ORGANIC: Tavily/DDG search ─────────────────────────────
+                search_tasks: list[tuple[str, str]] = []
 
                 if post_type in ("organic", "both"):
                     q = _ORGANIC_QUERIES[platform].format(brand=brand, geo=geo)
                     search_tasks.append((q, "organic"))
 
-                # Cross-platform competitive benchmark
+                # Cross-platform competitive benchmark (always)
                 search_tasks.append((
                     f"{brand} vs competitors {platform} engagement share of voice{geo} {date_hint}",
                     "both",
                 ))
 
-                # Fire all queries for this brand-platform in parallel
                 platform_snippets = _parallel_search(search_tasks)
 
                 if platform_snippets:
-                    brand_entry["platform_data"].append({
-                        "platform":    platform,
-                        "raw_results": platform_snippets,
-                    })
+                    matched = next(
+                        (p for p in brand_entry["platform_data"]
+                         if p["platform"] == platform),
+                        None,
+                    )
+                    if matched:
+                        matched["raw_results"].extend(platform_snippets)
+                    else:
+                        brand_entry["platform_data"].append({
+                            "platform":    platform,
+                            "raw_results": platform_snippets,
+                        })
                     brand_entry["posts_found"] += len(platform_snippets)
 
             # General brand social health (1 query per brand)
