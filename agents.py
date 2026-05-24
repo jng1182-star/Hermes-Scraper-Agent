@@ -4,6 +4,7 @@ from crewai.llm import LLM
 from tools.social_search_tool import SocialSearchTool
 from tools.profile_scraper import ProfileScraperTool
 from tools.feed_scroller import FeedScrollerTool
+from tools.api_data_tool import APIDataTool
 
 _OLLAMA_HOST     = os.getenv("OLLAMA_HOST", "http://127.0.0.1:11434").rstrip("/")
 _OLLAMA_BASE_URL = _OLLAMA_HOST + "/v1"
@@ -36,6 +37,7 @@ class SocialAgents:
         self.search_tool   = SocialSearchTool()
         self.profile_tool  = ProfileScraperTool()
         self.feed_tool     = FeedScrollerTool()
+        self.api_tool      = APIDataTool()
         # Scraper always uses e4b — structured data extraction, not deep reasoning.
         # e4b fits fully in GPU; 26b runs mixed CPU/GPU on this machine and stalls at 600s.
         self.scraper_llm = _make_llm("ollama/gemma4:e4b")
@@ -43,24 +45,25 @@ class SocialAgents:
         self.llm = _make_llm(analyst_model)
 
     def profile_agent(self) -> Agent:
-        """Agent 1 — scrapes public brand profiles within the date scope."""
+        """Agent 1 — fetches brand profile data via official APIs (YouTube Data API v3, Meta Ad Library)
+        with Playwright DOM scraping as fallback."""
         return Agent(
             role="Profile Baseline Scraper",
             goal=(
-                "Scrape public brand profile pages on Facebook and YouTube "
-                "within the specified date scope. Extract actual observed metrics — likes, comments, "
-                "views, follower count — for every post published within the date window. "
-                "Produce a clean organic baseline per brand per platform."
+                "Collect real, structured social media metrics for each brand on Facebook and YouTube. "
+                "Use the Brand API Data Fetcher tool first — it calls official APIs (YouTube Data API v3, "
+                "Meta Ad Library) and returns exact subscriber counts, view counts, and likes. "
+                "If the API tool returns no data for a platform, fall back to the Profile Baseline Scraper tool. "
+                "Produce a clean organic baseline per brand per platform with real numbers."
             ),
             backstory=(
-                "You are a specialist in first-party social data collection. "
-                "You navigate public brand profiles directly, read actual engagement numbers "
-                "from the DOM, and never estimate or infer — you only report what you observe. "
-                "You understand that 'last 30 posts' is not good enough; you scope by publish date. "
-                "You work systematically: collect URLs first, then visit each in parallel to extract "
-                "dates and metrics."
+                "You are a specialist in social media data collection. Your primary method is official APIs — "
+                "YouTube Data API v3 for subscriber counts and video metrics, Meta Ad Library for declared "
+                "ad impressions. APIs give you exact, authoritative numbers that no scraper can match. "
+                "You fall back to Playwright DOM scraping only when APIs are unavailable. "
+                "You never fabricate numbers — you report exactly what the APIs return."
             ),
-            tools=[self.profile_tool],
+            tools=[self.api_tool, self.profile_tool],
             llm=self.scraper_llm,
             verbose=True,
         )
@@ -104,7 +107,7 @@ class SocialAgents:
                 "inference — you flag search-derived data as lower confidence in your output. "
                 "You never return zero-data — if one source is dry you try another angle."
             ),
-            tools=[self.search_tool],
+            tools=[self.search_tool, self.api_tool],
             llm=self.scraper_llm,
             verbose=True,
         )

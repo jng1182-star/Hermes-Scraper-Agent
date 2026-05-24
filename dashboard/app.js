@@ -1785,13 +1785,15 @@ function renderCalcTree(data) {
       const color = BRAND_COLORS[i % BRAND_COLORS.length];
       const erSign = (b.er_vs_benchmark||0) >= 0 ? '+' : '';
       const erColor = (b.er_vs_benchmark||0) >= 0 ? 'var(--green)' : 'var(--red)';
+      const noData = b.data_unavailable || (b.interactions === 0 && b.followers === 0 && b.views === 0 && b.likes === 0);
       html += `
-        <div class="calc-brand-card">
+        <div class="calc-brand-card${noData ? ' no-data-card' : ''}">
           <div class="calc-brand-name">
             <span style="width:8px;height:8px;border-radius:50%;background:${color};display:inline-block;flex-shrink:0;"></span>
             ${esc(b.brand)}
             <span class="post-type-badge ${b.post_type||'both'}" style="font-size:0.62rem;margin-left:4px;">${esc(b.post_type||'both')}</span>
           </div>
+          ${noData ? `<div class="no-data-notice">⚠ No data collected for this brand on this platform.<br>Set <code>YOUTUBE_API_KEY</code> and <code>META_AD_LIBRARY_TOKEN</code> in Railway Variables for real metrics.</div>` : `
           <div class="calc-row"><span>Platform</span><span class="calc-val">${esc(b.platform||'—')}</span></div>
           <div class="calc-row"><span>Likes</span><span class="calc-val">${fmt(b.likes)}</span></div>
           <div class="calc-row"><span>Comments</span><span class="calc-val">${fmt(b.comments)}</span></div>
@@ -1807,6 +1809,7 @@ function renderCalcTree(data) {
           <div class="calc-row"><span>Est. Value</span><span class="calc-val accent">$${fmt(b.spend_usd)}</span></div>
           <div class="calc-formula-inline">${esc(b.spend_note||b.spend_formula||'')}</div>
           <div class="calc-formula-inline" style="color:var(--text3);">${esc(b.er_formula||'')}</div>
+          `}
         </div>`;
     });
     html += '</div>';

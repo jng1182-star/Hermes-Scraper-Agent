@@ -1772,6 +1772,22 @@ a.post-link:hover {
   color: var(--text2);
   line-height: 1.7;
 }
+.calc-brand-card.no-data-card {
+  border-color: rgba(245,158,11,0.3);
+  opacity: 0.7;
+}
+.no-data-notice {
+  color: var(--amber);
+  font-size: 0.69rem;
+  line-height: 1.5;
+  padding: 8px 0 4px;
+}
+.no-data-notice code {
+  background: rgba(245,158,11,0.12);
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-family: var(--mono);
+}
 .calc-brand-name {
   font-weight: 700;
   color: var(--text);
