@@ -86,7 +86,7 @@ class SocialAgents:
                 "Your rule is strict: if no explicit DOM marker is present, do not call it an ad. "
                 "The engagement-based outlier detection runs downstream — your job is pure observation."
             ),
-            tools=[self.feed_tool],
+            tools=[self.api_tool, self.feed_tool],
             llm=self.scraper_llm,
             verbose=True,
         )

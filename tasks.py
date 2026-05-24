@@ -51,38 +51,37 @@ class SocialTasks:
         )
 
     def feed_task(self, agent, params: dict = None) -> Task:
-        """Agent 2 — doom scroll feed ad capture across all platforms."""
+        """Agent 2 — paid ad capture via Meta Ad Library API (primary) + feed scroll fallback."""
         params     = params or {}
         competitors= params.get("competitors", [])
         advertisers= params.get("advertisers", [])
         platforms  = params.get("platforms", ["YouTube", "Facebook"])
-        country    = params.get("country", "")
+        country    = params.get("country", "PH")
 
         all_brands = list(advertisers) + [c for c in competitors if c not in advertisers]
         brands_str = ", ".join(all_brands) if all_brands else "all target brands"
 
+        api_input = json.dumps({
+            "brands": all_brands,
+            "platforms": platforms,
+            "country": country or "PH",
+        })
         return Task(
             description=(
-                f"Use the Feed Doom Scroller tool to capture declared paid advertisements "
-                f"for the following brands: {brands_str}.\n\n"
+                f"Collect declared paid advertising data for these brands: {brands_str}.\n\n"
                 f"PLATFORMS: {', '.join(platforms)}\n"
                 f"COUNTRY/MARKET: {country or 'Global'}\n\n"
-                "Call the tool with this JSON:\n"
-                "{\n"
-                f'  "platforms": {platforms},\n'
-                f'  "country": "{country}",\n'
-                f'  "brands": {all_brands}\n'
-                "}\n\n"
-                "IMPORTANT: The tool uses strict DOM-marker detection only. "
-                "Do NOT add or infer additional paid posts beyond what the tool returns. "
-                "Every ad in the output has been positively identified via an explicit "
-                "platform-native ad label or CTA overlay. "
-                "Return the full JSON output from the tool unchanged."
+                "STEP 1 — Call the 'Brand API Data Fetcher' tool with this exact input:\n"
+                f"{api_input}\n\n"
+                "The Meta Ad Library API section of this tool returns: active ad count, "
+                "impression ranges (min/max), spend ranges, and ad creative text per brand.\n\n"
+                "Return the full JSON output from the tool. "
+                "Do NOT call the Feed Doom Scroller tool — it requires a browser which is not available."
             ),
             expected_output=(
-                "JSON from the Feed Doom Scroller tool: brand_matched_ads list (each with "
-                "platform, paid_signal, advertiser, ad_copy, creative_url, likes, comments, views, "
-                "captured_utc, data_source), plus category_ads for unmatched ads and metadata."
+                "JSON from the Brand API Data Fetcher tool showing Meta Ad Library data: "
+                "active_ads_found, impressions_min, impressions_max, spend_min_usd, spend_max_usd, "
+                "ad_captions per brand. data_source must be 'meta_ad_library_api'."
             ),
             agent=agent,
         )

@@ -342,7 +342,7 @@ if __name__ == "__main__":
         "advertiser": sys.argv[1] if len(sys.argv) > 1 else "Nike",
         "competitors": ["Adidas", "Puma"],
         "country":    "Singapore",
-        "platforms":  ["TikTok", "Instagram"],
+        "platforms":  ["YouTube", "Facebook"],
         "date_range": "Last 30 days",
         "cpm_rate":   15.0,
         "keywords":   "",

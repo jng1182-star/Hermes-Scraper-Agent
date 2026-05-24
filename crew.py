@@ -225,8 +225,18 @@ def _merge_scrape_outputs(profile_json: str, feed_json: str) -> dict:
     except Exception:
         pass
 
-    has_profile = bool(profile_data.get("baselines"))
-    has_feed    = bool(feed_data.get("brand_matched_ads") or feed_data.get("total_ads_captured", 0) > 0)
+    # Legacy Playwright format uses "baselines"; API tool uses "api_data"
+    has_profile = bool(
+        profile_data.get("baselines") or
+        any(
+            b.get("platform_data")
+            for b in profile_data.get("api_data", [])
+        )
+    )
+    has_feed = bool(
+        feed_data.get("brand_matched_ads") or
+        feed_data.get("total_ads_captured", 0) > 0
+    )
 
     return {
         "has_data":    has_profile or has_feed,
@@ -245,30 +255,40 @@ def _build_analyst_context(profile_json: str, feed_json: str, search_json: str) 
     parts = []
 
     if profile_json and profile_json != "{}":
-        parts.append(
-            "=== AGENT 1: PROFILE BASELINE (first-party DOM scrape) ===\n"
-            "Source: Public brand profile pages — actual observed metrics.\n"
-            "Confidence: HIGH — these are real numbers read from the DOM.\n\n"
-            + profile_json[:4000]
+        # Detect API data vs legacy Playwright data for labelling
+        try:
+            pd = json.loads(profile_json)
+            is_api = bool(pd.get("api_data"))
+        except Exception:
+            is_api = False
+        label = (
+            "=== AGENT 1: BRAND API DATA (YouTube Data API v3 + Meta Ad Library) ===\n"
+            "Source: Official platform APIs — exact real numbers.\n"
+            "Confidence: HIGH — authoritative source data.\n\n"
+        ) if is_api else (
+            "=== AGENT 1: PROFILE BASELINE (DOM scrape) ===\n"
+            "Source: Public brand profile pages.\n"
+            "Confidence: HIGH — real numbers read from DOM.\n\n"
         )
+        parts.append(label + profile_json[:5000])
 
     if feed_json and feed_json != "{}":
         parts.append(
-            "=== AGENT 2: FEED AD CAPTURE (first-party DOM scrape) ===\n"
+            "=== AGENT 2: FEED AD CAPTURE (DOM scrape) ===\n"
             "Source: In-feed doom scroll — strict DOM marker detection.\n"
             "Confidence: HIGH — ads confirmed via explicit platform-native labels.\n\n"
-            + feed_json[:4000]
+            + feed_json[:3000]
         )
 
     if search_json:
         parts.append(
             "=== SEARCH FALLBACK (secondary source) ===\n"
-            "Source: Web search snippets — use only where DOM scrape data is absent.\n"
+            "Source: Web search snippets — use only where API/DOM data is absent.\n"
             "Confidence: LOWER — metrics inferred from editorial text.\n\n"
             + search_json[:2000]
         )
 
     combined = "\n\n".join(parts)
-    if len(combined) > 6000:
-        combined = combined[:6000] + "\n[... TRUNCATED — earlier data omitted to stay within token limit ...]"
+    if len(combined) > 10000:
+        combined = combined[:10000] + "\n[... TRUNCATED ...]"
     return combined
