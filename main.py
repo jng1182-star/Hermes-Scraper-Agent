@@ -1,4 +1,5 @@
 import os
+import shutil
 import subprocess
 import threading
 import time
@@ -22,6 +23,16 @@ _state_hook = None  # callable(node_id: str, state: str) | None
 STALL_TIMEOUT  = int(os.getenv("STALL_TIMEOUT",    "180"))
 MAX_RETRIES    = int(os.getenv("STALL_MAX_RETRIES", "2"))
 GATE_TIMEOUT   = int(os.getenv("GATE_TIMEOUT",      "120"))
+
+# Resolve ollama binary path once at startup — avoids PATH issues when running via venv.
+# Falls back gracefully: heartbeat and watchdog will skip CLI calls if binary not found.
+_OLLAMA_BIN = (
+    shutil.which("ollama")
+    or "/usr/local/bin/ollama"    # homebrew default
+    or "/opt/homebrew/bin/ollama" # Apple Silicon homebrew
+)
+if not Path(_OLLAMA_BIN).exists():
+    _OLLAMA_BIN = None
 
 
 SUPPORTED_PLATFORMS = ["TikTok", "Instagram", "YouTube", "Facebook"]
@@ -73,11 +84,12 @@ def _kill_ollama_runner():
                 pass
     except Exception as e:
         print(f"[WATCHDOG] pgrep failed: {e}", flush=True)
-    try:
-        subprocess.run(["ollama", "stop", "gemma4:e4b"],  capture_output=True, timeout=10)
-        subprocess.run(["ollama", "stop", "gemma4:26b"], capture_output=True, timeout=10)
-    except Exception:
-        pass
+    if _OLLAMA_BIN:
+        try:
+            subprocess.run([_OLLAMA_BIN, "stop", "gemma4:e4b"],  capture_output=True, timeout=10)
+            subprocess.run([_OLLAMA_BIN, "stop", "gemma4:26b"], capture_output=True, timeout=10)
+        except Exception:
+            pass
 
 
 # No hard deadline — pipeline runs until complete. Stall watchdog handles frozen LLMs.
@@ -123,33 +135,47 @@ def run_pipeline(params: dict):
     _pipeline_start  = time.monotonic()
     _crew_thread_id  = [threading.current_thread().ident]
 
-    # ── Ollama heartbeat — restart runner if it stops responding ─────────────
+    # ── Ollama heartbeat — ping HTTP health endpoint; restart CLI only if binary available ──
     _heartbeat_stop = threading.Event()
 
     def _ollama_heartbeat(stop_evt: threading.Event):
-        """Ping Ollama every 60s; if it stops responding, restart the runner."""
+        import urllib.request
+        import urllib.error
         consecutive_fails = 0
         while not stop_evt.wait(timeout=60):
             try:
-                r = subprocess.run(
-                    ["ollama", "list"], capture_output=True, timeout=10
-                )
-                if r.returncode == 0:
-                    consecutive_fails = 0
-                else:
-                    consecutive_fails += 1
+                # Prefer HTTP health check — works regardless of PATH / binary location.
+                # Ollama exposes GET / → 200 "Ollama is running" when healthy.
+                with urllib.request.urlopen(
+                    f"{_ollama_host}/", timeout=8
+                ) as resp:
+                    if resp.status == 200:
+                        consecutive_fails = 0
+                        continue
+                consecutive_fails += 1
+            except urllib.error.URLError:
+                consecutive_fails += 1
             except Exception:
                 consecutive_fails += 1
 
             if consecutive_fails >= 2:
                 print("[HEARTBEAT] Ollama not responding — attempting restart…", flush=True)
-                try:
-                    subprocess.Popen(["ollama", "serve"],
-                                     stdout=subprocess.DEVNULL,
-                                     stderr=subprocess.DEVNULL)
-                    time.sleep(5)
-                except Exception as e:
-                    print(f"[HEARTBEAT] Restart failed: {e}", flush=True)
+                if _OLLAMA_BIN:
+                    try:
+                        subprocess.Popen(
+                            [_OLLAMA_BIN, "serve"],
+                            stdout=subprocess.DEVNULL,
+                            stderr=subprocess.DEVNULL,
+                        )
+                        time.sleep(5)
+                    except Exception as e:
+                        print(f"[HEARTBEAT] Restart failed: {e}", flush=True)
+                else:
+                    print(
+                        "[HEARTBEAT] ollama binary not found — cannot auto-restart. "
+                        "Start Ollama manually if it has crashed.",
+                        flush=True,
+                    )
                 consecutive_fails = 0
 
     heartbeat_thread = threading.Thread(
