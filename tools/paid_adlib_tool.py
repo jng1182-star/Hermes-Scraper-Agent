@@ -125,47 +125,45 @@ async def _scrape_meta(context, brand: str, country: str) -> list[dict]:
     try:
         await _rate_limit("www.facebook.com")
         await page.goto(url, timeout=20_000, wait_until="domcontentloaded")
+        await asyncio.sleep(3)  # let React render ad cards
 
-        # Wait for ad cards or a "no results" indicator
+        # Meta renders ad cards inside carousel containers
+        # Each [data-testid="ad-library-ad-carousel-container"] wraps one ad
         try:
             await page.wait_for_selector(
-                '[data-testid="ad-library-ad-card"], [data-testid="no-results"]',
-                timeout=20_000,
+                '[data-testid="ad-library-ad-carousel-container"]',
+                timeout=15_000,
             )
         except Exception:
             return []
 
-        cards = await page.query_selector_all('[data-testid="ad-library-ad-card"]')
-        for card in cards[:10]:
-            creative = await _text(
-                await card.query_selector('[data-testid="ad-library-ad-card-body"]') or card
-            )
-            page_name = await _text(
-                await card.query_selector('[data-testid="page-name"]')
-            )
-            impressions = await _text(
-                await card.query_selector('[data-testid="ad-library-ad-card-impressions"]')
-            )
-            start_date = await _text(
-                await card.query_selector('[data-testid="ad-library-ad-card-date"]')
-            )
-            status = await _text(
-                await card.query_selector('[data-testid="ad-status"]')
-            )
-            ad_id = await _attr(card, "data-ad-id", "")
-            ad_url = (
-                f"https://www.facebook.com/ads/library/?id={ad_id}"
-                if ad_id else url
-            )
+        cards = await page.query_selector_all(
+            '[data-testid="ad-library-ad-carousel-container"]'
+        )
 
-            content_parts = [p for p in [creative, page_name, impressions, start_date, status] if p]
-            if not content_parts:
+        for card in cards[:10]:
+            # Get the full inner text of the card — Meta uses hashed class names
+            # but inner_text() gives us all visible text: page name, creative, dates, status
+            raw_text = await _text(card)
+            if not raw_text:
+                continue
+
+            # Extract library ID from sibling context if available
+            parent = await card.evaluate_handle("el => el.closest('._7jyi') || el.parentElement")
+            parent_text = ""
+            try:
+                parent_text = await _text(parent)
+            except Exception:
+                pass
+
+            full_text = raw_text or parent_text
+            if not full_text:
                 continue
 
             ads.append({
-                "url": ad_url,
+                "url": url,
                 "title": f"{safe_brand} — Meta Ad Library",
-                "content": " | ".join(content_parts),
+                "content": full_text[:1500],
                 "source_type": "paid",
             })
     except Exception as e:
@@ -179,46 +177,51 @@ async def _scrape_meta(context, brand: str, country: str) -> list[dict]:
 async def _scrape_tiktok(context, brand: str, country: str) -> list[dict]:
     """Scrape TikTok Ad Library for paid ads by brand."""
     safe_brand = _sanitise_brand(brand)
-    # TikTok Ad Library uses epoch ms for date range — last 30 days
-    start_ms = int((time.time() - 30 * 86400) * 1000)
-    url = (
-        f"https://library.tiktok.com/ads"
-        f"?region=ALL"
-        f"&start_time={start_ms}"
-        f"&keyword={quote_plus(safe_brand)}"
-    )
+    # Try multiple region codes — TikTok requires a specific region to return results
+    # "US" and "GB" have the deepest ad libraries; fall back to "ALL" if empty
+    regions_to_try = ["US", "GB", "SG", "AU"]
+    if country and len(country) == 2:
+        regions_to_try.insert(0, country.upper())
 
     page = await context.new_page()
     ads: list[dict] = []
     try:
         await _rate_limit("library.tiktok.com")
-        await page.goto(url, timeout=20_000, wait_until="domcontentloaded")
 
-        try:
-            await page.wait_for_selector(
-                '[data-e2e="ad-card"], [data-e2e="no-result"]',
-                timeout=20_000,
-            )
-        except Exception:
-            return []
+        for region in regions_to_try:
+            url = f"https://library.tiktok.com/ads?region={region}&keyword={quote_plus(safe_brand)}"
+            await page.goto(url, timeout=20_000, wait_until="domcontentloaded")
+            await asyncio.sleep(4)
 
-        cards = await page.query_selector_all('[data-e2e="ad-card"]')
-        for card in cards[:10]:
-            title     = await _text(await card.query_selector('[data-e2e="ad-title"]'))
-            advertiser= await _text(await card.query_selector('[data-e2e="advertiser-name"]'))
-            impression= await _text(await card.query_selector('[data-e2e="ad-impression"]'))
-            region    = await _text(await card.query_selector('[data-e2e="ad-region"]'))
-
-            content_parts = [p for p in [title, advertiser, impression, region] if p]
-            if not content_parts:
+            try:
+                await page.wait_for_selector(
+                    ".ad_card_wrapper, .nodata_container, .total_ads",
+                    timeout=10_000,
+                )
+            except Exception:
                 continue
 
-            ads.append({
-                "url": url,
-                "title": f"{safe_brand} — TikTok Ad Library",
-                "content": " | ".join(content_parts),
-                "source_type": "paid",
-            })
+            total_el = await page.query_selector(".total_ads")
+            total_text = await _text(total_el) if total_el else ""
+            # Skip if no ads in this region
+            if "0\n" in total_text or total_text.strip().endswith("\n0"):
+                continue
+
+            cards = await page.query_selector_all(".ad_card_wrapper")
+            for card in cards[:10]:
+                raw_text = await _text(card)
+                if not raw_text:
+                    continue
+                ads.append({
+                    "url": url,
+                    "title": f"{safe_brand} — TikTok Ad Library ({region})",
+                    "content": raw_text[:1500],
+                    "source_type": "paid",
+                })
+
+            if ads:
+                break  # found results — no need to try more regions
+
     except Exception as e:
         print(f"[PaidAdLib] TikTok scrape error for '{brand}': {e}", flush=True)
     finally:
@@ -230,47 +233,69 @@ async def _scrape_tiktok(context, brand: str, country: str) -> list[dict]:
 async def _scrape_google(context, brand: str, country: str) -> list[dict]:
     """Scrape Google Ads Transparency Center for paid ads by brand."""
     safe_brand = _sanitise_brand(brand)
-    url = (
-        f"https://adstransparency.google.com/"
-        f"?advertiser_name={quote_plus(safe_brand)}&region=anywhere"
-    )
+    base_url = "https://adstransparency.google.com/?region=anywhere"
 
     page = await context.new_page()
     ads: list[dict] = []
     try:
         await _rate_limit("adstransparency.google.com")
-        await page.goto(url, timeout=20_000, wait_until="domcontentloaded")
+        await page.goto(base_url, timeout=20_000, wait_until="networkidle")
+        await asyncio.sleep(2)
 
+        # Step 1 — fill search input and submit
+        search_input = await page.query_selector("material-input input")
+        if not search_input:
+            return []
+        await search_input.fill(safe_brand)
+        await search_input.press("Enter")
+        await asyncio.sleep(4)
+
+        # Step 2 — advertiser list appears; click the first (most relevant) result
         try:
-            await page.wait_for_selector(
-                "material-creative-preview, [data-creative-id]",
-                timeout=20_000,
-            )
+            await page.wait_for_selector("material-list-item", timeout=10_000)
         except Exception:
             return []
 
-        cards = await page.query_selector_all(
-            "material-creative-preview, [data-creative-id]"
-        )
+        items = await page.query_selector_all("material-list-item")
+        if not items:
+            return []
+
+        # Click first advertiser in the list
+        await items[0].click()
+        await asyncio.sleep(4)
+
+        # Step 3 — creative gallery should now be loaded
+        try:
+            await page.wait_for_selector(
+                "material-creative-preview, [data-creative-id]",
+                timeout=15_000,
+            )
+        except Exception:
+            # Fallback — capture whatever body text loaded (may include ad counts)
+            body_text = await _text(await page.query_selector("body"))
+            if body_text and safe_brand.lower() in body_text.lower():
+                ads.append({
+                    "url": page.url,
+                    "title": f"{safe_brand} — Google Ads Transparency",
+                    "content": body_text[:1500],
+                    "source_type": "paid",
+                })
+            return ads
+
+        cards = await page.query_selector_all("material-creative-preview, [data-creative-id]")
         for card in cards[:10]:
-            advertiser = await _text(await card.query_selector(".advertiser-name"))
-            date_range = await _text(await card.query_selector(".date-range"))
-            region     = await _text(await card.query_selector(".region"))
-            ad_format  = await _text(await card.query_selector(".ad-format"))
-            # Capture creative asset URL only — never download the asset
-            asset_el   = await card.query_selector("img[src], video[src]")
-            asset_url  = await _attr(asset_el, "src") if asset_el else ""
-
-            content_parts = [p for p in [advertiser, date_range, region, ad_format] if p]
-            if asset_url:
-                content_parts.append(f"Creative: {asset_url[:200]}")
-            if not content_parts:
+            raw_text = await _text(card)
+            if not raw_text:
                 continue
-
+            asset_el  = await card.query_selector("img[src]")
+            asset_url = await _attr(asset_el, "src") if asset_el else ""
+            content   = raw_text
+            if asset_url:
+                content += f" | Creative: {asset_url[:200]}"
             ads.append({
-                "url": url,
+                "url": page.url,
                 "title": f"{safe_brand} — Google Ads Transparency",
-                "content": " | ".join(content_parts),
+                "content": content[:1500],
                 "source_type": "paid",
             })
     except Exception as e:
