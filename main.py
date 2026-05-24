@@ -20,7 +20,7 @@ from approval_gate import ApprovalGate
 # Injected by server.py before each run
 _state_hook = None  # callable(node_id: str, state: str) | None
 
-STALL_TIMEOUT  = int(os.getenv("STALL_TIMEOUT",    "180"))
+STALL_TIMEOUT  = int(os.getenv("STALL_TIMEOUT",    "90"))
 MAX_RETRIES    = int(os.getenv("STALL_MAX_RETRIES", "2"))
 GATE_TIMEOUT   = int(os.getenv("GATE_TIMEOUT",      "120"))
 
@@ -204,6 +204,7 @@ def run_pipeline(params: dict):
                 _stall_flag.set()
                 _kill_ollama_runner()
                 tid = _crew_thread_id[0]
+                killed = False
                 if tid:
                     try:
                         import ctypes
@@ -211,8 +212,15 @@ def run_pipeline(params: dict):
                             ctypes.c_ulong(tid),
                             ctypes.py_object(RuntimeError),
                         )
+                        killed = True
                     except Exception:
                         pass
+                # Nuclear fallback: if ctypes didn't work (thread blocked on I/O),
+                # send SIGTERM to self — Railway will restart the container cleanly.
+                if not killed:
+                    import signal, os as _os
+                    print("[WATCHDOG] ctypes kill failed — sending SIGTERM for clean restart.", flush=True)
+                    _os.kill(_os.getpid(), signal.SIGTERM)
                 return
 
     # Reset watchdog timer on every LLM token
