@@ -568,6 +568,12 @@ async function pollStatus() {
 
     setLiveBadge(s.running);
 
+    // Ensure Stop button is enabled whenever a run is active (covers page-reload mid-run)
+    const stopBtn = document.getElementById('stopBtn');
+    if (stopBtn && s.running && stopBtn.disabled && stopBtn.textContent.trim() !== '■ Stopping…') {
+      stopBtn.disabled = false; stopBtn.textContent = '■ Stop';
+    }
+
     // ── Partial results: render as soon as scraper/analyst checkpoint is ready ──
     if (s.running && s.partial_report && s.partial_report.competitors && s.partial_report.competitors.length) {
       if (!State.partialShown) {
