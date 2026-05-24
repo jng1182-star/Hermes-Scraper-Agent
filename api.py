@@ -1,17 +1,51 @@
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, BackgroundTasks, Query, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, RedirectResponse
 from pydantic import BaseModel, Field, field_validator
 from main import run_pipeline
-import json, threading
+import json, threading, datetime
 from pathlib import Path
 from collections import deque
 from typing import Annotated, Dict, List, Optional
 
 _PROJECT_ROOT = Path(__file__).parent
 
-app = FastAPI()
+
+def _should_refresh_benchmarks() -> bool:
+    bench_path = _PROJECT_ROOT / "data" / "benchmarks.json"
+    if not bench_path.exists():
+        return True
+    try:
+        data = json.loads(bench_path.read_text())
+        updated_at = data.get("updated_at", "")
+        if not updated_at:
+            return True
+        dt = datetime.datetime.fromisoformat(updated_at)
+        age_days = (datetime.datetime.now(datetime.timezone.utc) - dt).days
+        return age_days > 7
+    except Exception:
+        return True
+
+
+def _bg_refresh_benchmarks():
+    try:
+        from scripts.refresh_benchmarks import run_refresh
+        run_refresh()
+        print("[BenchmarkRefresh] Startup refresh complete.", flush=True)
+    except Exception as e:
+        print(f"[BenchmarkRefresh] Startup refresh failed: {e}", flush=True)
+
+
+@asynccontextmanager
+async def lifespan(app):
+    if _should_refresh_benchmarks():
+        threading.Thread(target=_bg_refresh_benchmarks, daemon=True).start()
+    yield
+
+
+app = FastAPI(lifespan=lifespan)
 
 # Restrict CORS to localhost only — this app is local-first and should never be
 # reachable from an external origin. A wildcard CORS policy would allow any
@@ -370,6 +404,34 @@ async def delete_saved_run(run_id: str):
     runs = [r for r in _load_saved_runs().get("runs", []) if str(r.get("id")) != run_id]
     _save_saved_runs({"runs": runs})
     return {"status": "ok", "count": len(runs)}
+
+
+@app.post("/refresh-benchmarks")
+async def refresh_benchmarks_endpoint(background_tasks: BackgroundTasks):
+    background_tasks.add_task(_bg_refresh_benchmarks)
+    return {"status": "refresh_started"}
+
+
+@app.get("/benchmarks-status")
+async def benchmarks_status():
+    bench_path = _PROJECT_ROOT / "data" / "benchmarks.json"
+    if not bench_path.exists():
+        return {"updated_at": None, "age_days": None, "sources": [], "status": "never_refreshed"}
+    try:
+        data = json.loads(bench_path.read_text())
+        updated_at = data.get("updated_at")
+        age_days = None
+        if updated_at:
+            dt = datetime.datetime.fromisoformat(updated_at)
+            age_days = (datetime.datetime.now(datetime.timezone.utc) - dt).days
+        return {
+            "updated_at": updated_at,
+            "age_days":   age_days,
+            "sources":    data.get("sources", []),
+            "status":     "ok",
+        }
+    except Exception as e:
+        return {"updated_at": None, "age_days": None, "sources": [], "status": f"error: {e}"}
 
 
 # Serve dashboard static files

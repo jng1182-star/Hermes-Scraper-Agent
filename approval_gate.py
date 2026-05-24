@@ -48,22 +48,42 @@ _SECRET_VALUES: set[str] = {
 
 
 # ── Methodology version stamp ─────────────────────────────────────────────────
-_METHODOLOGY_VERSION = "2.1.0"
+_METHODOLOGY_VERSION = "2.2.0"
 _METHODOLOGY_DATE    = "2025-05"
 
-# S3: stale-constants guard — warn if benchmark data is more than 180 days old
-_CONSTANTS_LAST_UPDATED = datetime(2025, 5, 1, tzinfo=timezone.utc)
-_CONSTANTS_STALE_DAYS   = 180
-def _check_stale_constants() -> None:
-    age = (datetime.now(timezone.utc) - _CONSTANTS_LAST_UPDATED).days
-    if age > _CONSTANTS_STALE_DAYS:
-        logger.warning(
-            "[ApprovalGate] Benchmark constants (CPM, VTR, ER) were last updated %d days ago "
-            "(%s). Consider refreshing from eMarketer/Kantar/Socialinsider sources. "
-            "Set _CONSTANTS_LAST_UPDATED after any refresh.",
-            age, _CONSTANTS_LAST_UPDATED.strftime("%Y-%m-%d"),
-        )
-_check_stale_constants()
+# ── Live benchmark loader ─────────────────────────────────────────────────────
+# Tries to load auto-refreshed values from data/benchmarks.json.
+# Falls back to hardcoded constants below if file is missing or malformed.
+_STALE_DAYS = 14  # warn if benchmarks.json is older than 14 days
+
+def _load_live_benchmarks() -> dict | None:
+    """Load benchmarks.json; return dict or None if unavailable."""
+    bench_path = os.path.join(os.path.dirname(__file__), "data", "benchmarks.json")
+    if not os.path.exists(bench_path):
+        return None
+    try:
+        with open(bench_path) as f:
+            data = json.load(f)
+        updated_at = data.get("updated_at", "")
+        if updated_at:
+            try:
+                dt = datetime.fromisoformat(updated_at)
+                age = (datetime.now(timezone.utc) - dt).days
+                if age > _STALE_DAYS:
+                    logger.warning(
+                        "[ApprovalGate] benchmarks.json is %d days old (threshold: %d). "
+                        "Run scripts/refresh_benchmarks.py to update.", age, _STALE_DAYS,
+                    )
+                else:
+                    logger.info("[ApprovalGate] Loaded live benchmarks (age: %d days).", age)
+            except Exception:
+                pass
+        return data
+    except Exception as e:
+        logger.warning("[ApprovalGate] Could not load benchmarks.json: %s — using hardcoded values.", e)
+        return None
+
+_LIVE = _load_live_benchmarks()
 
 # ── Base CPM benchmarks per market (USD per 1,000 impressions) ────────────────
 # Source: eMarketer Digital Advertising Benchmarks 2024; Statista Global Digital Ad Spend
@@ -199,6 +219,18 @@ INDUSTRY_ER_BENCHMARKS = {
         "education":    1.5,  "real_estate": 1.1,
     },
 }
+
+# ── Apply live benchmarks from benchmarks.json (if available) ─────────────────
+# Overrides the hardcoded constants above with auto-refreshed values.
+if _LIVE:
+    if _LIVE.get("country_cpm"):
+        COUNTRY_CPM = _LIVE["country_cpm"]
+    if _LIVE.get("market_vtr"):
+        MARKET_VTR = _LIVE["market_vtr"]
+    if _LIVE.get("platform_avg_vtr"):
+        PLATFORM_AVG_VIEW_RATE = {**PLATFORM_AVG_VIEW_RATE, **_LIVE["platform_avg_vtr"]}
+    if _LIVE.get("industry_er"):
+        INDUSTRY_ER_BENCHMARKS = _LIVE["industry_er"]
 
 # ── Heuristic threshold for statistical outlier ad detection ─────────────────
 # Posts with ER > (benchmark_er × OUTLIER_ER_MULTIPLIER) are flagged as

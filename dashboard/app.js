@@ -568,6 +568,19 @@ async function pollStatus() {
 
     setLiveBadge(s.running);
 
+    // Sync elapsed timer from server when local timer isn't running (page reload mid-run)
+    if (s.running && !State.elapsedInterval && typeof s.elapsed_secs === 'number') {
+      const elapsedBadge = document.getElementById('elapsedBadge');
+      if (elapsedBadge) elapsedBadge.style.display = 'flex';
+      State.elapsedStart = Date.now() - s.elapsed_secs * 1000;
+      State.elapsedInterval = setInterval(() => {
+        const secs = Math.floor((Date.now() - State.elapsedStart) / 1000);
+        const m = Math.floor(secs / 60), sec = secs % 60;
+        const el = document.getElementById('elapsedTime');
+        if (el) el.textContent = `${m}:${String(sec).padStart(2,'0')}`;
+      }, 1000);
+    }
+
     // Ensure Stop button is enabled whenever a run is active (covers page-reload mid-run)
     const stopBtn = document.getElementById('stopBtn');
     if (stopBtn && s.running && stopBtn.disabled && stopBtn.textContent.trim() !== '■ Stopping…') {
@@ -745,6 +758,56 @@ function resetForm() {
 }
 
 document.getElementById('resetBtn').addEventListener('click', resetForm);
+
+// ── Benchmark status ──────────────────────────────────────────────────────────
+async function loadBenchmarkStatus() {
+  const el = document.getElementById('benchmarkStatus');
+  if (!el) return;
+  try {
+    const res  = await fetch('/benchmarks-status');
+    const data = await res.json();
+    if (data.status === 'never_refreshed') {
+      el.textContent = 'never refreshed';
+      el.style.color = 'var(--warn, #f59e0b)';
+    } else if (data.age_days !== null && data.age_days > 14) {
+      el.textContent = `stale (${data.age_days}d ago)`;
+      el.style.color = 'var(--warn, #f59e0b)';
+    } else if (data.updated_at) {
+      const d = new Date(data.updated_at);
+      el.textContent = `updated ${d.toLocaleDateString()}`;
+      el.style.color = 'var(--text3)';
+    } else {
+      el.textContent = data.status;
+    }
+  } catch(e) {
+    el.textContent = 'unavailable';
+  }
+}
+loadBenchmarkStatus();
+
+document.getElementById('refreshBenchmarksBtn').addEventListener('click', async () => {
+  const btn = document.getElementById('refreshBenchmarksBtn');
+  const el  = document.getElementById('benchmarkStatus');
+  btn.disabled = true; btn.textContent = '↻ Refreshing…';
+  if (el) { el.textContent = 'refreshing…'; el.style.color = 'var(--text3)'; }
+  try {
+    await fetch('/refresh-benchmarks', { method: 'POST' });
+    // Poll until age changes or 90s timeout
+    let waited = 0;
+    const check = setInterval(async () => {
+      waited += 3;
+      await loadBenchmarkStatus();
+      const fresh = document.getElementById('benchmarkStatus');
+      if (!fresh || (fresh.textContent.includes('updated') && !fresh.textContent.includes('refreshing')) || waited >= 90) {
+        clearInterval(check);
+        btn.disabled = false; btn.textContent = '↻ Refresh';
+      }
+    }, 3000);
+  } catch(e) {
+    if (el) el.textContent = 'refresh failed';
+    btn.disabled = false; btn.textContent = '↻ Refresh';
+  }
+});
 
 function showLogPanel(show) {
   document.getElementById('logPanel').classList.toggle('show', show);
