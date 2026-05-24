@@ -29,11 +29,16 @@ from crewai.tools import BaseTool
 _ALLOWED_HOSTS = {
     "www.facebook.com",
     "facebook.com",
-    "static.xx.fbcdn.net",        # Meta CDN — needed for ad card rendering
+    "static.xx.fbcdn.net",          # Meta CDN for ad card rendering
+    "scontent.fsin15-2.fna.fbcdn.net",  # Meta media CDN (SG)
     "library.tiktok.com",
-    "lf16-ttcdn-tos.pstatp.com",  # TikTok static CDN
+    "lf16-ttcdn-tos.pstatp.com",    # TikTok static CDN
     "adstransparency.google.com",
-    "fonts.gstatic.com",          # Google fonts — needed for Transparency Center render
+    "fonts.gstatic.com",            # Google fonts
+    "fonts.googleapis.com",         # Google fonts API
+    "www.gstatic.com",              # Google static assets
+    "ogads-pa.clients6.google.com", # Google ATC data API
+    "apis.google.com",              # Google APIs (needed for ATC render)
 }
 
 # Per-domain last-hit tracker for rate limiting
