@@ -1,85 +1,33 @@
 import json
 import os
 import re
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from crewai.tools import BaseTool
 from duckduckgo_search import DDGS
 
 # ── Supported platforms (only these four) ────────────────────────────────────
 SUPPORTED_PLATFORMS = ["TikTok", "Instagram", "YouTube", "Facebook"]
 
-# ── Ad library / paid intelligence sources per platform ──────────────────────
-_AD_LIBRARY_QUERIES = {
-    "TikTok":    (
-        'site:library.tiktok.com OR "TikTok Creative Center" OR "TikTok Ad Library" '
-        'OR "TikTok Ads" campaign sponsored'
-    ),
-    "Instagram": (
-        'site:facebook.com/ads/library OR "Meta Ad Library" instagram '
-        'OR "sponsored post" instagram campaign'
-    ),
-    "YouTube":   (
-        'site:adstransparency.google.com OR "Google Ads Transparency" youtube '
-        'OR "YouTube ads" pre-roll bumper campaign'
-    ),
-    "Facebook":  (
-        'site:facebook.com/ads/library OR "Meta Ad Library" facebook '
-        'OR "Facebook Ads Manager" campaign sponsored'
-    ),
-}
-
-# ── Organic engagement query templates per platform ──────────────────────────
-_ORGANIC_QUERIES = {
-    "TikTok":    [
-        "{brand} TikTok organic views likes comments duet stitch 2025",
-        "{brand} TikTok viral video hashtag trending creator",
-        "{brand} TikTok UGC user-generated content follower growth",
-    ],
-    "Instagram": [
-        "{brand} Instagram Reels organic likes comments saves reach 2025",
-        "{brand} Instagram story highlights engagement impressions",
-        "{brand} Instagram UGC influencer collab organic post",
-    ],
-    "YouTube":   [
-        "{brand} YouTube organic views subscribers watch-time 2025",
-        "{brand} YouTube channel video likes comments community",
-        "{brand} YouTube Shorts organic reach engagement",
-    ],
-    "Facebook":  [
-        "{brand} Facebook page organic reach likes shares reactions 2025",
-        "{brand} Facebook post engagement comments followers",
-        "{brand} Facebook group community organic discussion",
-    ],
-}
-
-# ── Paid campaign query templates per platform ────────────────────────────────
+# ── Single best-signal paid query per platform ───────────────────────────────
 _PAID_QUERIES = {
-    "TikTok":    [
-        "{brand} TikTok paid ad campaign TopView In-Feed spark ads 2025",
-        "{brand} TikTok advertising spend media buy influencer paid",
-        "{brand} TikTok branded hashtag challenge paid promotion",
-    ],
-    "Instagram": [
-        "{brand} Instagram paid ad campaign story ad reel ad 2025",
-        "{brand} Meta ads Instagram sponsored reach impressions CPM",
-        "{brand} Instagram influencer paid partnership disclosure",
-    ],
-    "YouTube":   [
-        "{brand} YouTube paid ad campaign TrueView bumper CPM 2025",
-        "{brand} YouTube advertising spend media buy pre-roll",
-        "{brand} YouTube brand takeover paid promotion",
-    ],
-    "Facebook":  [
-        "{brand} Facebook paid ad campaign boosted post reach 2025",
-        "{brand} Facebook ads spend CPM conversion campaign",
-        "{brand} Facebook paid media buy audience targeting",
-    ],
+    "TikTok":    "{brand} TikTok paid ad campaign TopView In-Feed sponsored 2025{geo}",
+    "Instagram": "{brand} Instagram paid ad campaign story reel sponsored Meta Ads Library 2025{geo}",
+    "YouTube":   "{brand} YouTube paid ad TrueView bumper pre-roll advertising spend 2025{geo}",
+    "Facebook":  "{brand} Facebook paid ad boosted post Meta Ads Library campaign 2025{geo}",
+}
+
+# ── Single best-signal organic query per platform ────────────────────────────
+_ORGANIC_QUERIES = {
+    "TikTok":    "{brand} TikTok organic views likes comments followers viral 2025{geo}",
+    "Instagram": "{brand} Instagram organic Reels likes saves comments followers reach 2025{geo}",
+    "YouTube":   "{brand} YouTube organic views subscribers watch-time engagement 2025{geo}",
+    "Facebook":  "{brand} Facebook organic page reach likes shares reactions followers 2025{geo}",
 }
 
 
 # ── Tavily ────────────────────────────────────────────────────────────────────
 
-def _tavily_search(query: str, max_results: int = 6) -> list[dict]:
-    """Returns list of {url, title, content} dicts. Raises if key missing."""
+def _tavily_search(query: str, max_results: int = 3) -> list[dict]:
     from tavily import TavilyClient
     key = os.getenv("TAVILY_API_KEY", "")
     if not key:
@@ -87,7 +35,7 @@ def _tavily_search(query: str, max_results: int = 6) -> list[dict]:
     client = TavilyClient(api_key=key)
     resp = client.search(
         query,
-        search_depth="advanced",
+        search_depth="basic",
         topic="general",
         max_results=max_results,
         include_answer=False,
@@ -106,7 +54,7 @@ def _tavily_search(query: str, max_results: int = 6) -> list[dict]:
 
 # ── DuckDuckGo fallback ───────────────────────────────────────────────────────
 
-def _ddg_search(query: str, max_results: int = 5) -> list[dict]:
+def _ddg_search(query: str, max_results: int = 3) -> list[dict]:
     try:
         with DDGS() as ddgs:
             raw = list(ddgs.text(query, max_results=max_results))
@@ -120,7 +68,7 @@ def _ddg_search(query: str, max_results: int = 5) -> list[dict]:
 
 # ── Unified search (Tavily → DDG fallback) ────────────────────────────────────
 
-def _search(query: str, max_results: int = 6) -> list[dict]:
+def _search(query: str, max_results: int = 3) -> list[dict]:
     try:
         results = _tavily_search(query, max_results=max_results)
         if results:
@@ -133,15 +81,9 @@ def _search(query: str, max_results: int = 6) -> list[dict]:
 # ── Query builder helpers ──────────────────────────────────────────────────────
 
 def _extract_brands_and_platforms(query: str, params: dict = None) -> tuple[list[str], list[str], str]:
-    """
-    Returns (brands, platforms, post_type).
-    post_type: 'paid' | 'organic' | 'both'
-    Platforms restricted to SUPPORTED_PLATFORMS only.
-    """
     params = params or {}
     post_type = params.get("post_type", "both") or "both"
 
-    # Platforms — from params first, then parse query
     raw_platforms = params.get("platforms") or []
     platforms = [p for p in raw_platforms if p in SUPPORTED_PLATFORMS]
 
@@ -154,12 +96,10 @@ def _extract_brands_and_platforms(query: str, params: dict = None) -> tuple[list
                     if tok in sp.lower():
                         platforms.append(sp)
 
-    # Always restrict to supported set
     platforms = [p for p in platforms if p in SUPPORTED_PLATFORMS]
     if not platforms:
-        platforms = list(SUPPORTED_PLATFORMS)  # default: all four
+        platforms = list(SUPPORTED_PLATFORMS)
 
-    # Brands — from params (advertisers + competitors), then query
     brands = []
     advertisers = params.get("advertisers") or []
     competitors = params.get("competitors") or []
@@ -189,12 +129,31 @@ def _extract_brands_and_platforms(query: str, params: dict = None) -> tuple[list
 # ── Snippet enrichment ────────────────────────────────────────────────────────
 
 def _enrich_snippets(results: list[dict], source_type: str) -> list[dict]:
-    """Tag each result with source_type ('paid' or 'organic')."""
     return [
         {**r, "source_type": source_type}
         for r in results
         if r.get("content")
     ]
+
+
+# ── Parallel search helper ────────────────────────────────────────────────────
+
+def _parallel_search(tasks: list[tuple[str, str]], max_workers: int = 5) -> list[dict]:
+    """
+    tasks: list of (query, source_type) tuples.
+    Returns flat list of enriched snippets, order not guaranteed.
+    max_workers capped at 5 to stay within Tavily rate limits.
+    """
+    snippets: list[dict] = []
+    with ThreadPoolExecutor(max_workers=min(max_workers, len(tasks))) as pool:
+        futures = {pool.submit(_search, q, 3): src for q, src in tasks}
+        for fut in as_completed(futures):
+            src = futures[fut]
+            try:
+                snippets.extend(_enrich_snippets(fut.result(), src))
+            except Exception:
+                pass
+    return snippets
 
 
 # ── Main tool ─────────────────────────────────────────────────────────────────
@@ -211,7 +170,6 @@ class SocialSearchTool(BaseTool):
     )
 
     def _run(self, query: str) -> str:
-        # Try to pull params from the query string itself (agents may inject JSON)
         params: dict = {}
         try:
             bracket = query.find('{')
@@ -224,10 +182,8 @@ class SocialSearchTool(BaseTool):
         brands, platforms, post_type = _extract_brands_and_platforms(query, params)
         country   = params.get("country", "")
         date_hint = params.get("date_range", "2025")
-        keywords  = params.get("keywords", "")
 
         geo = f" {country}" if country else ""
-        kw  = f" {keywords}" if keywords else ""
 
         results: list[dict] = []
 
@@ -239,68 +195,39 @@ class SocialSearchTool(BaseTool):
             }
 
             for platform in platforms:
-                platform_snippets: list[dict] = []
+                # Build the search tasks for this brand-platform pair
+                search_tasks: list[tuple[str, str]] = []
 
-                # ── PAID: Ad library + paid campaign queries ──────────────
                 if post_type in ("paid", "both"):
-                    ad_lib_q = _AD_LIBRARY_QUERIES.get(platform, "")
-                    if ad_lib_q:
-                        raw = _search(f"{brand} {ad_lib_q}{geo}", max_results=5)
-                        platform_snippets.extend(_enrich_snippets(raw, "paid"))
+                    q = _PAID_QUERIES[platform].format(brand=brand, geo=geo)
+                    search_tasks.append((q, "paid"))
 
-                    for tpl in _PAID_QUERIES.get(platform, []):
-                        q = tpl.format(brand=brand) + geo + kw
-                        raw = _search(q, max_results=4)
-                        platform_snippets.extend(_enrich_snippets(raw, "paid"))
-
-                    # Estimated spend / media investment signals
-                    raw = _search(
-                        f"{brand} {platform} advertising budget media spend investment{geo} {date_hint}",
-                        max_results=3,
-                    )
-                    platform_snippets.extend(_enrich_snippets(raw, "paid"))
-
-                # ── ORGANIC: Engagement + content queries ─────────────────
                 if post_type in ("organic", "both"):
-                    for tpl in _ORGANIC_QUERIES.get(platform, []):
-                        q = tpl.format(brand=brand) + geo + kw
-                        raw = _search(q, max_results=4)
-                        platform_snippets.extend(_enrich_snippets(raw, "organic"))
+                    q = _ORGANIC_QUERIES[platform].format(brand=brand, geo=geo)
+                    search_tasks.append((q, "organic"))
 
-                    # Hashtag / viral content discovery
-                    raw = _search(
-                        f"#{brand.replace(' ','')} {platform} viral trending{geo} {date_hint}",
-                        max_results=3,
-                    )
-                    platform_snippets.extend(_enrich_snippets(raw, "organic"))
-
-                    # Follower / audience size signals (for engagement rate denominator)
-                    raw = _search(
-                        f"{brand} {platform} followers subscribers audience size{geo} {date_hint}",
-                        max_results=3,
-                    )
-                    platform_snippets.extend(_enrich_snippets(raw, "organic"))
-
-                # ── Cross-platform competitive benchmark ──────────────────
-                raw = _search(
+                # Cross-platform competitive benchmark
+                search_tasks.append((
                     f"{brand} vs competitors {platform} engagement share of voice{geo} {date_hint}",
-                    max_results=3,
-                )
-                platform_snippets.extend(_enrich_snippets(raw, "both"))
+                    "both",
+                ))
+
+                # Fire all queries for this brand-platform in parallel
+                platform_snippets = _parallel_search(search_tasks)
 
                 if platform_snippets:
                     brand_entry["platform_data"].append({
                         "platform":    platform,
-                        "raw_results": platform_snippets,  # each has url, title, content, source_type
+                        "raw_results": platform_snippets,
                     })
                     brand_entry["posts_found"] += len(platform_snippets)
 
-            # ── General brand social health ───────────────────────────────
+            # General brand social health (1 query per brand)
             gen_q = (
                 f"{brand} social media presence overview {' '.join(platforms)} "
                 f"followers engagement rate benchmark{geo} {date_hint}"
             )
-            gen = _search(gen_q, max_results=4)
+            gen = _search(gen_q, max_results=3)
             if gen:
                 brand_entry["general_presence"] = _enrich_snippets(gen, "organic")
 

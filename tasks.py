@@ -49,6 +49,8 @@ class SocialTasks:
                 f"DATE SCOPE: {date_scope}\n"
                 f"CONTENT TYPE: {post_scope}\n"
                 f"{upload_context}\n\n"
+                "Call the search tool ONCE per brand-platform pair — one focused query covers paid and organic. "
+                "Do not call the tool repeatedly for the same brand-platform combination.\n\n"
                 "For EACH brand on EACH platform, extract:\n"
                 "1. PAID METRICS (if applicable):\n"
                 "   - Ad campaign names, creatives, slogans\n"
