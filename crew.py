@@ -72,6 +72,16 @@ def clear_checkpoints() -> None:
                     pass
 
 
+def _fire_hook(node_id: str, state: str):
+    """Fire the dashboard state hook if one is registered in main."""
+    try:
+        import main as _main
+        if _main._state_hook:
+            _main._state_hook(node_id, state)
+    except Exception:
+        pass
+
+
 class SocialListeningCrew:
     def __init__(self, query: str, depth: str = "deep", params: dict = None,
                  resume: bool = False):
@@ -104,18 +114,30 @@ class SocialListeningCrew:
             import concurrent.futures, json as _json
 
             def _run_profile():
-                task = self.tasks.profile_task(profile_agent, self.params)
-                crew = Crew(agents=[profile_agent], tasks=[task],
-                            process=Process.sequential, verbose=True)
-                crew.kickoff()
-                return str(task.output)
+                _fire_hook("profile", "active")
+                try:
+                    task = self.tasks.profile_task(profile_agent, self.params)
+                    crew = Crew(agents=[profile_agent], tasks=[task],
+                                process=Process.sequential, verbose=True)
+                    crew.kickoff()
+                    _fire_hook("profile", "done")
+                    return str(task.output)
+                except Exception:
+                    _fire_hook("profile", "done")
+                    raise
 
             def _run_feed():
-                task = self.tasks.feed_task(feed_agent, self.params)
-                crew = Crew(agents=[feed_agent], tasks=[task],
-                            process=Process.sequential, verbose=True)
-                crew.kickoff()
-                return str(task.output)
+                _fire_hook("feed", "active")
+                try:
+                    task = self.tasks.feed_task(feed_agent, self.params)
+                    crew = Crew(agents=[feed_agent], tasks=[task],
+                                process=Process.sequential, verbose=True)
+                    crew.kickoff()
+                    _fire_hook("feed", "done")
+                    return str(task.output)
+                except Exception:
+                    _fire_hook("feed", "done")
+                    raise
 
             futures = {}
             with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
@@ -147,6 +169,7 @@ class SocialListeningCrew:
 
         if not combined_scrape.get("has_data") and not cp_scraper:
             print("[PHASE] DOM scrapes empty — running search fallback.", flush=True)
+            _fire_hook("scraper", "active")
             task_search = self.tasks.extraction_task(scraper, self.query, self.params)
             crew_search = Crew(agents=[scraper], tasks=[task_search],
                                process=Process.sequential, verbose=True)
@@ -154,6 +177,7 @@ class SocialListeningCrew:
             fallback_output = str(task_search.output)
             _save_checkpoint("scraper", fallback_output)
             cp_scraper = fallback_output
+            _fire_hook("scraper", "done")
 
         # ── Phase 4: Analyst ──────────────────────────────────────────────────
         if cp_analyst:
@@ -168,7 +192,9 @@ class SocialListeningCrew:
             task_analyst = self.tasks.analysis_task(analyst, prior_context=analyst_context)
             crew_analyst = Crew(agents=[analyst], tasks=[task_analyst],
                                 process=Process.sequential, verbose=True)
+            _fire_hook("analyst", "active")
             _run_with_timeout(crew_analyst.kickoff, _ANALYST_TIMEOUT, "analyst")
+            _fire_hook("analyst", "done")
             try:
                 cp_analyst = str(task_analyst.output)
                 _save_checkpoint("analyst", cp_analyst)
@@ -179,7 +205,9 @@ class SocialListeningCrew:
         task_reporter = self.tasks.reporting_task(reporter, prior_context=cp_analyst)
         crew_reporter = Crew(agents=[reporter], tasks=[task_reporter],
                              process=Process.sequential, verbose=True)
+        _fire_hook("reporter", "active")
         raw = _run_with_timeout(crew_reporter.kickoff, _REPORTER_TIMEOUT, "reporter")
+        _fire_hook("reporter", "done")
         _save_checkpoint("reporter", str(raw))
         return raw
 
