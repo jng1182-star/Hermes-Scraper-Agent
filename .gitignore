@@ -4,6 +4,7 @@ __pycache__/
 .env
 data/report.json
 data/golden_dataset.json
+data/tiktok_cookies.json
 graphify-out/
 .DS_Store
 *.egg-info/

@@ -1,17 +1,27 @@
 """
 Playwright-based paid ad library scraper.
 
-Scrapes Meta Ad Library, TikTok Ad Library, and Google Ads Transparency
-Center in parallel using an ephemeral headless browser session.
+Meta Ad Library + Google Ads Transparency → standard playwright (anonymous context)
+TikTok Ad Library → patchright (patches CDP binding leaks) + stealth init scripts
+  + optional cookie injection from data/tiktok_cookies.json
 
-Security measures applied:
-  - Ephemeral browser context — no cookies/profile persisted to disk
-  - Network isolation — only the three target domains are allowed outbound
+Security measures:
+  - Ephemeral browser contexts — no profile/cookies persisted to disk
+  - Network isolation — only target ad library domains allowed outbound
   - Input sanitisation — brand names stripped of special chars before URL use
   - Content sanitisation — all scraped strings stripped of HTML/scripts
-  - Per-page timeout 20s, full session timeout 60s
-  - Rate limiting with jitter per domain (2.3–3.5s between same-domain hits)
-  - Temp files (debug screenshots) use /tmp/hermes_scrape_* and are deleted immediately
+  - Per-page 20s timeout, full session 90s hard cap
+  - Rate limiting with jitter (2.3–3.5s per domain)
+  - Cookies never written to disk by the browser — only read from data/tiktok_cookies.json
+
+TikTok stealth stack (in order of effect):
+  1. patchright — removes __playwright__binding__ and __pwInitScripts CDP artifacts
+  2. navigator.webdriver undefined — removes the automation flag
+  3. Full browser property spoofing — languages, platform, hardware concurrency,
+     deviceMemory, plugins array, chrome object, permissions API
+  4. Canvas + WebGL fingerprint noise — adds subtle per-session randomness
+  5. Cookie injection — real session cookies suppress cold-session bot scoring
+  6. Human-like timing — random delays between interactions
 """
 
 import asyncio
@@ -179,58 +189,302 @@ async def _scrape_meta(context, brand: str, country: str) -> list[dict]:
     return ads
 
 
-async def _scrape_tiktok(context, brand: str, country: str) -> list[dict]:
-    """Scrape TikTok Ad Library for paid ads by brand."""
+# ── TikTok stealth init script ────────────────────────────────────────────────
+# Applied to every patchright page before any navigation.
+# Covers the JS-level signals TikTok's webmssdk.js checks.
+_TIKTOK_STEALTH_JS = """
+// 1. Remove automation flag
+Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
+
+// 2. Spoof languages / platform
+Object.defineProperty(navigator, 'languages', {get: () => ['en-US', 'en']});
+Object.defineProperty(navigator, 'platform', {get: () => 'MacIntel'});
+
+// 3. Spoof hardware signals (reduces headless fingerprint)
+Object.defineProperty(navigator, 'hardwareConcurrency', {get: () => 8});
+Object.defineProperty(navigator, 'deviceMemory', {get: () => 8});
+
+// 4. Spoof plugins array (headless has 0 plugins — dead giveaway)
+Object.defineProperty(navigator, 'plugins', {
+    get: () => {
+        const makePlugin = (name, desc, filename) => {
+            const p = Object.create(Plugin.prototype);
+            Object.defineProperty(p, 'name',        {get: () => name});
+            Object.defineProperty(p, 'description', {get: () => desc});
+            Object.defineProperty(p, 'filename',    {get: () => filename});
+            Object.defineProperty(p, 'length',      {get: () => 1});
+            return p;
+        };
+        const arr = [
+            makePlugin('Chrome PDF Plugin',   'Portable Document Format', 'internal-pdf-viewer'),
+            makePlugin('Chrome PDF Viewer',   '', 'mhjfbmdgcfjbbpaeojofohoefgiehjai'),
+            makePlugin('Native Client',       '', 'internal-nacl-plugin'),
+        ];
+        Object.defineProperty(arr, 'item',    {value: (i) => arr[i]});
+        Object.defineProperty(arr, 'namedItem', {value: (n) => arr.find(p => p.name === n) || null});
+        return arr;
+    }
+});
+
+// 5. Add chrome object (missing in headless)
+if (!window.chrome) {
+    window.chrome = {
+        app: {isInstalled: false, InstallState: {DISABLED:'d',INSTALLED:'i',NOT_INSTALLED:'n'}, RunningState: {CANNOT_RUN:'c',READY_TO_RUN:'r',RUNNING:'r'}},
+        runtime: {OnInstalledReason: {}, OnRestartRequiredReason: {}, PlatformArch: {}, PlatformNaclArch: {}, PlatformOs: {}, RequestUpdateCheckStatus: {}},
+        loadTimes: function() {},
+        csi: function() {},
+    };
+}
+
+// 6. Permissions API — headless returns 'denied' for notifications; real browser prompts
+const _origQuery = window.navigator.permissions && window.navigator.permissions.query.bind(window.navigator.permissions);
+if (_origQuery) {
+    window.navigator.permissions.query = (params) =>
+        params.name === 'notifications'
+            ? Promise.resolve({state: Notification.permission})
+            : _origQuery(params);
+}
+
+// 7. Canvas fingerprint noise — tiny per-session jitter so fingerprint isn't identical across runs
+(function() {
+    const _toDataURL = HTMLCanvasElement.prototype.toDataURL;
+    HTMLCanvasElement.prototype.toDataURL = function(type) {
+        const ctx = this.getContext('2d');
+        if (ctx) {
+            const shift = {r: Math.floor(Math.random()*3)-1, g: Math.floor(Math.random()*3)-1, b: Math.floor(Math.random()*3)-1};
+            const imgData = ctx.getImageData(0, 0, this.width || 1, this.height || 1);
+            for (let i = 0; i < imgData.data.length; i += 4) {
+                imgData.data[i]   = Math.max(0, Math.min(255, imgData.data[i]   + shift.r));
+                imgData.data[i+1] = Math.max(0, Math.min(255, imgData.data[i+1] + shift.g));
+                imgData.data[i+2] = Math.max(0, Math.min(255, imgData.data[i+2] + shift.b));
+            }
+            ctx.putImageData(imgData, 0, 0);
+        }
+        return _toDataURL.apply(this, arguments);
+    };
+})();
+
+// 8. WebGL vendor/renderer — headless exposes 'Google SwiftShader' which is flagged
+(function() {
+    const _getParam = WebGLRenderingContext.prototype.getParameter;
+    WebGLRenderingContext.prototype.getParameter = function(param) {
+        if (param === 37445) return 'Intel Inc.';
+        if (param === 37446) return 'Intel Iris OpenGL Engine';
+        return _getParam.apply(this, arguments);
+    };
+    const _getParam2 = WebGL2RenderingContext.prototype.getParameter;
+    WebGL2RenderingContext.prototype.getParameter = function(param) {
+        if (param === 37445) return 'Intel Inc.';
+        if (param === 37446) return 'Intel Iris OpenGL Engine';
+        return _getParam2.apply(this, arguments);
+    };
+})();
+"""
+
+
+def _load_tiktok_cookies() -> list[dict]:
+    """
+    Load saved TikTok cookies from data/tiktok_cookies.json.
+    Returns empty list if file absent — scraper still runs, just without session trust.
+    Cookies are only READ here — never written by the browser.
+    """
+    cookie_path = os.path.join(os.path.dirname(__file__), "../data/tiktok_cookies.json")
+    cookie_path = os.path.normpath(cookie_path)
+    if not os.path.exists(cookie_path):
+        return []
+    try:
+        with open(cookie_path, "r", encoding="utf-8") as f:
+            raw = json.load(f)
+        # Accept both a bare list and {"cookies": [...]} wrapper
+        cookies = raw if isinstance(raw, list) else raw.get("cookies", [])
+        # Filter to only tiktok.com domain cookies — never inject cross-domain cookies
+        safe = [
+            c for c in cookies
+            if isinstance(c, dict)
+            and "tiktok.com" in c.get("domain", "")
+            and c.get("name") and c.get("value")
+        ]
+        print(f"[PaidAdLib] Loaded {len(safe)} TikTok cookies from file.", flush=True)
+        return safe
+    except Exception as e:
+        print(f"[PaidAdLib] Cookie load error (non-fatal): {e}", flush=True)
+        return []
+
+
+async def _scrape_tiktok_patchright(brand: str, country: str) -> list[dict]:
+    """
+    Scrape TikTok Ad Library using patchright (CDP-patched Playwright fork).
+
+    Stealth stack applied:
+      - patchright patches __playwright__binding__ / __pwInitScripts CDP artifacts
+      - Full JS fingerprint spoofing via _TIKTOK_STEALTH_JS init script
+      - Optional real session cookies injected from data/tiktok_cookies.json
+      - Human-like random delays between interactions
+      - Network isolation: only library.tiktok.com and its CDN allowed
+    """
+    try:
+        from patchright.async_api import async_playwright as patchright_playwright
+    except ImportError:
+        print("[PaidAdLib] patchright not installed — TikTok scrape skipped.", flush=True)
+        return []
+
     safe_brand = _sanitise_brand(brand)
-    # Try multiple region codes — TikTok requires a specific region to return results
-    # "US" and "GB" have the deepest ad libraries; fall back to "ALL" if empty
-    regions_to_try = ["US", "GB", "SG", "AU"]
-    if country and len(country) == 2:
+    cookies    = _load_tiktok_cookies()
+
+    # TikTok Ad Library allowed domains (isolated from Meta/Google context)
+    tiktok_allowed = {
+        "library.tiktok.com",
+        "lf16-ttcdn-tos.pstatp.com",
+        "lf19-ttcdn-tos.pstatp.com",
+        "sf16-scmcdn-sg.ibytedtos.com",
+        "p16-ad-sg.tiktokcdn.com",
+        "mon-va.tiktok.com",          # TikTok monitoring (needed for ad renders)
+        "log-va.tiktok.com",          # TikTok logging endpoint
+    }
+
+    async def _tiktok_route(route, request):
+        host = urlparse(request.url).netloc
+        allowed = any(host == h or host.endswith("." + h) for h in tiktok_allowed)
+        if allowed:
+            await route.continue_()
+        else:
+            await route.abort("blockedbyclient")
+
+    ads: list[dict] = []
+
+    # US and GB have the most complete TikTok Ad Libraries
+    regions_to_try = ["US", "GB", "AU", "SG"]
+    if country and len(country) == 2 and country.upper() not in regions_to_try:
         regions_to_try.insert(0, country.upper())
 
-    page = await context.new_page()
-    ads: list[dict] = []
-    try:
-        await _rate_limit("library.tiktok.com")
+    async with patchright_playwright() as p:
+        browser = await p.chromium.launch(
+            headless=True,
+            args=[
+                "--disable-blink-features=AutomationControlled",
+                "--disable-features=IsolateOrigins,site-per-process",
+                "--no-first-run",
+                "--no-default-browser-check",
+                "--disable-infobars",
+            ],
+        )
 
-        for region in regions_to_try:
-            url = f"https://library.tiktok.com/ads?region={region}&keyword={quote_plus(safe_brand)}"
-            await page.goto(url, timeout=20_000, wait_until="domcontentloaded")
-            await asyncio.sleep(4)
+        context = await browser.new_context(
+            user_agent=(
+                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/124.0.0.0 Safari/537.36"
+            ),
+            viewport={"width": 1440, "height": 900},
+            locale="en-US",
+            timezone_id="America/New_York",
+            java_script_enabled=True,
+            accept_downloads=False,
+            extra_http_headers={
+                "Accept-Language":          "en-US,en;q=0.9",
+                "Accept":                   "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+                "Sec-Ch-Ua":                '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"',
+                "Sec-Ch-Ua-Mobile":         "?0",
+                "Sec-Ch-Ua-Platform":       '"macOS"',
+                "Sec-Fetch-Dest":           "document",
+                "Sec-Fetch-Mode":           "navigate",
+                "Sec-Fetch-Site":           "none",
+                "Sec-Fetch-User":           "?1",
+                "Upgrade-Insecure-Requests":"1",
+            },
+        )
 
+        # Inject stealth scripts before any page navigation
+        await context.add_init_script(_TIKTOK_STEALTH_JS)
+
+        # Inject real session cookies if available
+        if cookies:
             try:
-                await page.wait_for_selector(
-                    ".ad_card_wrapper, .nodata_container, .total_ads",
-                    timeout=10_000,
+                await context.add_cookies(cookies)
+            except Exception as e:
+                print(f"[PaidAdLib] Cookie injection error (non-fatal): {e}", flush=True)
+
+        # Network isolation — TikTok domains only
+        await context.route("**/*", _tiktok_route)
+
+        try:
+            page = await context.new_page()
+
+            # Warm up: visit TikTok homepage briefly to establish session context
+            # before hitting the Ad Library — reduces cold-session scoring
+            try:
+                await _rate_limit("library.tiktok.com")
+                await page.goto(
+                    "https://library.tiktok.com/",
+                    timeout=15_000,
+                    wait_until="domcontentloaded",
                 )
+                # Human-like pause
+                await asyncio.sleep(random.uniform(1.5, 2.5))
             except Exception:
-                continue
+                pass  # warmup failure is non-fatal
 
-            total_el = await page.query_selector(".total_ads")
-            total_text = await _text(total_el) if total_el else ""
-            # Skip if no ads in this region
-            if "0\n" in total_text or total_text.strip().endswith("\n0"):
-                continue
+            for region in regions_to_try:
+                url = (
+                    f"https://library.tiktok.com/ads"
+                    f"?region={region}"
+                    f"&keyword={quote_plus(safe_brand)}"
+                )
+                try:
+                    await _rate_limit("library.tiktok.com")
+                    await page.goto(url, timeout=20_000, wait_until="domcontentloaded")
+                    # Human-like render wait with jitter
+                    await asyncio.sleep(random.uniform(3.5, 5.0))
 
-            cards = await page.query_selector_all(".ad_card_wrapper")
-            for card in cards[:10]:
-                raw_text = await _text(card)
-                if not raw_text:
+                    # Check for bot challenge page
+                    body_text = await page.inner_text("body")
+                    if any(s in body_text for s in ("verify", "captcha", "robot", "challenge")):
+                        print(f"[PaidAdLib] TikTok bot challenge detected (region={region})", flush=True)
+                        continue
+
+                    # Wait for results or no-data indicator
+                    try:
+                        await page.wait_for_selector(
+                            ".ad_card_wrapper, .nodata_container, .total_ads",
+                            timeout=12_000,
+                        )
+                    except Exception:
+                        continue
+
+                    # Check result count
+                    total_el   = await page.query_selector(".total_ads")
+                    total_text = (await _text(total_el)) if total_el else ""
+                    # total_ads text format: "Total ads:\n42" — skip region if 0
+                    if re.search(r":\s*\n?\s*0\b", total_text):
+                        continue
+
+                    cards = await page.query_selector_all(".ad_card_wrapper")
+                    for card in cards[:10]:
+                        raw_text = await _text(card)
+                        if not raw_text:
+                            continue
+                        ads.append({
+                            "url":         url,
+                            "title":       f"{safe_brand} — TikTok Ad Library ({region})",
+                            "content":     raw_text[:1500],
+                            "source_type": "paid",
+                        })
+
+                    if ads:
+                        print(f"[PaidAdLib] TikTok: {len(ads)} ads found (region={region})", flush=True)
+                        break
+
+                except Exception as e:
+                    print(f"[PaidAdLib] TikTok region={region} error: {e}", flush=True)
                     continue
-                ads.append({
-                    "url": url,
-                    "title": f"{safe_brand} — TikTok Ad Library ({region})",
-                    "content": raw_text[:1500],
-                    "source_type": "paid",
-                })
 
-            if ads:
-                break  # found results — no need to try more regions
+            await page.close()
 
-    except Exception as e:
-        print(f"[PaidAdLib] TikTok scrape error for '{brand}': {e}", flush=True)
-    finally:
-        await page.close()
+        except Exception as e:
+            print(f"[PaidAdLib] TikTok patchright error for '{brand}': {e}", flush=True)
+        finally:
+            await context.close()
+            await browser.close()
 
     return ads
 
@@ -316,19 +570,20 @@ async def _scrape_google(context, brand: str, country: str) -> list[dict]:
 
 # ── Async orchestrator ────────────────────────────────────────────────────────
 
-async def _scrape_all(brand: str, country: str, platforms: list[str]) -> dict:
+async def _scrape_meta_google(brand: str, country: str, platforms: list[str]) -> dict:
     """
-    Launches a single ephemeral browser context and scrapes all requested
-    platforms in parallel. Returns structured result dict.
+    Scrapes Meta Ad Library and/or Google Ads Transparency using standard playwright.
+    Returns {meta: [...], google: [...]} keyed by label.
     """
     try:
         from playwright.async_api import async_playwright
     except ImportError:
-        return {"brand": brand, "platform_data": [], "error": "playwright not installed"}
+        return {}
+
+    results = {}
 
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
-        # Ephemeral context — no user_data_dir, no storage_state → nothing persists to disk
         context = await browser.new_context(
             user_agent=(
                 "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
@@ -337,7 +592,6 @@ async def _scrape_all(brand: str, country: str, platforms: list[str]) -> dict:
             ),
             java_script_enabled=True,
             accept_downloads=False,
-            # Mimic a real browser viewport to reduce bot-detection signals
             viewport={"width": 1440, "height": 900},
             locale="en-US",
             timezone_id="America/New_York",
@@ -346,56 +600,95 @@ async def _scrape_all(brand: str, country: str, platforms: list[str]) -> dict:
                 "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
             },
         )
-        # Remove the webdriver property that headless Chrome exposes
         await context.add_init_script(
             "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
         )
-
-        # Block all non-target outbound network requests
         await context.route("**/*", _block_non_target)
 
         scrape_tasks = []
         task_labels  = []
 
-        if any(p in platforms for p in ("Facebook", "Instagram")):
+        if any(pl in platforms for pl in ("Facebook", "Instagram")):
             scrape_tasks.append(_scrape_meta(context, brand, country))
             task_labels.append("meta")
-
-        if "TikTok" in platforms:
-            scrape_tasks.append(_scrape_tiktok(context, brand, country))
-            task_labels.append("tiktok")
 
         if "YouTube" in platforms:
             scrape_tasks.append(_scrape_google(context, brand, country))
             task_labels.append("google")
 
         try:
-            raw_results = await asyncio.wait_for(
+            raw = await asyncio.wait_for(
                 asyncio.gather(*scrape_tasks, return_exceptions=True),
                 timeout=60.0,
             )
         except asyncio.TimeoutError:
-            raw_results = [[] for _ in scrape_tasks]
+            raw = [[] for _ in scrape_tasks]
         finally:
             await context.close()
             await browser.close()
 
-    # Map results back to platform names
+        for label, res in zip(task_labels, raw):
+            results[label] = res if isinstance(res, list) else []
+
+    return results
+
+
+async def _scrape_all(brand: str, country: str, platforms: list[str]) -> dict:
+    """
+    Orchestrates all three platform scrapers.
+    Meta + Google share a playwright context.
+    TikTok runs in a separate patchright context with full stealth stack.
+    Both run concurrently.
+    """
     platform_map = {
         "meta":   ["Facebook", "Instagram"],
         "tiktok": ["TikTok"],
         "google": ["YouTube"],
     }
 
-    platform_data = []
-    for label, result in zip(task_labels, raw_results):
-        ads = result if isinstance(result, list) else []
-        if not ads:
-            continue
-        for plat_name in platform_map[label]:
-            if plat_name in platforms:
+    need_meta_google = any(pl in platforms for pl in ("Facebook", "Instagram", "YouTube"))
+    need_tiktok      = "TikTok" in platforms
+
+    tasks  = []
+    labels = []
+
+    if need_meta_google:
+        tasks.append(_scrape_meta_google(brand, country, platforms))
+        labels.append("meta_google")
+
+    if need_tiktok:
+        tasks.append(_scrape_tiktok_patchright(brand, country))
+        labels.append("tiktok")
+
+    try:
+        raw_results = await asyncio.wait_for(
+            asyncio.gather(*tasks, return_exceptions=True),
+            timeout=90.0,
+        )
+    except asyncio.TimeoutError:
+        raw_results = [{} if l == "meta_google" else [] for l in labels]
+
+    # Flatten into platform_data list
+    platform_data: list[dict] = []
+
+    for label, result in zip(labels, raw_results):
+        if label == "meta_google":
+            mg = result if isinstance(result, dict) else {}
+            for sub_label in ("meta", "google"):
+                ads = mg.get(sub_label, [])
+                if not ads:
+                    continue
+                for plat_name in platform_map[sub_label]:
+                    if plat_name in platforms:
+                        platform_data.append({
+                            "platform":    plat_name,
+                            "raw_results": ads,
+                        })
+        elif label == "tiktok":
+            ads = result if isinstance(result, list) else []
+            if ads:
                 platform_data.append({
-                    "platform":    plat_name,
+                    "platform":    "TikTok",
                     "raw_results": ads,
                 })
 
