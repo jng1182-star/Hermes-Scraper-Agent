@@ -114,8 +114,10 @@ async def _attr(el, attr: str, fallback: str = "") -> str:
 
 async def _scrape_meta(context, brand: str, country: str) -> list[dict]:
     """Scrape Meta Ad Library for paid ads by brand."""
+    from tools.proxy_manager import COUNTRY_TO_CODE
     safe_brand = _sanitise_brand(brand)
-    country_code = (country or "ALL").upper()[:2] if len(country or "") == 2 else "ALL"
+    # country is a full name ("Philippines") throughout this codebase — convert to ISO code.
+    country_code = COUNTRY_TO_CODE.get(country, "") or (country.upper()[:2] if len(country) == 2 else "ALL")
     url = (
         f"https://www.facebook.com/ads/library/"
         f"?active_status=all&ad_type=all"
@@ -263,11 +265,19 @@ async def _scrape_meta_google(brand: str, country: str, platforms: list[str]) ->
     """
     Scrapes Meta Ad Library and/or Google Ads Transparency using standard playwright.
     Returns {meta: [...], google: [...]} keyed by label.
+
+    Geo proxy injection: if a residential proxy is configured for the target market,
+    it is injected into the browser context so the scraper's egress IP matches the
+    target country. This ensures geo-targeted ads are served correctly by the platforms.
+    See tools/proxy_manager.py for configuration.
     """
     try:
         from playwright.async_api import async_playwright
     except ImportError:
         return {}
+
+    from tools.proxy_manager import get_proxy
+    proxy_cfg = get_proxy(country)  # None if not configured — Playwright ignores None
 
     results = {}
 
@@ -288,6 +298,7 @@ async def _scrape_meta_google(brand: str, country: str, platforms: list[str]) ->
                 "Accept-Language": "en-US,en;q=0.9",
                 "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
             },
+            proxy=proxy_cfg,
         )
         await context.add_init_script(
             "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
@@ -349,8 +360,7 @@ async def _scrape_all(brand: str, country: str, platforms: list[str]) -> dict:
         # Official API path — no browser required
         async def _tiktok_api_async():
             from tools.tiktok_api_tool import fetch_tiktok
-            import asyncio
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()  # W6: get_event_loop() deprecated in 3.10+
             return await loop.run_in_executor(None, fetch_tiktok, brand, country, "paid")
         tasks.append(_tiktok_api_async())
         labels.append("tiktok")

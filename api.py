@@ -1,20 +1,31 @@
-from fastapi import FastAPI, BackgroundTasks
+from fastapi import FastAPI, BackgroundTasks, Query
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, field_validator
 from main import run_pipeline
 import threading
 from pathlib import Path
 from collections import deque
-from typing import List, Optional
+from typing import Annotated, Dict, List, Optional
+
+_PROJECT_ROOT = Path(__file__).parent
 
 app = FastAPI()
 
+# Restrict CORS to localhost only — this app is local-first and should never be
+# reachable from an external origin. A wildcard CORS policy would allow any
+# webpage opened in the browser to trigger pipeline runs or read reports.
+_ALLOWED_ORIGINS = [
+    "http://localhost:8000",
+    "http://127.0.0.1:8000",
+    "http://localhost:3000",   # dev frontend if running separately
+    "http://127.0.0.1:3000",
+]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=_ALLOWED_ORIGINS,
+    allow_methods=["GET", "POST"],
+    allow_headers=["Content-Type"],
 )
 
 # Shared state
@@ -31,9 +42,11 @@ _state_lock = threading.Lock()
 
 # Map CrewAI agent roles → dashboard node IDs
 _ROLE_TO_NODE = {
-    "social data scraper": "scraper",
-    "engagement analyst": "analyst",
-    "intelligence reporter": "reporter",
+    "profile baseline scraper": "profile",
+    "feed ad capture agent":    "feed",
+    "social data scraper":      "scraper",
+    "engagement analyst":       "analyst",
+    "intelligence reporter":    "reporter",
 }
 
 
@@ -68,11 +81,20 @@ def _set_agent_done(node_id: str, role_label: str = ""):
 def _patch_crewai_agent():
     """
     Monkey-patch crewai.Agent.execute_task to fire state hooks directly.
-    This is guaranteed to work in any thread — no event bus threading issues.
+    Wrapped in try/except — CrewAI internal module paths change across minor versions.
+    If the import fails, agent state tracking is disabled gracefully (no server crash).
     """
-    from crewai.agent.core import Agent as _Agent
+    try:
+        from crewai.agent.core import Agent as _Agent
+    except (ImportError, AttributeError):
+        try:
+            from crewai import Agent as _Agent  # fallback: newer CrewAI public import
+        except (ImportError, AttributeError):
+            return  # agent state tracking unavailable — degraded mode, not fatal
 
-    _orig = _Agent.execute_task
+    _orig = getattr(_Agent, "execute_task", None)
+    if _orig is None:
+        return  # method not present in this version — skip
 
     def _patched(self, task, context=None, tools=None):
         role = (getattr(self, "role", "") or "").lower().strip()
@@ -96,7 +118,8 @@ def _log(msg: str):
 
 
 def _run_with_logging(params: dict):
-    import sys, io, time as _time
+    import io, time as _time
+    import logging as _logging
 
     with _state_lock:
         _run_state["running"]     = True
@@ -106,32 +129,36 @@ def _run_with_logging(params: dict):
         _run_state["start_ts"]    = _time.monotonic()
         _run_state["logs"].clear()
         _run_state["agent_states"] = {
-            "scraper": "idle",
-            "analyst": "idle",
+            "profile":  "idle",
+            "feed":     "idle",
+            "scraper":  "idle",   # fallback — only activates if DOM scrapes yield nothing
+            "analyst":  "idle",
             "reporter": "idle",
-            "gate": "idle",
+            "gate":     "idle",
         }
 
-    class _LogCapture(io.TextIOBase):
-        def write(self, s):
-            if s.strip():
+    # Capture pipeline log output via a logging handler attached to the root logger
+    # for this thread only — avoids replacing the global sys.stdout (thread-unsafe).
+    class _QueueHandler(_logging.Handler):
+        def emit(self, record):
+            msg = self.format(record).rstrip()
+            if msg:
                 with _state_lock:
-                    _run_state["logs"].append(s.rstrip())
-            return len(s)
+                    _run_state["logs"].append(msg)
 
-        def flush(self):
-            pass
+    _handler = _QueueHandler()
+    _handler.setFormatter(_logging.Formatter("%(levelname)s %(name)s: %(message)s"))
+    _root_logger = _logging.getLogger()
+    _root_logger.addHandler(_handler)
 
     import main as _main_module
 
     def _pipeline_hook(node_id: str, state: str):
         if node_id == "__stall__":
-            # state is "retry:N"
             retry_n = int(state.split(":")[1]) if ":" in state else 1
             with _state_lock:
                 _run_state["timed_out"]   = True
                 _run_state["retry_count"] = retry_n
-                # Reset all agent states to idle for the retry
                 for aid in _run_state["agent_states"]:
                     _run_state["agent_states"][aid] = "idle"
                 _run_state["logs"].append(
@@ -146,8 +173,6 @@ def _run_with_logging(params: dict):
 
     _main_module._state_hook = _pipeline_hook
 
-    old_stdout, old_stderr = sys.stdout, sys.stderr
-    sys.stdout = sys.stderr = _LogCapture()
     try:
         run_pipeline(params)
         with _state_lock:
@@ -159,7 +184,7 @@ def _run_with_logging(params: dict):
             _run_state["error"] = str(e)
             _run_state["logs"].append(f"ERROR: {e}")
     finally:
-        sys.stdout, sys.stderr = old_stdout, old_stderr
+        _root_logger.removeHandler(_handler)
         _main_module._state_hook = None
         with _state_lock:
             _run_state["running"] = False
@@ -177,7 +202,7 @@ async def trigger_analysis(body: ScanParams, background_tasks: BackgroundTasks):
 @app.get("/status")
 async def get_status():
     import time as _time
-    report_path = Path("data/report.json")
+    report_path = _PROJECT_ROOT / "data" / "report.json"
     with _state_lock:
         start = _run_state["start_ts"]
         elapsed = round(_time.monotonic() - start) if start is not None else 0
@@ -195,11 +220,87 @@ async def get_status():
 
 @app.get("/report")
 async def get_report():
-    report_path = Path("data/report.json")
+    report_path = _PROJECT_ROOT / "data" / "report.json"
     if not report_path.exists():
         return {}
     import json
     return json.loads(report_path.read_text())
+
+
+class SimulateParams(BaseModel):
+    adjustments: Dict[str, float]  # {"BrandName": multiplier}  e.g. {"Nike": 1.5, "Adidas": 0.7}
+
+    @field_validator("adjustments")
+    @classmethod
+    def validate_adjustments(cls, v: Dict[str, float]) -> Dict[str, float]:
+        if len(v) > 50:
+            raise ValueError("Too many brands in adjustments (max 50).")
+        for brand, mult in v.items():
+            if not isinstance(brand, str) or len(brand) > 120:
+                raise ValueError(f"Brand name too long or invalid: {brand!r}")
+            if not (0.0 < mult <= 20.0):
+                raise ValueError(
+                    f"Multiplier for '{brand}' must be between 0 (exclusive) and 20. Got: {mult}"
+                )
+        return v
+
+
+@app.post("/simulate")
+async def simulate_scenario(body: SimulateParams):
+    """
+    What-if SoS scenario: adjust brand spend weights and recalculate Share of Spend.
+
+    POST body:
+      {"adjustments": {"BrandA": 1.5, "BrandB": 0.7}}
+      Multipliers: 1.0 = baseline, 2.0 = doubled, 0.5 = halved.
+      Brands not listed default to 1.0 (no change).
+
+    Returns:
+      Full competitors array with updated sos_pct, sos_delta_pct, and scenario notes.
+      Includes methodology block and per-brand mover summary.
+
+    Methodology: ceteris paribus — other brands hold spend constant.
+    Consistent with Nielsen Optimizer / Kantar XTEL scenario planning approaches.
+    """
+    report_path = _PROJECT_ROOT / "data" / "report.json"
+    if not report_path.exists():
+        return {"error": "No report available. Run an analysis first."}
+
+    import json
+    from core.scenario_sim import scenario_summary
+    report = json.loads(report_path.read_text())
+    competitors = report.get("competitors", [])
+    if not competitors:
+        return {"error": "Report contains no competitor data."}
+
+    return scenario_summary(brands=competitors, adjustments=body.adjustments)
+
+
+@app.get("/history")
+async def get_sos_history(
+    market:   Optional[str] = Query(default=None, max_length=100,  description="Filter by market name, e.g. 'Philippines'"),
+    industry: Optional[str] = Query(default=None, max_length=50,   description="Filter by industry key, e.g. 'beauty'"),
+    limit:    int           = Query(default=100,  ge=1, le=1000,   description="Max rows (1–1000)"),
+):
+    """
+    Return time-series SoS snapshots from the SQLite history database.
+
+    Each row represents one brand's SoS/SoV figures for a specific pipeline run.
+    Use the run_date and run_id fields to group rows into a single analysis run.
+
+    Query params:
+      market   — filter by market name (e.g. "Philippines")
+      industry — filter by industry key (e.g. "beauty")
+      limit    — max rows (default 100)
+    """
+    from data.sos_db import SosDB
+    rows = SosDB().get_history(market=market or "", industry=industry or "", limit=limit)
+    return {
+        "count": len(rows),
+        "market_filter":   market,
+        "industry_filter": industry,
+        "snapshots": rows,
+    }
 
 
 # Serve dashboard static files

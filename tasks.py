@@ -2,6 +2,90 @@ from crewai import Task
 
 
 class SocialTasks:
+
+    def profile_task(self, agent, params: dict = None) -> Task:
+        """Agent 1 — date-scoped organic baseline scrape across all brand profiles."""
+        params     = params or {}
+        brands     = params.get("brands", [])
+        competitors= params.get("competitors", [])
+        advertisers= params.get("advertisers", [])
+        platforms  = params.get("platforms", ["Instagram", "Facebook", "TikTok", "YouTube"])
+        date_from  = params.get("date_from") or ""
+        date_to    = params.get("date_to")   or ""
+        date_range = params.get("date_range", "Last 30 days")
+        country    = params.get("country", "")
+
+        all_brands = list(advertisers) + [c for c in competitors if c not in advertisers]
+        brands_str = ", ".join(all_brands) if all_brands else "all target brands"
+
+        date_scope = (
+            f"{date_from} to {date_to}" if date_from and date_to else date_range
+        )
+
+        return Task(
+            description=(
+                f"Use the Profile Baseline Scraper tool to collect organic baseline metrics "
+                f"for the following brands: {brands_str}.\n\n"
+                f"PLATFORMS: {', '.join(platforms)}\n"
+                f"DATE SCOPE: {date_scope} — scrape only posts published within this window.\n"
+                f"COUNTRY/MARKET: {country or 'Global'}\n\n"
+                "Call the tool with this JSON:\n"
+                + "{\n"
+                + '  "brands": [' + ", ".join('{"name": "' + b + '", "handles": {}}' for b in all_brands) + '],\n'
+                + '  "platforms": ' + str(platforms) + ',\n'
+                + '  "date_from": "' + date_from + '",\n'
+                + '  "date_to": "' + date_to + '",\n'
+                + '  "country": "' + country + '"\n'
+                + "}\n\n"
+                "The tool returns per-brand, per-platform baselines with: "
+                "avg_likes, avg_comments, avg_views, avg_er_pct, follower_count, posts_in_scope. "
+                "Return the full JSON output from the tool unchanged."
+            ),
+            expected_output=(
+                "JSON from the Profile Baseline Scraper tool: list of baselines per brand per platform, "
+                "each with avg_likes, avg_comments, avg_views, avg_er_pct, follower_count, "
+                "posts_in_scope, collection_method, data_source."
+            ),
+            agent=agent,
+        )
+
+    def feed_task(self, agent, params: dict = None) -> Task:
+        """Agent 2 — doom scroll feed ad capture across all platforms."""
+        params     = params or {}
+        competitors= params.get("competitors", [])
+        advertisers= params.get("advertisers", [])
+        platforms  = params.get("platforms", ["Instagram", "Facebook", "TikTok", "YouTube"])
+        country    = params.get("country", "")
+
+        all_brands = list(advertisers) + [c for c in competitors if c not in advertisers]
+        brands_str = ", ".join(all_brands) if all_brands else "all target brands"
+
+        return Task(
+            description=(
+                f"Use the Feed Doom Scroller tool to capture declared paid advertisements "
+                f"for the following brands: {brands_str}.\n\n"
+                f"PLATFORMS: {', '.join(platforms)}\n"
+                f"COUNTRY/MARKET: {country or 'Global'}\n\n"
+                "Call the tool with this JSON:\n"
+                "{\n"
+                f'  "platforms": {platforms},\n'
+                f'  "country": "{country}",\n'
+                f'  "brands": {all_brands}\n'
+                "}\n\n"
+                "IMPORTANT: The tool uses strict DOM-marker detection only. "
+                "Do NOT add or infer additional paid posts beyond what the tool returns. "
+                "Every ad in the output has been positively identified via an explicit "
+                "platform-native ad label or CTA overlay. "
+                "Return the full JSON output from the tool unchanged."
+            ),
+            expected_output=(
+                "JSON from the Feed Doom Scroller tool: brand_matched_ads list (each with "
+                "platform, paid_signal, advertiser, ad_copy, creative_url, likes, comments, views, "
+                "captured_utc, data_source), plus category_ads for unmatched ads and metadata."
+            ),
+            agent=agent,
+        )
+
     def extraction_task(self, agent, query, params: dict = None) -> Task:
         params     = params or {}
         date_from  = params.get("date_from") or ""
@@ -79,13 +163,30 @@ class SocialTasks:
     def analysis_task(self, agent, prior_context: str = None) -> Task:
         prefix = ""
         if prior_context:
-            # Truncate to avoid token overflow; enough for the analyst to work from
             snippet = prior_context[:6000]
-            prefix = (
-                f"[RESUMED FROM CHECKPOINT]\n"
-                f"The scraper already collected the following data. Do NOT re-run searches. "
-                f"Analyse this data directly:\n\n{snippet}\n\n"
-            )
+            if len(prior_context) > 6000:
+                snippet += "\n[... TRUNCATED — earlier data omitted to stay within token limit ...]"
+            # Detect whether context is first-party DOM data or legacy search snippets
+            is_first_party = "AGENT 1:" in snippet or "AGENT 2:" in snippet
+            if is_first_party:
+                prefix = (
+                    "DATA CONTEXT (first-party DOM scrape):\n"
+                    "The following data was collected directly from platform pages by Agent 1 "
+                    "(profile baseline scraper) and Agent 2 (in-feed ad capture). "
+                    "AGENT 1 data = observed organic metrics (actual DOM-read integers). "
+                    "AGENT 2 data = confirmed paid ads (explicit DOM label detected). "
+                    "Use these values directly — do NOT re-estimate or override with category averages "
+                    "when real numbers are present. Only fall back to estimation for missing fields.\n\n"
+                    + snippet + "\n\n"
+                )
+            else:
+                prefix = (
+                    "[RESUMED FROM CHECKPOINT / SEARCH FALLBACK]\n"
+                    "The following data was collected via web search. Metrics may be inferred "
+                    "from editorial text — treat as lower confidence than DOM-scraped values. "
+                    "Do NOT re-run searches. Analyse this data directly:\n\n"
+                    + snippet + "\n\n"
+                )
         return Task(
             description=(
                 prefix +
@@ -114,10 +215,25 @@ class SocialTasks:
                 "Engagement inference rules:\n"
                 "- If ER% and followers are known: interactions = ER% × followers / 100\n"
                 "- If views are known and platform is TikTok/YouTube: estimate likes ≈ views × 0.05, comments ≈ views × 0.005\n"
-                "- If only 'high engagement' mentioned: use platform median (TikTok: 5% ER, IG: 1.5%, FB: 0.8%, YT: 2%)\n"
+                "- If only 'high engagement' mentioned: use platform median (TikTok: 5% ER, IG: 1.5%, FB: 0.8%, YT: 2%)\n\n"
+                "PAID SIGNAL CLASSIFICATION — required field 'paid_signal' on every record:\n"
+                "Step 1: Compute observed ER = (likes + comments + shares + saves) / denominator × 100\n"
+                "  - Denominator: views for TikTok/YouTube; followers for Instagram/Facebook\n"
+                "Step 2: Compare against these 3-month rolling category ER benchmarks:\n"
+                "  TikTok: General 5.0%, Beauty 7.0%, Fashion 6.5%, Food 6.0%, Entertainment 8.0%, Finance 3.5%\n"
+                "  Instagram: General 1.5%, Beauty 2.5%, Fashion 2.0%, Food 2.2%, Entertainment 2.8%, Finance 0.9%\n"
+                "  Facebook: General 0.8%, Beauty 1.1%, Fashion 0.9%, Food 1.0%, Entertainment 1.2%, Finance 0.5%\n"
+                "  YouTube: General 2.0%, Beauty 3.0%, Fashion 2.5%, Food 2.5%, Entertainment 3.5%, Finance 1.5%\n"
+                "Step 3: Assign paid_signal:\n"
+                "  - 'dom_label': a 'Sponsored', 'Paid partnership', 'โฆษณา' (Thai), or 'Được tài trợ' (Vietnamese) label was found in the content\n"
+                "  - 'statistical_outlier': observed ER > 3× the category benchmark above — flag as likely paid even if no DOM label found; also override post_type to 'paid'\n"
+                "  - 'declared': content was explicitly called paid/ad in the source data, but no DOM label or ER check applies\n"
+                "  - 'organic': no paid signals of any kind detected\n"
+                "This field is REQUIRED on every competitor record. Never omit it.\n"
             ),
             expected_output=(
                 "A structured list of competitor records, each with: name, handle, platform, post_type, "
+                "paid_signal (dom_label|statistical_outlier|declared|organic), "
                 "metrics{likes,comments,shares,saves,views,followers}, sentiment, "
                 "top_posts[{caption,url,post_type,likes,views}], hashtags[], content_themes[], paid_campaigns[]."
             ),
@@ -128,6 +244,8 @@ class SocialTasks:
         prefix = ""
         if prior_context:
             snippet = prior_context[:6000]
+            if len(prior_context) > 6000:
+                snippet += "\n[... TRUNCATED — earlier data omitted to stay within token limit ...]"
             prefix = (
                 f"[RESUMED FROM CHECKPOINT]\n"
                 f"The analyst already structured the following data. Do NOT re-analyse. "
@@ -146,6 +264,7 @@ class SocialTasks:
                 '      "handle": "string",\n'
                 '      "platform": "TikTok|Instagram|YouTube|Facebook",\n'
                 '      "post_type": "paid|organic|both",\n'
+                '      "paid_signal": "dom_label|statistical_outlier|declared|organic",\n'
                 '      "metrics": {\n'
                 '        "likes": 0, "comments": 0, "shares": 0,\n'
                 '        "saves": 0, "views": 0, "followers": 0\n'
@@ -164,6 +283,7 @@ class SocialTasks:
                 "- Every competitor MUST have ALL fields\n"
                 "- metrics: use best available estimate — never all-zeros if data was found\n"
                 "- post_type per competitor must be 'paid', 'organic', or 'both'\n"
+                "- paid_signal per competitor must be 'dom_label', 'statistical_outlier', 'declared', or 'organic'\n"
                 "- top_posts: 1–5 items; each a JSON object with caption, url (or null), post_type, likes, views\n"
                 "- hashtags: 1–6 items starting with #\n"
                 "- content_themes: 1–4 plain text labels\n"
@@ -171,7 +291,7 @@ class SocialTasks:
             ),
             expected_output=(
                 "A raw JSON object (no markdown) with competitors array. "
-                "Each entry: name, handle, platform, post_type, metrics{6 fields}, "
+                "Each entry: name, handle, platform, post_type, paid_signal, metrics{6 fields}, "
                 "sentiment, top_posts[{caption,url,post_type,likes,views}], "
                 "hashtags[], content_themes[], paid_campaigns[]."
             ),

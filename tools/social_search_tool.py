@@ -8,12 +8,30 @@ from duckduckgo_search import DDGS
 # ── Supported platforms (only these four) ────────────────────────────────────
 SUPPORTED_PLATFORMS = ["TikTok", "Instagram", "YouTube", "Facebook"]
 
+# ── Localized "Sponsored" / ad label equivalents by market ───────────────────
+# Used to detect geo-targeted paid content labels that platforms render in local languages.
+# Sources: TikTok UI localization docs; Meta Ads Manager locale reference; Google ATC.
+LOCALIZED_PAID_LABELS = {
+    "TH": "โฆษณา",           # Thai: advertisement / ad
+    "VN": "Được tài trợ",   # Vietnamese: sponsored
+    "ID": "Bersponsor",     # Indonesian: sponsored
+    "MY": "Ditaja",         # Malay: sponsored
+    "PH": "Sponsored",      # Filipino: English dominant
+    "SG": "Sponsored",      # Singapore: English dominant
+}
+
+# Market code lookup by full country name
+_COUNTRY_TO_MARKET_CODE = {
+    "Thailand": "TH", "Vietnam": "VN", "Indonesia": "ID",
+    "Malaysia": "MY", "Philippines": "PH", "Singapore": "SG",
+}
+
 # ── Single best-signal paid query per platform ───────────────────────────────
 _PAID_QUERIES = {
-    "TikTok":    "{brand} TikTok paid ad campaign TopView In-Feed sponsored 2025{geo}",
-    "Instagram": "{brand} Instagram paid ad campaign story reel sponsored Meta Ads Library 2025{geo}",
+    "TikTok":    "{brand} TikTok paid ad campaign TopView In-Feed {paid_label} sponsored 2025{geo}",
+    "Instagram": "{brand} Instagram paid ad campaign story reel {paid_label} sponsored Meta Ads Library 2025{geo}",
     "YouTube":   "{brand} YouTube paid ad TrueView bumper pre-roll advertising spend 2025{geo}",
-    "Facebook":  "{brand} Facebook paid ad boosted post Meta Ads Library campaign 2025{geo}",
+    "Facebook":  "{brand} Facebook paid ad boosted post {paid_label} sponsored Meta Ads Library campaign 2025{geo}",
 }
 
 # ── Single best-signal organic query per platform ────────────────────────────
@@ -22,6 +40,16 @@ _ORGANIC_QUERIES = {
     "Instagram": "{brand} Instagram organic Reels likes saves comments followers reach 2025{geo}",
     "YouTube":   "{brand} YouTube organic views subscribers watch-time engagement 2025{geo}",
     "Facebook":  "{brand} Facebook organic page reach likes shares reactions followers 2025{geo}",
+}
+
+# ── Category SoV fallback query templates ────────────────────────────────────
+# Fired when primary competitor search returns 0 results for a brand-platform pair.
+# Returns top-10 category ads to build a regional category SoV matrix.
+_CATEGORY_SOV_QUERIES = {
+    "TikTok":    "top 10 {industry} brand ads TikTok {paid_label} sponsored 2025{geo}",
+    "Instagram": "top 10 {industry} brand ads Instagram sponsored Meta Ads Library 2025{geo}",
+    "YouTube":   "top 10 {industry} brand YouTube ads TrueView pre-roll 2025{geo}",
+    "Facebook":  "top 10 {industry} brand Facebook ads boosted sponsored 2025{geo}",
 }
 
 
@@ -181,9 +209,14 @@ class SocialSearchTool(BaseTool):
 
         brands, platforms, post_type = _extract_brands_and_platforms(query, params)
         country   = params.get("country", "")
+        industry  = params.get("industry", "")
         date_hint = params.get("date_range", "2025")
 
         geo = f" {country}" if country else ""
+
+        # Resolve localized paid label for this market
+        market_code = _COUNTRY_TO_MARKET_CODE.get(country, "")
+        paid_label  = LOCALIZED_PAID_LABELS.get(market_code, "Sponsored")
 
         # Lazy-load PaidAdLibTool — graceful fallback if playwright not installed
         _paid_tool = None
@@ -227,9 +260,16 @@ class SocialSearchTool(BaseTool):
                     print(f"[SocialSearch] PaidAdLibTool failed for '{brand}': {e}", flush=True)
 
             for platform in platforms:
-                # ── ORGANIC: Tavily/DDG search ─────────────────────────────
                 search_tasks: list[tuple[str, str]] = []
 
+                # ── PAID search (Tavily/DDG with localized labels) ─────────
+                if post_type in ("paid", "both"):
+                    q = _PAID_QUERIES[platform].format(
+                        brand=brand, geo=geo, paid_label=paid_label
+                    )
+                    search_tasks.append((q, "paid"))
+
+                # ── ORGANIC search ─────────────────────────────────────────
                 if post_type in ("organic", "both"):
                     q = _ORGANIC_QUERIES[platform].format(brand=brand, geo=geo)
                     search_tasks.append((q, "organic"))
@@ -256,6 +296,32 @@ class SocialSearchTool(BaseTool):
                             "raw_results": platform_snippets,
                         })
                     brand_entry["posts_found"] += len(platform_snippets)
+                elif post_type in ("paid", "both"):
+                    # ── Category SoV fallback ──────────────────────────────
+                    # No competitor ads found for this brand-platform pair.
+                    # Fire a category-level query to build a regional SoV matrix.
+                    print(
+                        f"[SocialSearch] No ads found for '{brand}' on {platform} — "
+                        "running category SoV fallback.",
+                        flush=True,
+                    )
+                    industry_label = industry or "brand"
+                    cat_q = _CATEGORY_SOV_QUERIES[platform].format(
+                        industry=industry_label, geo=geo, paid_label=paid_label
+                    )
+                    cat_snippets = _parallel_search([(cat_q, "paid_category_fallback")])
+                    if cat_snippets:
+                        brand_entry["platform_data"].append({
+                            "platform":        platform,
+                            "raw_results":     cat_snippets,
+                            "category_fallback": True,
+                            "fallback_note":   (
+                                f"No '{brand}' ads found on {platform}{geo}. "
+                                f"Top-10 {industry_label} category ads returned instead "
+                                "for regional Share of Voice matrix construction."
+                            ),
+                        })
+                        brand_entry["posts_found"] += len(cat_snippets)
 
             # General brand social health (1 query per brand)
             gen_q = (
@@ -273,9 +339,22 @@ class SocialSearchTool(BaseTool):
             golden_path = os.path.join(os.path.dirname(__file__), "../data/golden_dataset.json")
             if os.path.exists(golden_path):
                 with open(golden_path, "r") as f:
-                    data = json.load(f)
-                return "SEARCH FAILED — using seed data fallback:\n" + json.dumps(data, indent=2)
-            return "Search failed and no fallback data available."
+                    golden_data = json.load(f)
+                # S7: return consistent JSON envelope, not a prefixed plain string
+                return json.dumps({
+                    "fallback": True,
+                    "fallback_reason": "All live searches returned zero results — serving cached seed data.",
+                    "query_meta": {
+                        "brands": brands, "platforms": platforms,
+                        "post_type": post_type, "country": country,
+                    },
+                    "results": golden_data,
+                })
+            return json.dumps({
+                "fallback": True,
+                "fallback_reason": "All live searches returned zero results and no seed data is available.",
+                "results": [],
+            })
 
         total_snippets = sum(b["posts_found"] for b in results)
         return json.dumps({

@@ -1,0 +1,142 @@
+{
+  "_comment": "Platform DOM selector maps for profile scraper (Agent 1) and feed scroller (Agent 2). Update this file when platforms change their markup — no code changes needed.",
+
+  "instagram": {
+    "profile": {
+      "post_grid":        "article a[href*='/p/']",
+      "follower_count":   "header section ul li:nth-child(2) span span",
+      "username":         "header h2",
+      "post_count":       "header section ul li:first-child span span"
+    },
+    "post_page": {
+      "like_count":       "section span[class*='x193iq5w']",
+      "comment_count":    "div[class*='x9f619'] span[class*='x193iq5w']",
+      "publish_date":     "time[datetime]",
+      "caption":          "h1[class*='x193iq5w']",
+      "view_count":       "span[class*='x193iq5w']:has-text('views')",
+      "video_play_btn":   "button[aria-label*='Play']"
+    },
+    "feed": {
+      "post_container":   "article[role='presentation']",
+      "sponsored_label":  "article span:has-text('Sponsored'), article span:has-text('Paid partnership')",
+      "paid_partnership": "a[href*='/p/'] ~ span:has-text('Paid partnership')",
+      "cta_button":       "div[role='button']:has-text('Learn More'), div[role='button']:has-text('Shop Now'), div[role='button']:has-text('Install Now'), div[role='button']:has-text('Sign Up')",
+      "like_count":       "section span[class*='x193iq5w']",
+      "comment_count":    "a[href*='comments'] span",
+      "advertiser_name":  "article header a[href*='/']",
+      "post_url":         "article a[href*='/p/']",
+      "ad_creative_url":  "article video source, article img[class*='x5yr21d']"
+    }
+  },
+
+  "facebook": {
+    "profile": {
+      "post_feed":        "div[data-pagelet='ProfileTimeline'] div[role='article']",
+      "page_feed":        "div[data-pagelet='page_timeline_posts'] div[role='article']",
+      "post_link":        "a[href*='/posts/'], a[href*='/videos/'], a[href*='/photos/']",
+      "follower_count":   "a[href*='followers'] span",
+      "page_like_count":  "a[href*='likes'] span",
+      "publish_date":     "a[role='link'] > span > span[id]",
+      "publish_date_alt": "abbr[data-utime]"
+    },
+    "post_page": {
+      "like_count":       "div[aria-label*='reaction'] span",
+      "comment_count":    "div[aria-label*='comment'] span",
+      "share_count":      "div[aria-label*='share'] span",
+      "view_count":       "span:has-text('views')",
+      "publish_date":     "abbr[data-utime], a[role='link'] span span[id]",
+      "caption":          "div[data-ad-comet-preview='message'] span"
+    },
+    "feed": {
+      "post_container":   "div[role='article']",
+      "sponsored_label":  "div[role='article'] span:has-text('Sponsored'), a[aria-label='Sponsored']",
+      "sponsored_attr":   "[data-testid='story-subtitle'] span:has-text('Sponsored')",
+      "cta_button":       "div[role='button']:has-text('Learn More'), div[role='button']:has-text('Shop Now'), a[data-lynx-uri]:has-text('Learn More')",
+      "advertiser_name":  "div[role='article'] h3 a, div[role='article'] strong a",
+      "post_url":         "div[role='article'] a[href*='/posts/'], div[role='article'] a[href*='/videos/']",
+      "ad_creative_url":  "div[role='article'] video source, div[role='article'] img[referrerpolicy]",
+      "ad_copy":          "div[data-ad-comet-preview='message'] span, div[role='article'] div[dir='auto'] span"
+    }
+  },
+
+  "tiktok": {
+    "profile": {
+      "post_grid":        "div[class*='DivItemContainerV2'] a[href*='/video/'], div[class*='video-feed-item'] a",
+      "follower_count":   "strong[data-e2e='followers-count']",
+      "following_count":  "strong[data-e2e='following-count']",
+      "like_count_total": "strong[data-e2e='likes-count']",
+      "username":         "h1[data-e2e='user-title']"
+    },
+    "post_page": {
+      "like_count":       "strong[data-e2e='like-count']",
+      "comment_count":    "strong[data-e2e='comment-count']",
+      "share_count":      "strong[data-e2e='share-count']",
+      "view_count":       "strong[data-e2e='video-views'], span[data-e2e='video-views']",
+      "publish_date":     "span[data-e2e='browser-nickname'] ~ span, a[href*='/video/'] ~ span",
+      "caption":          "span[data-e2e='browse-video-desc']",
+      "save_count":       "strong[data-e2e='undefined-count']"
+    },
+    "feed": {
+      "post_container":       "div[class*='DivVideoFeedV2'] > div, div[class*='swiper-slide']",
+      "ad_badge":             "[data-e2e='ad-badge'], span[class*='AdBadge'], div[class*='ad-label']",
+      "sponsored_text":       "span:has-text('Sponsored'), span:has-text('โฆษณา'), span:has-text('Được tài trợ'), span:has-text('Bersponsor')",
+      "cta_button":           "a[class*='cta-btn'], div[class*='cta-link'], a:has-text('Learn More'), a:has-text('Shop Now'), a:has-text('Install Now'), a:has-text('Sign Up')",
+      "cta_wrapper":          "div[class*='CTAContainer'], div[class*='ctaContainer']",
+      "like_count":           "strong[data-e2e='like-count']",
+      "comment_count":        "strong[data-e2e='comment-count']",
+      "share_count":          "strong[data-e2e='share-count']",
+      "advertiser_handle":    "p[data-e2e='video-author-uniqueid'], a[data-e2e='video-author-avatar'] ~ div p",
+      "advertiser_name":      "p[data-e2e='video-author-desc'], strong[data-e2e='video-author-uniqueid']",
+      "post_url_attr":        "data-e2e",
+      "ad_copy":              "span[data-e2e='browse-video-desc'], div[class*='video-meta-caption']",
+      "video_url":            "video source, video[src]"
+    }
+  },
+
+  "youtube": {
+    "channel": {
+      "video_grid":       "ytd-rich-item-renderer, ytd-grid-video-renderer",
+      "video_link":       "a#video-title-link, a#thumbnail",
+      "video_title":      "a#video-title-link span, yt-formatted-string#video-title",
+      "publish_date":     "span#metadata-line span:nth-child(2), ytd-video-meta-block div#metadata span:last-child",
+      "view_count":       "span#metadata-line span:first-child",
+      "subscriber_count": "yt-formatted-string#subscriber-count, span#owner-sub-count"
+    },
+    "video_page": {
+      "like_count":       "ytd-toggle-button-renderer:first-of-type yt-formatted-string[id='text']",
+      "view_count":       "span.view-count, ytd-video-view-count-renderer span",
+      "comment_count":    "ytd-comments-header-renderer h2 yt-formatted-string span",
+      "publish_date":     "yt-formatted-string.ytd-video-primary-info-renderer span",
+      "description":      "ytd-expander div#description yt-formatted-string"
+    },
+    "shorts_feed": {
+      "post_container":   "ytd-reel-video-renderer, ytd-shorts",
+      "ad_badge":         "ytd-ad-slot-renderer, div[class*='ytp-ad-badge']",
+      "sponsored_label":  "span.ytp-ad-badge, div:has-text('Sponsored'), yt-formatted-string:has-text('Ad')",
+      "advertiser_name":  "ytd-channel-name a, yt-formatted-string#channel-name",
+      "like_count":       "ytd-toggle-button-renderer yt-formatted-string",
+      "view_count":       "span.view-count",
+      "video_url":        "video source, video[src]",
+      "cta_button":       "ytd-button-renderer:has-text('Learn More'), ytd-button-renderer:has-text('Shop Now'), a[class*='ytp-ad-button']"
+    }
+  },
+
+  "relative_date_patterns": {
+    "_comment": "Used by date normalizer for Facebook and other platforms rendering relative timestamps",
+    "patterns": [
+      {"regex": "(\\d+)\\s+second",  "unit": "seconds"},
+      {"regex": "(\\d+)\\s+minute",  "unit": "minutes"},
+      {"regex": "(\\d+)\\s+hour",    "unit": "hours"},
+      {"regex": "(\\d+)\\s+day",     "unit": "days"},
+      {"regex": "(\\d+)\\s+week",    "unit": "weeks"},
+      {"regex": "(\\d+)\\s+month",   "unit": "months_approx"},
+      {"regex": "(\\d+)\\s+year",    "unit": "years_approx"},
+      {"regex": "yesterday",         "unit": "yesterday"},
+      {"regex": "just now",          "unit": "now"},
+      {"regex": "an? hour",          "unit": "hours", "n": 1},
+      {"regex": "a day",             "unit": "days",  "n": 1},
+      {"regex": "a week",            "unit": "weeks", "n": 1},
+      {"regex": "a month",           "unit": "months_approx", "n": 1}
+    ]
+  }
+}
