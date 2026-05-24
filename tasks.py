@@ -9,7 +9,7 @@ class SocialTasks:
         brands     = params.get("brands", [])
         competitors= params.get("competitors", [])
         advertisers= params.get("advertisers", [])
-        platforms  = params.get("platforms", ["Instagram", "Facebook", "TikTok", "YouTube"])
+        platforms  = params.get("platforms", ["YouTube", "Facebook"])
         date_from  = params.get("date_from") or ""
         date_to    = params.get("date_to")   or ""
         date_range = params.get("date_range", "Last 30 days")
@@ -54,7 +54,7 @@ class SocialTasks:
         params     = params or {}
         competitors= params.get("competitors", [])
         advertisers= params.get("advertisers", [])
-        platforms  = params.get("platforms", ["Instagram", "Facebook", "TikTok", "YouTube"])
+        platforms  = params.get("platforms", ["YouTube", "Facebook"])
         country    = params.get("country", "")
 
         all_brands = list(advertisers) + [c for c in competitors if c not in advertisers]
@@ -91,7 +91,7 @@ class SocialTasks:
         date_from  = params.get("date_from") or ""
         date_to    = params.get("date_to")   or ""
         date_range = params.get("date_range", "Last 30 days")
-        platforms  = params.get("platforms",  ["TikTok", "Instagram", "YouTube", "Facebook"])
+        platforms  = params.get("platforms",  ["YouTube", "Facebook"])
         post_type  = params.get("post_type",  "both")
         advertisers= params.get("advertisers", [])
         competitors = params.get("competitors", [])
@@ -108,7 +108,7 @@ class SocialTasks:
                 "Ignore posts, campaigns, or metrics outside this window."
             )
 
-        plat_str = ", ".join(platforms) if platforms else "TikTok, Instagram, YouTube, Facebook"
+        plat_str = ", ".join(platforms) if platforms else "YouTube, Facebook"
         post_scope = {
             "paid":    "Focus ONLY on PAID content: ads, sponsored posts, boosted content, ad library entries.",
             "organic": "Focus ONLY on ORGANIC content: non-sponsored posts, UGC, viral content, creator posts.",
@@ -194,7 +194,7 @@ class SocialTasks:
                 "For each brand produce ONE record per platform (or one combined record if data spans platforms):\n\n"
                 "- name: brand name (never 'Unknown')\n"
                 "- handle: @handle if found, else blank\n"
-                "- platform: TikTok | Instagram | YouTube | Facebook\n"
+                "- platform: YouTube | Facebook\n"
                 "- post_type: 'paid' | 'organic' | 'both'\n"
                 "- metrics: {\n"
                 "    likes: integer,\n"
@@ -214,18 +214,16 @@ class SocialTasks:
                 "- paid_campaigns: list of notable paid campaign names (empty list if none found)\n\n"
                 "Engagement inference rules:\n"
                 "- If ER% and followers are known: interactions = ER% × followers / 100\n"
-                "- If views are known and platform is TikTok/YouTube: estimate likes ≈ views × 0.05, comments ≈ views × 0.005\n"
-                "- If only 'high engagement' mentioned: use platform median (TikTok: 5% ER, IG: 1.5%, FB: 0.8%, YT: 2%)\n\n"
+                "- If views are known and platform is YouTube: estimate likes ≈ views × 0.04, comments ≈ views × 0.003\n"
+                "- If only 'high engagement' mentioned: use platform median (FB: 0.8%, YT: 2%)\n\n"
                 "PAID SIGNAL CLASSIFICATION — required field 'paid_signal' on every record:\n"
                 "Step 1: Compute observed ER = (likes + comments + shares + saves) / denominator × 100\n"
-                "  - Denominator: views for TikTok/YouTube; followers for Instagram/Facebook\n"
+                "  - Denominator: views for YouTube; followers for Facebook\n"
                 "Step 2: Compare against these 3-month rolling category ER benchmarks:\n"
-                "  TikTok: General 5.0%, Beauty 7.0%, Fashion 6.5%, Food 6.0%, Entertainment 8.0%, Finance 3.5%\n"
-                "  Instagram: General 1.5%, Beauty 2.5%, Fashion 2.0%, Food 2.2%, Entertainment 2.8%, Finance 0.9%\n"
                 "  Facebook: General 0.8%, Beauty 1.1%, Fashion 0.9%, Food 1.0%, Entertainment 1.2%, Finance 0.5%\n"
                 "  YouTube: General 2.0%, Beauty 3.0%, Fashion 2.5%, Food 2.5%, Entertainment 3.5%, Finance 1.5%\n"
                 "Step 3: Assign paid_signal:\n"
-                "  - 'dom_label': a 'Sponsored', 'Paid partnership', 'โฆษณา' (Thai), or 'Được tài trợ' (Vietnamese) label was found in the content\n"
+                "  - 'dom_label': a 'Sponsored' or 'Paid partnership' label was found in the content\n"
                 "  - 'statistical_outlier': observed ER > 3× the category benchmark above — flag as likely paid even if no DOM label found; also override post_type to 'paid'\n"
                 "  - 'declared': content was explicitly called paid/ad in the source data, but no DOM label or ER check applies\n"
                 "  - 'organic': no paid signals of any kind detected\n"
@@ -262,7 +260,7 @@ class SocialTasks:
                 "    {\n"
                 '      "name": "string",\n'
                 '      "handle": "string",\n'
-                '      "platform": "TikTok|Instagram|YouTube|Facebook",\n'
+                '      "platform": "YouTube|Facebook",\n'
                 '      "post_type": "paid|organic|both",\n'
                 '      "paid_signal": "dom_label|statistical_outlier|declared|organic",\n'
                 '      "metrics": {\n'

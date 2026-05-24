@@ -1248,6 +1248,12 @@ select.form-input { cursor: pointer; }
   background: var(--bg3);
   color: var(--text2);
 }
+.platform-badge.modelled {
+  background: rgba(168,85,247,0.12);
+  color: #a855f7;
+  border: 1px dashed rgba(168,85,247,0.4);
+  cursor: help;
+}
 
 /* ── Content Intelligence Cards ──────────────────────────────────────────── */
 .content-intel-grid {

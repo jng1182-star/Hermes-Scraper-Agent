@@ -64,26 +64,26 @@ const BRAND_COLORS = ['#1f6feb','#38bdf8','#a78bfa','#f59e0b','#f85149','#22c55e
 // Base CPMs: market-level platform benchmarks (USD per 1,000 impressions)
 // Source: eMarketer, Statista, agency trading desk benchmarks 2024-25
 const COUNTRY_CPM = {
-  '':               { tiktok:3.50, instagram:8.00,  youtube:9.50,  facebook:7.50  },
-  'United States':  { tiktok:5.50, instagram:12.00, youtube:15.00, facebook:11.00 },
-  'United Kingdom': { tiktok:4.80, instagram:10.50, youtube:13.00, facebook:9.50  },
-  'Canada':         { tiktok:4.50, instagram:10.00, youtube:12.50, facebook:9.00  },
-  'Australia':      { tiktok:4.20, instagram:9.50,  youtube:11.50, facebook:8.50  },
-  'Germany':        { tiktok:4.00, instagram:9.00,  youtube:11.00, facebook:8.00  },
-  'France':         { tiktok:3.80, instagram:8.50,  youtube:10.50, facebook:7.50  },
-  'Japan':          { tiktok:4.50, instagram:9.50,  youtube:12.00, facebook:9.00  },
-  'South Korea':    { tiktok:3.50, instagram:8.00,  youtube:10.00, facebook:7.00  },
-  'UAE':            { tiktok:4.00, instagram:9.00,  youtube:11.50, facebook:8.50  },
-  'Saudi Arabia':   { tiktok:3.80, instagram:8.50,  youtube:11.00, facebook:8.00  },
-  'Singapore':      { tiktok:3.80, instagram:8.50,  youtube:11.00, facebook:8.00  },
-  'Malaysia':       { tiktok:1.80, instagram:3.50,  youtube:4.50,  facebook:3.00  },
-  'Thailand':       { tiktok:1.50, instagram:3.00,  youtube:4.00,  facebook:2.80  },
-  'Vietnam':        { tiktok:1.20, instagram:2.50,  youtube:3.50,  facebook:2.20  },
-  'Indonesia':      { tiktok:1.00, instagram:2.20,  youtube:3.00,  facebook:2.00  },
-  'Philippines':    { tiktok:1.00, instagram:2.00,  youtube:3.00,  facebook:1.80  },
-  'India':          { tiktok:0.80, instagram:1.80,  youtube:2.50,  facebook:1.50  },
-  'Brazil':         { tiktok:1.50, instagram:3.00,  youtube:4.00,  facebook:2.80  },
-  'Mexico':         { tiktok:1.20, instagram:2.80,  youtube:3.80,  facebook:2.50  },
+  '':               { youtube:9.50,  facebook:7.50  },
+  'United States':  { youtube:15.00, facebook:11.00 },
+  'United Kingdom': { youtube:13.00, facebook:9.50  },
+  'Canada':         { youtube:12.50, facebook:9.00  },
+  'Australia':      { youtube:11.50, facebook:8.50  },
+  'Germany':        { youtube:11.00, facebook:8.00  },
+  'France':         { youtube:10.50, facebook:7.50  },
+  'Japan':          { youtube:12.00, facebook:9.00  },
+  'South Korea':    { youtube:10.00, facebook:7.00  },
+  'UAE':            { youtube:11.50, facebook:8.50  },
+  'Saudi Arabia':   { youtube:11.00, facebook:8.00  },
+  'Singapore':      { youtube:11.00, facebook:8.00  },
+  'Malaysia':       { youtube:4.50,  facebook:3.00  },
+  'Thailand':       { youtube:4.00,  facebook:2.80  },
+  'Vietnam':        { youtube:3.50,  facebook:2.20  },
+  'Indonesia':      { youtube:3.00,  facebook:2.00  },
+  'Philippines':    { youtube:3.00,  facebook:1.80  },
+  'India':          { youtube:2.50,  facebook:1.50  },
+  'Brazil':         { youtube:4.00,  facebook:2.80  },
+  'Mexico':         { youtube:3.80,  facebook:2.50  },
 };
 
 // Industry multipliers relative to general baseline (1.0)
@@ -170,8 +170,8 @@ function getCpmDefaults(country) {
 }
 
 function updateCpmHint(country, industry) {
-  const platforms = ['tiktok','instagram','youtube','facebook'];
-  const labels    = ['TikTok','IG','YT','FB'];
+  const platforms = ['youtube','facebook'];
+  const labels    = ['YT','FB'];
   const hint = document.getElementById('cpmHint');
   if (!hint) return;
   const parts = platforms.map((p,i) => `${labels[i]} $${effectiveCpm(p, country, industry||'')}`);
@@ -710,7 +710,7 @@ function resetForm() {
   document.querySelectorAll('.platform-option').forEach(label => {
     const cb  = label.querySelector('input[type=checkbox]');
     const val = cb.value;
-    const checked = (val === 'TikTok' || val === 'Instagram');
+    const checked = (val === 'YouTube' || val === 'Facebook');
     cb.checked = checked; label.classList.toggle('checked', checked);
   });
 
@@ -1011,12 +1011,11 @@ const CHART_OPTS = {
   },
 };
 
-// Platform metadata — only the 4 supported platforms
+// Platform metadata — YouTube + Facebook (Instagram modelled only)
 const PLATFORM_META = {
-  'tiktok':    { cls:'ch-tiktok',    icon:'pi-tiktok',    label:'TikTok' },
-  'instagram': { cls:'ch-instagram', icon:'pi-instagram', label:'Instagram' },
   'youtube':   { cls:'ch-youtube',   icon:'pi-youtube',   label:'YouTube' },
   'facebook':  { cls:'ch-facebook',  icon:'pi-facebook',  label:'Facebook' },
+  'instagram': { cls:'ch-instagram', icon:'pi-instagram', label:'~Instagram', modelled:true },
 };
 function platformMeta(s) {
   const key=(s||'').toLowerCase().replace(/[^a-z]/g,'');
@@ -1025,16 +1024,15 @@ function platformMeta(s) {
 
 // ── Average view-through rates by platform ───────────────────────────────────
 const PLATFORM_AVG_VIEW_RATE = {
-  tiktok:0.26, instagram:0.30, youtube:0.32, facebook:0.22, default:0.25,
+  youtube:0.32, facebook:0.22, default:0.25,
 };
 
 // ── ER benchmarks: 3-month rolling by platform × industry ───────────────────
 // Source: Socialinsider, Sprout Social, Rival IQ industry reports 2024-25
 const INDUSTRY_ER_BENCHMARKS = {
-  tiktok:    {'':5.0,fmcg:5.5,food_bev:6.0,beauty:7.0,fashion:6.5,retail:5.5,tech:4.5,telco:4.0,finance:3.5,insurance:3.0,automotive:4.5,travel:6.5,health:5.5,entertainment:8.0,gaming:7.5,education:5.0,real_estate:3.5},
-  instagram: {'':1.5,fmcg:1.8,food_bev:2.2,beauty:2.5,fashion:2.0,retail:1.6,tech:1.2,telco:1.0,finance:0.9,insurance:0.8,automotive:1.3,travel:2.3,health:1.8,entertainment:2.8,gaming:2.5,education:1.5,real_estate:1.1},
   facebook:  {'':0.8,fmcg:0.9,food_bev:1.0,beauty:1.1,fashion:0.9,retail:0.8,tech:0.6,telco:0.5,finance:0.5,insurance:0.4,automotive:0.7,travel:1.0,health:0.8,entertainment:1.2,gaming:1.1,education:0.7,real_estate:0.5},
   youtube:   {'':2.0,fmcg:2.2,food_bev:2.5,beauty:3.0,fashion:2.5,retail:2.0,tech:1.8,telco:1.5,finance:1.5,insurance:1.2,automotive:2.0,travel:2.8,health:2.2,entertainment:3.5,gaming:3.0,education:2.0,real_estate:1.3},
+  instagram: {'':1.5,fmcg:1.8,food_bev:2.2,beauty:2.5,fashion:2.0,retail:1.6,tech:1.2,telco:1.0,finance:0.9,insurance:0.8,automotive:1.3,travel:2.3,health:1.8,entertainment:2.8,gaming:2.5,education:1.5,real_estate:1.1},
 };
 
 function benchmarkFor(platform, industry) {
@@ -1093,13 +1091,6 @@ function renderResults(data) {
   buildDrilldownBar(params, comp);
   renderResultsFiltered();
 
-  // TikTok embed script
-  if (!document.getElementById('tiktok-embed-js')) {
-    const s = document.createElement('script');
-    s.id='tiktok-embed-js'; s.src='https://www.tiktok.com/embed.js'; s.async=true;
-    document.body.appendChild(s);
-  } else if (window.tiktokEmbed) { window.tiktokEmbed.render(); }
-
   document.getElementById('dot-results').className = 'status-dot done';
 }
 
@@ -1109,7 +1100,7 @@ function buildContextBar(params, comp) {
   const paramPlats = params.platforms || [];
   const dataPlats  = [...new Set(comp.map(c => c.platform).filter(Boolean))];
   const allPlats   = [...new Set([...paramPlats, ...dataPlats])].filter(p =>
-    ['TikTok','Instagram','YouTube','Facebook'].includes(p)
+    ['YouTube','Facebook','Instagram'].includes(p)
   );
 
   if (State.activePlatforms.size === 0) allPlats.forEach(p => State.activePlatforms.add(p));
@@ -1472,7 +1463,8 @@ function renderResultsFiltered() {
         <strong>${esc(c.name||'—')}</strong>
       </span></td>
       <td style="color:#64748b;">${esc(c.handle||'—')}</td>
-      <td><span class="platform-badge">${esc(c.platform||'Multi')}</span></td>
+      <td><span class="platform-badge${c.data_source==='modelled_from_facebook'?' modelled':''}" ${c.data_source==='modelled_from_facebook'?`title="${esc(c.modelling_note||'Modelled from Facebook data')}"`:''}>
+        ${c.data_source==='modelled_from_facebook'?'~':''}${esc(c.platform||'Multi')}</span></td>
       <td>${ptBadge}</td>
       <td>${fmtShort(m.views)}</td>
       <td>${fmtShort(interactions)}</td>
@@ -1527,7 +1519,8 @@ function renderContentIntel(comp, bgColors) {
         <span class="ci-color-dot" style="background:${color}"></span>
         <span class="ci-brand-name">${esc(c.name||'—')}</span>
         ${c.handle ? `<span class="ci-handle">${esc(c.handle)}</span>` : ''}
-        <span class="platform-badge" style="margin-left:auto;">${esc(c.platform||'Multi')}</span>
+        <span class="platform-badge${c.data_source==='modelled_from_facebook'?' modelled':''}" style="margin-left:auto;" ${c.data_source==='modelled_from_facebook'?`title="${esc(c.modelling_note||'Modelled from Facebook data')}"`:''}>
+          ${c.data_source==='modelled_from_facebook'?'~':''}${esc(c.platform||'Multi')}</span>
         <span class="post-type-badge ${pt}" style="margin-left:6px;">${esc(pt)}</span>
       </div>`;
 
@@ -1584,19 +1577,12 @@ function _ytVideoId(url) {
     return u.searchParams.get('v')||null;
   } catch{return null;}
 }
-function _tiktokVideoId(url) {
-  const m=url.match(/\/video\/(\d+)/); return m?m[1]:null;
-}
 function buildPostEmbed(url,caption,platform,idx){
   const plat=(platform||'').toLowerCase();
   const rankBadge=`<span class="post-tile-rank">#${idx+1}</span>`;
   if(plat.includes('youtube')||url.includes('youtu')){
     const vid=_ytVideoId(url);
     if(vid) return `<div class="post-tile-embed">${rankBadge}<iframe src="https://www.youtube.com/embed/${esc(vid)}" frameborder="0" allow="accelerometer;autoplay;clipboard-write;encrypted-media;gyroscope;picture-in-picture" allowfullscreen loading="lazy"></iframe></div><div class="post-tile-caption">${esc(caption)}</div>`;
-  }
-  if(plat.includes('tiktok')||url.includes('tiktok.com')){
-    const vid=_tiktokVideoId(url);
-    if(vid) return `<div class="post-tile-embed post-tile-tiktok">${rankBadge}<blockquote class="tiktok-embed" cite="${esc(url)}" data-video-id="${esc(vid)}" style="max-width:320px;min-width:240px;"><section></section></blockquote></div><div class="post-tile-caption">${esc(caption)}</div>`;
   }
   return buildPostLinkCard(url,caption,idx);
 }
@@ -1660,7 +1646,7 @@ function renderCalcTree(data) {
   const sLabel   = getSeasonalLabel();
 
   // Build per-platform effective CPM derivation table for display
-  const platList = ['TikTok','Instagram','YouTube','Facebook'];
+  const platList = ['YouTube','Facebook'];
   const cpmRows  = platList.map(p => {
     const base = (COUNTRY_CPM[country] || COUNTRY_CPM[''])[p.toLowerCase()] || 7.00;
     const eff  = Math.round(base * iMult * sMult * 100) / 100;
@@ -1707,7 +1693,7 @@ function renderCalcTree(data) {
     </div>
     <div class="calc-formula-row">
       <div class="calc-formula-label">Avg View-Through Rates</div>${(() => {
-        const vr = a.avg_view_rates || {TikTok:'26%',Instagram:'30%',YouTube:'32%',Facebook:'22%'};
+        const vr = a.avg_view_rates || {YouTube:'32%',Facebook:'22%'};
         return Object.entries(vr).filter(([k])=>k!=='default').map(([k,v])=>`${esc(k)}: ${esc(String(v))}`).join(' · ');
       })()}
     </div>
@@ -1718,7 +1704,7 @@ function renderCalcTree(data) {
       <div class="calc-formula-label">Mixed Formula</div>${esc(a.spend_formula_both||'(Views×60%/Avg View Rate/1K×CPM) + (Interactions×40%×$0.75)')}
     </div>
     <div class="calc-formula-row">
-      <div class="calc-formula-label">Engagement Rate</div>${esc(a.engagement_rate_formula||'TikTok/YT: interactions/views×100 · IG/FB: interactions/followers×100').replace(/\n/g,'<br>')}
+      <div class="calc-formula-label">Engagement Rate</div>${esc(a.engagement_rate_formula||'YouTube: interactions/views×100 · Facebook: interactions/followers×100').replace(/\n/g,'<br>')}
     </div>
     <div class="calc-formula-row">
       <div class="calc-formula-label">ER Benchmarks</div>${esc(a.benchmark_note||'3-month rolling industry standard. Source: Socialinsider, Sprout Social, Rival IQ 2024-25.')}

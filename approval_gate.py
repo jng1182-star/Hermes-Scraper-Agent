@@ -71,26 +71,26 @@ _check_stale_constants()
 # agency trading desk benchmarks (DV360, The Trade Desk) 2024-25.
 # These are GROSS CPM rates before agency/publisher discounts.
 COUNTRY_CPM = {
-    "":               {"tiktok": 3.50, "instagram": 8.00, "youtube": 9.50,  "facebook": 7.50},
-    "United States":  {"tiktok": 5.50, "instagram":12.00, "youtube":15.00,  "facebook":11.00},
-    "United Kingdom": {"tiktok": 4.80, "instagram":10.50, "youtube":13.00,  "facebook": 9.50},
-    "Canada":         {"tiktok": 4.50, "instagram":10.00, "youtube":12.50,  "facebook": 9.00},
-    "Australia":      {"tiktok": 4.20, "instagram": 9.50, "youtube":11.50,  "facebook": 8.50},
-    "Germany":        {"tiktok": 4.00, "instagram": 9.00, "youtube":11.00,  "facebook": 8.00},
-    "France":         {"tiktok": 3.80, "instagram": 8.50, "youtube":10.50,  "facebook": 7.50},
-    "Japan":          {"tiktok": 4.50, "instagram": 9.50, "youtube":12.00,  "facebook": 9.00},
-    "South Korea":    {"tiktok": 3.50, "instagram": 8.00, "youtube":10.00,  "facebook": 7.00},
-    "UAE":            {"tiktok": 4.00, "instagram": 9.00, "youtube":11.50,  "facebook": 8.50},
-    "Saudi Arabia":   {"tiktok": 3.80, "instagram": 8.50, "youtube":11.00,  "facebook": 8.00},
-    "Singapore":      {"tiktok": 3.80, "instagram": 8.50, "youtube":11.00,  "facebook": 8.00},
-    "Malaysia":       {"tiktok": 1.80, "instagram": 3.50, "youtube": 4.50,  "facebook": 3.00},
-    "Thailand":       {"tiktok": 1.50, "instagram": 3.00, "youtube": 4.00,  "facebook": 2.80},
-    "Vietnam":        {"tiktok": 1.20, "instagram": 2.50, "youtube": 3.50,  "facebook": 2.20},
-    "Indonesia":      {"tiktok": 1.00, "instagram": 2.20, "youtube": 3.00,  "facebook": 2.00},
-    "Philippines":    {"tiktok": 1.00, "instagram": 2.00, "youtube": 3.00,  "facebook": 1.80},
-    "India":          {"tiktok": 0.80, "instagram": 1.80, "youtube": 2.50,  "facebook": 1.50},
-    "Brazil":         {"tiktok": 1.50, "instagram": 3.00, "youtube": 4.00,  "facebook": 2.80},
-    "Mexico":         {"tiktok": 1.20, "instagram": 2.80, "youtube": 3.80,  "facebook": 2.50},
+    "":               {"youtube": 9.50,  "facebook": 7.50},
+    "United States":  {"youtube":15.00,  "facebook":11.00},
+    "United Kingdom": {"youtube":13.00,  "facebook": 9.50},
+    "Canada":         {"youtube":12.50,  "facebook": 9.00},
+    "Australia":      {"youtube":11.50,  "facebook": 8.50},
+    "Germany":        {"youtube":11.00,  "facebook": 8.00},
+    "France":         {"youtube":10.50,  "facebook": 7.50},
+    "Japan":          {"youtube":12.00,  "facebook": 9.00},
+    "South Korea":    {"youtube":10.00,  "facebook": 7.00},
+    "UAE":            {"youtube":11.50,  "facebook": 8.50},
+    "Saudi Arabia":   {"youtube":11.00,  "facebook": 8.00},
+    "Singapore":      {"youtube":11.00,  "facebook": 8.00},
+    "Malaysia":       {"youtube": 4.50,  "facebook": 3.00},
+    "Thailand":       {"youtube": 4.00,  "facebook": 2.80},
+    "Vietnam":        {"youtube": 3.50,  "facebook": 2.20},
+    "Indonesia":      {"youtube": 3.00,  "facebook": 2.00},
+    "Philippines":    {"youtube": 3.00,  "facebook": 1.80},
+    "India":          {"youtube": 2.50,  "facebook": 1.50},
+    "Brazil":         {"youtube": 4.00,  "facebook": 2.80},
+    "Mexico":         {"youtube": 3.80,  "facebook": 2.50},
 }
 
 # ── Market-level View-Through Rates (VTR) for SEA markets ────────────────────
@@ -99,12 +99,12 @@ COUNTRY_CPM = {
 # VTR = proportion of ad impressions that result in a counted video view.
 # For non-SEA markets, falls through to PLATFORM_AVG_VIEW_RATE (platform-level defaults).
 MARKET_VTR = {
-    "Thailand":    {"tiktok": 0.24, "instagram": 0.28, "youtube": 0.30, "facebook": 0.20},
-    "Philippines": {"tiktok": 0.21, "instagram": 0.26, "youtube": 0.28, "facebook": 0.19},
-    "Vietnam":     {"tiktok": 0.27, "instagram": 0.30, "youtube": 0.32, "facebook": 0.22},
-    "Indonesia":   {"tiktok": 0.23, "instagram": 0.27, "youtube": 0.29, "facebook": 0.18},
-    "Malaysia":    {"tiktok": 0.25, "instagram": 0.28, "youtube": 0.31, "facebook": 0.21},
-    "Singapore":   {"tiktok": 0.26, "instagram": 0.30, "youtube": 0.33, "facebook": 0.22},
+    "Thailand":    {"youtube": 0.30, "facebook": 0.20},
+    "Philippines": {"youtube": 0.28, "facebook": 0.19},
+    "Vietnam":     {"youtube": 0.32, "facebook": 0.22},
+    "Indonesia":   {"youtube": 0.29, "facebook": 0.18},
+    "Malaysia":    {"youtube": 0.31, "facebook": 0.21},
+    "Singapore":   {"youtube": 0.33, "facebook": 0.22},
 }
 
 # ── Industry CPM multipliers (relative to 1.0 baseline) ─────────────────────
@@ -162,35 +162,17 @@ SEASONAL_INDEX = [
 # Used as fallback when no market-specific VTR is available.
 # Source: Meta/TikTok/YT ad benchmarks, agency trading desks 2024-25.
 PLATFORM_AVG_VIEW_RATE = {
-    "tiktok":    0.26,
-    "instagram": 0.30,
-    "youtube":   0.32,
-    "facebook":  0.22,
-    "default":   0.25,
+    "youtube":  0.32,
+    "facebook": 0.22,
+    "default":  0.25,
 }
 
 # ── Industry × Platform ER benchmarks (3-month rolling, %) ───────────────────
-# View-based (TikTok/YT): interactions / views × 100
-# Follower-based (IG/FB): interactions / followers × 100
+# View-based (YouTube): interactions / views × 100
+# Follower-based (Facebook): interactions / followers × 100
 # Source: Socialinsider Industry Report 2024; Sprout Social Index 2024;
 #         Rival IQ Social Media Industry Report 2024-25.
 INDUSTRY_ER_BENCHMARKS = {
-    "tiktok": {
-        "":             5.0,  "fmcg":        5.5,  "food_bev":   6.0,
-        "beauty":       7.0,  "fashion":     6.5,  "retail":     5.5,
-        "tech":         4.5,  "telco":       4.0,  "finance":    3.5,
-        "insurance":    3.0,  "automotive":  4.5,  "travel":     6.5,
-        "health":       5.5,  "entertainment":8.0, "gaming":     7.5,
-        "education":    5.0,  "real_estate": 3.5,
-    },
-    "instagram": {
-        "":             1.5,  "fmcg":        1.8,  "food_bev":   2.2,
-        "beauty":       2.5,  "fashion":     2.0,  "retail":     1.6,
-        "tech":         1.2,  "telco":       1.0,  "finance":    0.9,
-        "insurance":    0.8,  "automotive":  1.3,  "travel":     2.3,
-        "health":       1.8,  "entertainment":2.8, "gaming":     2.5,
-        "education":    1.5,  "real_estate": 1.1,
-    },
     "facebook": {
         "":             0.8,  "fmcg":        0.9,  "food_bev":   1.0,
         "beauty":       1.1,  "fashion":     0.9,  "retail":     0.8,
@@ -207,6 +189,15 @@ INDUSTRY_ER_BENCHMARKS = {
         "health":       2.2,  "entertainment":3.5, "gaming":     3.0,
         "education":    2.0,  "real_estate": 1.3,
     },
+    # Instagram ER benchmarks — used for modelled IG entries derived from Facebook Reels/Stories
+    "instagram": {
+        "":             1.5,  "fmcg":        1.8,  "food_bev":   2.2,
+        "beauty":       2.5,  "fashion":     2.0,  "retail":     1.6,
+        "tech":         1.2,  "telco":       1.0,  "finance":    0.9,
+        "insurance":    0.8,  "automotive":  1.3,  "travel":     2.3,
+        "health":       1.8,  "entertainment":2.8, "gaming":     2.5,
+        "education":    1.5,  "real_estate": 1.1,
+    },
 }
 
 # ── Heuristic threshold for statistical outlier ad detection ─────────────────
@@ -218,6 +209,87 @@ INDUSTRY_ER_BENCHMARKS = {
 # distribution. Named "ER_MULTIPLIER" to avoid confusing clients with statistical
 # notation when presenting methodology.
 OUTLIER_ER_MULTIPLIER = 3.0
+
+# ── Instagram modelling from Facebook Reels/Stories ──────────────────────────
+# Industry benchmark: ~65–75% of Facebook video/story assets from FMCG/beauty/entertainment
+# brands are cross-posted to Instagram (Meta Business Insights 2024). Conservative default: 70%.
+CROSSPOST_RATE = 0.70
+
+# IG audience as a fraction of FB audience size, by market (Meta APAC audience data 2024).
+IG_FB_AUDIENCE_RATIO = {
+    "Philippines": 0.60,
+    "Thailand":    0.55,
+    "Vietnam":     0.50,
+    "Singapore":   0.70,
+    "Malaysia":    0.58,
+    "Indonesia":   0.52,
+    "default":     0.60,
+}
+
+
+def _model_instagram_from_facebook(
+    fb_entries: list[dict], market: str, industry: str
+) -> list[dict]:
+    """
+    Derive estimated Instagram entries from Facebook Reels/Stories records.
+    Only processes entries where metrics are non-zero (avoid noise from zero-data records).
+    Returns list of modelled IG competitor records to be appended to competitors[].
+    """
+    ig_er_map = INDUSTRY_ER_BENCHMARKS.get("instagram", {})
+    ig_er = ig_er_map.get(industry or "", ig_er_map.get("", 1.5))
+    ig_fb_ratio = IG_FB_AUDIENCE_RATIO.get(market, IG_FB_AUDIENCE_RATIO["default"])
+
+    modelled = []
+    for entry in fb_entries:
+        m = entry.get("metrics", {})
+        fb_views      = int(m.get("views",     0) or 0)
+        fb_followers  = int(m.get("followers", 0) or 0)
+        fb_likes      = int(m.get("likes",     0) or 0)
+        fb_comments   = int(m.get("comments",  0) or 0)
+
+        if fb_views == 0 and fb_followers == 0:
+            continue  # insufficient signal to model
+
+        # Scale impressions: use views if available, else follower-based estimate
+        fb_impressions = fb_views if fb_views > 0 else int(fb_followers * 0.15)
+        ig_impressions = int(fb_impressions * CROSSPOST_RATE * ig_fb_ratio)
+        ig_interactions = int(ig_impressions * ig_er / 100)
+
+        ig_followers = int(fb_followers * ig_fb_ratio) if fb_followers > 0 else 0
+        ig_likes     = int(ig_interactions * 0.85)
+        ig_comments  = ig_interactions - ig_likes
+
+        modelled.append({
+            "name":          entry.get("name", ""),
+            "handle":        entry.get("handle", ""),
+            "platform":      "Instagram",
+            "post_type":     entry.get("post_type", "both"),
+            "paid_signal":   entry.get("paid_signal", "organic"),
+            "data_source":   "modelled_from_facebook",
+            "modelling_note": (
+                f"Estimated from Facebook data via {int(CROSSPOST_RATE*100)}% cross-post rate "
+                f"+ {market or 'default'} IG/FB audience ratio ({ig_fb_ratio:.0%}). "
+                f"IG ER benchmark: {ig_er:.1f}% ({industry or 'General'}). "
+                "Source: Meta Business Insights 2024; not directly scraped."
+            ),
+            "confidence":    "medium",
+            "metrics": {
+                "likes":      ig_likes,
+                "comments":   ig_comments,
+                "shares":     0,
+                "saves":      int(ig_interactions * 0.10),
+                "views":      ig_impressions,
+                "followers":  ig_followers,
+                "interactions": ig_interactions,
+            },
+            "sentiment":      entry.get("sentiment", "Neutral"),
+            "top_posts":      [],
+            "hashtags":       entry.get("hashtags", []),
+            "content_themes": entry.get("content_themes", []),
+            "paid_campaigns": entry.get("paid_campaigns", []),
+        })
+
+    return modelled
 
 
 def _er_benchmark(platform_key: str, industry: str) -> float:
@@ -399,7 +471,7 @@ class ApprovalGate:
             # ── Engagement Rate (industry-correct denominator) ────────────
             # TikTok/YouTube: view-based ER = interactions / views × 100
             # Instagram/Facebook: follower-based ER = interactions / followers × 100
-            view_based = plat_key in ("tiktok", "youtube")
+            view_based = plat_key == "youtube"
             if view_based and views > 0:
                 er_denominator       = views
                 er_formula_label     = "views"
@@ -609,6 +681,30 @@ class ApprovalGate:
                 "spend_formula":           spend_note,
             })
 
+        # ── Instagram modelling from Facebook entries ─────────────────────
+        # Derive estimated IG entries from Facebook Reels/Stories scrape data.
+        # Only model from Facebook entries (not already-modelled IG entries).
+        fb_entries = [c for c in data["competitors"] if _platform_key(c.get("platform", "")) == "facebook"]
+        if fb_entries:
+            ig_modelled = _model_instagram_from_facebook(fb_entries, self.country, self.industry)
+            for ig in ig_modelled:
+                m = ig["metrics"]
+                ig_spend = round((m["views"] / 1000) * self._get_cpm("Instagram") * 0.6, 2)
+                ig["estimated_spend_usd"]  = ig_spend
+                ig["inferred_impressions"] = m["views"]
+                ig["impression_method"]    = "modelled_from_facebook"
+                ig["paid_signal"]          = ig.get("paid_signal", "organic")
+                ig["engagement_rate"]      = round(m["interactions"] / max(m["views"], 1) * 100, 4)
+                ig["er_vs_benchmark"]      = 0.0
+                ig["benchmark_er_pct"]     = INDUSTRY_ER_BENCHMARKS.get("instagram", {}).get(self.industry or "", 1.5)
+                ig["cpm_used"]             = self._get_cpm("Instagram")
+                ig["confidence_tier"]      = "C — Medium-Low (modelled from Facebook Reels/Stories)"
+                ig["sos_pct"]              = 0.0
+                ig["sov_pct"]              = 0.0
+                total_inferred_impr += m["views"]
+                total_spend_paid    += ig_spend
+                data["competitors"].append(ig)
+
         # ── SoS / SoV calculation ─────────────────────────────────────────
         # SoS: brand's estimated spend as a share of total competitive set spend.
         # SoV: brand's inferred impressions as a share of total competitive set impressions.
@@ -653,11 +749,11 @@ class ApprovalGate:
         plat_cpm_table = {
             p: _effective_cpm(p, self.country, self.industry) if not use_override
                else float(self.cpm_rate_override)
-            for p in ("tiktok", "instagram", "youtube", "facebook")
+            for p in ("youtube", "facebook")
         }
         market_vtr_block = MARKET_VTR.get(self.country, {})
         vtr_table = {}
-        for p in ("tiktok", "instagram", "youtube", "facebook"):
+        for p in ("youtube", "facebook"):
             v, src = _get_vtr(self.country, p)
             vtr_table[p] = {"vtr": v, "source": src}
 

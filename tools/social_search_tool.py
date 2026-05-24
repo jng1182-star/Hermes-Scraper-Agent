@@ -5,8 +5,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from crewai.tools import BaseTool
 from duckduckgo_search import DDGS
 
-# ── Supported platforms (only these four) ────────────────────────────────────
-SUPPORTED_PLATFORMS = ["TikTok", "Instagram", "YouTube", "Facebook"]
+# ── Supported platforms ───────────────────────────────────────────────────────
+SUPPORTED_PLATFORMS = ["YouTube", "Facebook"]
 
 # ── Localized "Sponsored" / ad label equivalents by market ───────────────────
 # Used to detect geo-targeted paid content labels that platforms render in local languages.
@@ -28,28 +28,22 @@ _COUNTRY_TO_MARKET_CODE = {
 
 # ── Single best-signal paid query per platform ───────────────────────────────
 _PAID_QUERIES = {
-    "TikTok":    "{brand} TikTok paid ad campaign TopView In-Feed {paid_label} sponsored 2025{geo}",
-    "Instagram": "{brand} Instagram paid ad campaign story reel {paid_label} sponsored Meta Ads Library 2025{geo}",
-    "YouTube":   "{brand} YouTube paid ad TrueView bumper pre-roll advertising spend 2025{geo}",
-    "Facebook":  "{brand} Facebook paid ad boosted post {paid_label} sponsored Meta Ads Library campaign 2025{geo}",
+    "YouTube":  "{brand} YouTube paid ad TrueView bumper pre-roll advertising spend 2025{geo}",
+    "Facebook": "{brand} Facebook paid ad boosted post {paid_label} sponsored Meta Ads Library campaign 2025{geo}",
 }
 
 # ── Single best-signal organic query per platform ────────────────────────────
 _ORGANIC_QUERIES = {
-    "TikTok":    "{brand} TikTok organic views likes comments followers viral 2025{geo}",
-    "Instagram": "{brand} Instagram organic Reels likes saves comments followers reach 2025{geo}",
-    "YouTube":   "{brand} YouTube organic views subscribers watch-time engagement 2025{geo}",
-    "Facebook":  "{brand} Facebook organic page reach likes shares reactions followers 2025{geo}",
+    "YouTube":  "{brand} YouTube organic views subscribers watch-time engagement 2025{geo}",
+    "Facebook": "{brand} Facebook organic page reach likes shares reactions followers 2025{geo}",
 }
 
 # ── Category SoV fallback query templates ────────────────────────────────────
 # Fired when primary competitor search returns 0 results for a brand-platform pair.
 # Returns top-10 category ads to build a regional category SoV matrix.
 _CATEGORY_SOV_QUERIES = {
-    "TikTok":    "top 10 {industry} brand ads TikTok {paid_label} sponsored 2025{geo}",
-    "Instagram": "top 10 {industry} brand ads Instagram sponsored Meta Ads Library 2025{geo}",
-    "YouTube":   "top 10 {industry} brand YouTube ads TrueView pre-roll 2025{geo}",
-    "Facebook":  "top 10 {industry} brand Facebook ads boosted sponsored 2025{geo}",
+    "YouTube":  "top 10 {industry} brand YouTube ads TrueView pre-roll 2025{geo}",
+    "Facebook": "top 10 {industry} brand Facebook ads boosted sponsored 2025{geo}",
 }
 
 
@@ -190,7 +184,7 @@ class SocialSearchTool(BaseTool):
     name: str = "Social Media Intelligence Search"
     description: str = (
         "Searches for PAID and ORGANIC social media intelligence for one or more brands "
-        "across Facebook, Instagram, TikTok, and YouTube. "
+        "across YouTube and Facebook. "
         "Input: a query string describing the brand(s), platform(s), country, date range, "
         "and post_type (paid|organic|both). "
         "Returns structured JSON with raw snippets tagged paid/organic per brand and platform, "

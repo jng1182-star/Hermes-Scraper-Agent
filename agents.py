@@ -47,7 +47,7 @@ class SocialAgents:
         return Agent(
             role="Profile Baseline Scraper",
             goal=(
-                "Scrape public brand profile pages on Instagram, Facebook, TikTok, and YouTube "
+                "Scrape public brand profile pages on Facebook and YouTube "
                 "within the specified date scope. Extract actual observed metrics — likes, comments, "
                 "views, follower count — for every post published within the date window. "
                 "Produce a clean organic baseline per brand per platform."
@@ -57,9 +57,8 @@ class SocialAgents:
                 "You navigate public brand profiles directly, read actual engagement numbers "
                 "from the DOM, and never estimate or infer — you only report what you observe. "
                 "You understand that 'last 30 posts' is not good enough; you scope by publish date. "
-                "You know that TikTok video IDs encode timestamps and use this to date-filter posts "
-                "without visiting every page. You work systematically: collect URLs first, then visit "
-                "each in parallel to extract dates and metrics."
+                "You work systematically: collect URLs first, then visit each in parallel to extract "
+                "dates and metrics."
             ),
             tools=[self.profile_tool],
             llm=self.scraper_llm,
@@ -79,9 +78,8 @@ class SocialAgents:
             ),
             backstory=(
                 "You are a paid media intelligence specialist trained to identify platform-native "
-                "ad declarations. You know the exact DOM markers each platform uses: TikTok's "
-                "[data-e2e='ad-badge'], Instagram's 'Sponsored' text node, Facebook's 'Sponsored' "
-                "link, YouTube's ad badge near the channel handle. "
+                "ad declarations. You know the exact DOM markers each platform uses: Facebook's "
+                "'Sponsored' link, YouTube's ad badge near the channel handle. "
                 "Your rule is strict: if no explicit DOM marker is present, do not call it an ad. "
                 "The engagement-based outlier detection runs downstream — your job is pure observation."
             ),

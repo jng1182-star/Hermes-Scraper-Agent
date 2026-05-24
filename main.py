@@ -37,7 +37,7 @@ for _candidate in [
         break
 
 
-SUPPORTED_PLATFORMS = ["TikTok", "Instagram", "YouTube", "Facebook"]
+SUPPORTED_PLATFORMS = ["YouTube", "Facebook"]
 
 
 def _build_query(params: dict) -> str:
@@ -105,11 +105,12 @@ def run_pipeline(params: dict):
     country   = params.get("country", "").strip()
     industry  = params.get("industry", "").strip()
 
-    # Normalise advertisers list
+    # Normalise advertisers list — title-case so search queries use proper brand capitalisation
     advertisers = params.get("advertisers") or []
     if not advertisers and params.get("advertiser"):
         advertisers = [params["advertiser"].strip()]
-    params["advertisers"] = [a.strip() for a in advertisers if str(a).strip()]
+    params["advertisers"] = [a.strip().title() for a in advertisers if str(a).strip()]
+    params["competitors"] = [c.strip().title() for c in params.get("competitors", []) if str(c).strip()]
 
     # Enforce supported platforms only
     params["platforms"] = [p for p in params.get("platforms", []) if p in SUPPORTED_PLATFORMS]
@@ -184,7 +185,11 @@ def run_pipeline(params: dict):
         target=_ollama_heartbeat, args=(_heartbeat_stop,),
         daemon=True, name="ollama-heartbeat",
     )
-    heartbeat_thread.start()
+    _ollama_is_local = "127.0.0.1" in _ollama_host or "localhost" in _ollama_host
+    if _ollama_is_local:
+        heartbeat_thread.start()
+    else:
+        print("[HEARTBEAT] Remote OLLAMA_HOST detected — heartbeat disabled (Ollama is not local).", flush=True)
 
     # ── Stall watchdog ────────────────────────────────────────────────────────
     _last_token_ts  = [time.monotonic()]
