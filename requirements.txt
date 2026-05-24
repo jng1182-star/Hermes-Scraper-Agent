@@ -1,11 +1,13 @@
+fastapi>=0.111.0
+uvicorn[standard]>=0.29.0
 crewai>=1.0
-playwright>=1.44.0   # Headless browser — Meta Ad Library + Google Ads Transparency
-requests>=2.32.0     # TikTok official API + SearchAPI.io (tiktok_api_tool)
+playwright>=1.44.0
+requests>=2.32.0
 crewai-tools>=0.14.0
 tavily-python>=0.5.0
 duckduckgo-search>=6.0
 pydantic>=2.0
 python-dotenv
-openpyxl>=3.1        # Excel xlsx parsing
-pdfplumber>=0.11     # PDF text extraction
-python-docx>=1.1     # Word docx parsing
+openpyxl>=3.1
+pdfplumber>=0.11
+python-docx>=1.1
