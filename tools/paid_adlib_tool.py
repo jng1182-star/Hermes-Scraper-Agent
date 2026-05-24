@@ -239,7 +239,7 @@ async def _scrape_google(context, brand: str, country: str) -> list[dict]:
     ads: list[dict] = []
     try:
         await _rate_limit("adstransparency.google.com")
-        await page.goto(base_url, timeout=20_000, wait_until="networkidle")
+        await page.goto(base_url, timeout=20_000, wait_until="domcontentloaded")
         await asyncio.sleep(2)
 
         # Step 1 — fill search input and submit
@@ -328,7 +328,19 @@ async def _scrape_all(brand: str, country: str, platforms: list[str]) -> dict:
                 "Chrome/124.0.0.0 Safari/537.36"
             ),
             java_script_enabled=True,
-            accept_downloads=False,   # never download files
+            accept_downloads=False,
+            # Mimic a real browser viewport to reduce bot-detection signals
+            viewport={"width": 1440, "height": 900},
+            locale="en-US",
+            timezone_id="America/New_York",
+            extra_http_headers={
+                "Accept-Language": "en-US,en;q=0.9",
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            },
+        )
+        # Remove the webdriver property that headless Chrome exposes
+        await context.add_init_script(
+            "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
         )
 
         # Block all non-target outbound network requests
@@ -408,7 +420,13 @@ class PaidAdLibTool(BaseTool):
         platforms = params.get("platforms") or ["Facebook", "Instagram", "TikTok", "YouTube"]
 
         try:
-            result = asyncio.run(_scrape_all(brand, country, platforms))
+            # Use a fresh event loop to avoid conflicts with any existing loop
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            try:
+                result = loop.run_until_complete(_scrape_all(brand, country, platforms))
+            finally:
+                loop.close()
         except Exception as e:
             print(f"[PaidAdLib] _run error: {e}", flush=True)
             result = {"brand": brand, "platform_data": [], "error": str(e)}
