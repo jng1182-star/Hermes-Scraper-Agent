@@ -1,7 +1,7 @@
 from fastapi import FastAPI, BackgroundTasks, Query, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 from pydantic import BaseModel, Field, field_validator
 from main import run_pipeline
 import json, threading
@@ -189,6 +189,11 @@ def _run_with_logging(params: dict):
         _main_module._state_hook = None
         with _state_lock:
             _run_state["running"] = False
+
+
+@app.get("/")
+async def root():
+    return RedirectResponse(url="/dashboard/index.html")
 
 
 @app.post("/run-analysis")
