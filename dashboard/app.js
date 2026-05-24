@@ -899,6 +899,11 @@ function initNetworkCanvas() {
   window.addEventListener('resize', resizeCanvas);
   _canvas.addEventListener('mousemove', onCanvasHover);
   _canvas.addEventListener('mouseleave', hidePopover);
+  // Restart RAF loop when tab regains focus (RAF pauses in background tabs)
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) drawNetworkLoop();
+  });
+  window.addEventListener('pageshow', () => drawNetworkLoop());
 }
 function resizeCanvas() {
   if (!_canvas) return;
