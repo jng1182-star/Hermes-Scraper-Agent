@@ -1,9 +1,10 @@
-from fastapi import FastAPI, BackgroundTasks, Query
+from fastapi import FastAPI, BackgroundTasks, Query, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, field_validator
 from main import run_pipeline
-import threading
+import json, threading
 from pathlib import Path
 from collections import deque
 from typing import Annotated, Dict, List, Optional
@@ -24,7 +25,7 @@ _ALLOWED_ORIGINS = [
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_ALLOWED_ORIGINS,
-    allow_methods=["GET", "POST"],
+    allow_methods=["GET", "POST", "DELETE"],
     allow_headers=["Content-Type"],
 )
 
@@ -301,6 +302,69 @@ async def get_sos_history(
         "industry_filter": industry,
         "snapshots": rows,
     }
+
+
+_SAVED_RUNS_PATH = _PROJECT_ROOT / "data" / "saved_runs.json"
+_saved_runs_lock = threading.Lock()
+
+
+def _load_saved_runs() -> dict:
+    with _saved_runs_lock:
+        if _SAVED_RUNS_PATH.exists():
+            try:
+                return json.loads(_SAVED_RUNS_PATH.read_text())
+            except Exception:
+                pass
+        return {"runs": []}
+
+
+def _save_saved_runs(payload: dict):
+    with _saved_runs_lock:
+        _SAVED_RUNS_PATH.parent.mkdir(parents=True, exist_ok=True)
+        _SAVED_RUNS_PATH.write_text(json.dumps(payload))
+
+
+@app.get("/uploaded-files")
+async def get_uploaded_files():
+    up_dir = _PROJECT_ROOT / "data" / "uploads"
+    files = []
+    if up_dir.exists():
+        for f in sorted(up_dir.iterdir()):
+            if f.is_file() and not f.name.startswith("."):
+                files.append({"name": f.name, "size": f.stat().st_size})
+    return {"files": files}
+
+
+@app.get("/saved-runs")
+async def get_saved_runs():
+    return _load_saved_runs()
+
+
+@app.post("/saved-runs")
+async def save_run(request: Request):
+    entry = await request.json()
+    if not entry.get("id") or not entry.get("report"):
+        return JSONResponse(status_code=400, content={"error": "missing id or report"})
+    runs = _load_saved_runs().get("runs", [])
+    runs = [r for r in runs if r.get("id") != entry["id"]]
+    runs.insert(0, entry)
+    if len(runs) > 50:
+        runs = runs[:50]
+    _save_saved_runs({"runs": runs})
+    return {"status": "ok", "count": len(runs)}
+
+
+@app.delete("/saved-runs")
+async def clear_saved_runs():
+    _save_saved_runs({"runs": []})
+    return {"status": "ok"}
+
+
+@app.delete("/saved-runs/{run_id}")
+async def delete_saved_run(run_id: str):
+    runs = [r for r in _load_saved_runs().get("runs", []) if str(r.get("id")) != run_id]
+    _save_saved_runs({"runs": runs})
+    return {"status": "ok", "count": len(runs)}
 
 
 # Serve dashboard static files
