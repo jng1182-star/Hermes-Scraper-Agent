@@ -25,14 +25,16 @@ MAX_RETRIES    = int(os.getenv("STALL_MAX_RETRIES", "2"))
 GATE_TIMEOUT   = int(os.getenv("GATE_TIMEOUT",      "120"))
 
 # Resolve ollama binary path once at startup — avoids PATH issues when running via venv.
-# Falls back gracefully: heartbeat and watchdog will skip CLI calls if binary not found.
-_OLLAMA_BIN = (
-    shutil.which("ollama")
-    or "/usr/local/bin/ollama"    # homebrew default
-    or "/opt/homebrew/bin/ollama" # Apple Silicon homebrew
-)
-if not Path(_OLLAMA_BIN).exists():
-    _OLLAMA_BIN = None
+# /usr/local/bin/ollama is a symlink; resolve() follows it so we store the real path.
+_OLLAMA_BIN = None
+for _candidate in [
+    shutil.which("ollama"),
+    "/usr/local/bin/ollama",
+    "/opt/homebrew/bin/ollama",
+]:
+    if _candidate and Path(_candidate).exists():
+        _OLLAMA_BIN = str(Path(_candidate).resolve())
+        break
 
 
 SUPPORTED_PLATFORMS = ["TikTok", "Instagram", "YouTube", "Facebook"]
@@ -224,66 +226,67 @@ def run_pipeline(params: dict):
     _attempt       = 0
     _current_depth = depth
 
-    while _attempt <= MAX_RETRIES:
-        # On second retry, fall back to faster model
-        if _attempt > 0 and _current_depth == "deep":
-            _current_depth = "quick"
-            print(f"\n[WATCHDOG] Switching to quick model (e4b) for retry {_attempt}…\n", flush=True)
+    try:
+        while _attempt <= MAX_RETRIES:
+            # On second retry, fall back to faster model
+            if _attempt > 0 and _current_depth == "deep":
+                _current_depth = "quick"
+                print(f"\n[WATCHDOG] Switching to quick model (e4b) for retry {_attempt}…\n", flush=True)
 
-        _stall_flag.clear()
-        _last_token_ts[0] = time.monotonic()
-        _watchdog_stop.clear()
+            _stall_flag.clear()
+            _last_token_ts[0] = time.monotonic()
+            _watchdog_stop.clear()
 
-        watchdog = threading.Thread(
-            target=_watchdog_loop, args=(_watchdog_stop,),
-            daemon=True, name="stall-watchdog",
-        )
-        watchdog.start()
-
-        # Resume from checkpoint on retries (skip agents that already completed)
-        is_resume = _attempt > 0
-        if is_resume:
-            print(f"\n[WATCHDOG] Retry {_attempt}/{MAX_RETRIES} — resuming from last checkpoint…\n", flush=True)
-
-        try:
-            crew_instance = SocialListeningCrew(
-                query, depth=_current_depth, params=params, resume=is_resume
+            watchdog = threading.Thread(
+                target=_watchdog_loop, args=(_watchdog_stop,),
+                daemon=True, name="stall-watchdog",
             )
-            raw_output    = crew_instance.run()
-            _watchdog_stop.set()
-            break
+            watchdog.start()
 
-        except Exception as exc:
-            _watchdog_stop.set()
-            time.sleep(0.1)
+            # Resume from checkpoint on retries (skip agents that already completed)
+            is_resume = _attempt > 0
+            if is_resume:
+                print(f"\n[WATCHDOG] Retry {_attempt}/{MAX_RETRIES} — resuming from last checkpoint…\n", flush=True)
 
-            # Propagate user-stop immediately (no retry on explicit stop)
-            if "stopped by user" in str(exc).lower():
+            try:
+                crew_instance = SocialListeningCrew(
+                    query, depth=_current_depth, params=params, resume=is_resume
+                )
+                raw_output    = crew_instance.run()
+                _watchdog_stop.set()
+                break
+
+            except Exception as exc:
+                _watchdog_stop.set()
+                time.sleep(0.1)
+
+                # Propagate user-stop immediately (no retry on explicit stop)
+                if "stopped by user" in str(exc).lower():
+                    raise
+
+                is_stall = (
+                    _stall_flag.is_set()
+                    or "None or empty" in str(exc)
+                    or "Invalid response from LLM" in str(exc)
+                    or "ngrok" in str(exc).lower()
+                    or "ERR_NGROK" in str(exc)
+                    or "incomplete HTTP response" in str(exc)
+                )
+                if is_stall:
+                    _attempt += 1
+                    if _attempt <= MAX_RETRIES:
+                        if _state_hook:
+                            _state_hook("__stall__", f"retry:{_attempt}")
+                        time.sleep(3)
+                        continue
+                    else:
+                        raise RuntimeError(
+                            f"Analysis stalled {MAX_RETRIES} times. "
+                            "Try Quick mode or close other apps to free VRAM."
+                        )
                 raise
-
-            is_stall = (
-                _stall_flag.is_set()
-                or "None or empty" in str(exc)
-                or "Invalid response from LLM" in str(exc)
-                or "ngrok" in str(exc).lower()
-                or "ERR_NGROK" in str(exc)
-                or "incomplete HTTP response" in str(exc)
-            )
-            if is_stall:
-                _attempt += 1
-                if _attempt <= MAX_RETRIES:
-                    if _state_hook:
-                        _state_hook("__stall__", f"retry:{_attempt}")
-                    time.sleep(3)
-                    continue
-                else:
-                    raise RuntimeError(
-                        f"Analysis stalled {MAX_RETRIES} times. "
-                        "Try Quick mode or close other apps to free VRAM."
-                    )
-            raise
-
-    _heartbeat_stop.set()  # stop Ollama heartbeat
+    finally:
+        _heartbeat_stop.set()  # always stop heartbeat — even on exception exit
 
     # ── Approval Gate ────────────────────────────────────────────────────────
     if _state_hook:
