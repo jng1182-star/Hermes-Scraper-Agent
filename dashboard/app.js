@@ -29,7 +29,7 @@ const State = {
     vsMyBrands:  [],      // selected "my brand" names for vs view
     vsCompBrands:[],      // selected competitor names for vs view
   },
-  agentStates: { scraper: 'idle', analyst: 'idle', reporter: 'idle', gate: 'idle' },
+  agentStates: { profile: 'idle', feed: 'idle', scraper: 'idle', analyst: 'idle', reporter: 'idle', gate: 'idle' },
   lastLogs: [],
   uploadedFiles: [],
   partialShown: false,   // true once partial results have been rendered this run
@@ -471,7 +471,7 @@ document.getElementById('runBtn').addEventListener('click', async () => {
   const stopBtn = document.getElementById('stopBtn');
   if (stopBtn) { stopBtn.disabled = false; stopBtn.textContent = '■ Stop'; }
 
-  State.agentStates = { scraper: 'idle', analyst: 'idle', reporter: 'idle', gate: 'idle' };
+  State.agentStates = { profile: 'idle', feed: 'idle', scraper: 'idle', analyst: 'idle', reporter: 'idle', gate: 'idle' };
   State.partialShown = false;
   setPartialPill(false);
   resetAgentCards();
@@ -618,9 +618,11 @@ async function pollStatus() {
 // ── Agent Card Updates ───────────────────────────────────────────────────────
 
 const CARD_LOG_HINTS = {
+  profile:  { idle: 'Awaiting activation…', active: 'Scraping brand profile pages…',   done: 'Profile baselines collected' },
+  feed:     { idle: 'Awaiting activation…', active: 'Scrolling in-feed ads…',          done: 'Feed ads captured' },
   scraper:  { idle: 'Awaiting activation…', active: 'Collecting paid & organic data…', done: 'Data collection complete' },
   analyst:  { idle: 'Awaiting data…',       active: 'Analysing engagement & spend…',   done: 'Analysis complete' },
-  reporter: { idle: 'Awaiting analysis…',   active: 'Composing intelligence report…', done: 'Report compiled' },
+  reporter: { idle: 'Awaiting analysis…',   active: 'Composing intelligence report…',  done: 'Report compiled' },
   gate:     { idle: 'Awaiting output…',     active: 'Validating · computing CPM & ER…', done: 'Report approved ✓' },
 };
 
@@ -645,7 +647,7 @@ function updateAgentCards(agentStates, logs) {
 }
 
 function resetAgentCards() {
-  ['scraper','analyst','reporter','gate'].forEach(id => {
+  ['profile','feed','scraper','analyst','reporter','gate'].forEach(id => {
     const card  = document.getElementById('acard-' + id);
     const badge = document.getElementById('abadge-' + id);
     const logEl = document.getElementById('alog-'   + id);
@@ -792,22 +794,29 @@ function hexBlend(c1, c2, t) {
 }
 
 const AGENTS = {
-  scraper:  { label:'SCRAPER',       role:'Paid + Organic Collector', color:'#1f6feb' },
+  profile:  { label:'PROFILE',       role:'Profile Baseline Scraper', color:'#f59e0b' },
+  feed:     { label:'FEED',          role:'In-Feed Ad Capture',       color:'#ec4899' },
+  scraper:  { label:'SCRAPER',       role:'Search Fallback',          color:'#1f6feb' },
   analyst:  { label:'ANALYST',       role:'Engagement Analyst',       color:'#38bdf8' },
   reporter: { label:'REPORTER',      role:'Intelligence Reporter',    color:'#a78bfa' },
   gate:     { label:'APPROVAL GATE', role:'CPM · ER · Validation',   color:'#22c55e' },
 };
 
 const NODE_POS = {
-  scraper:  { x:0.50, y:0.20 },
-  analyst:  { x:0.25, y:0.55 },
-  reporter: { x:0.75, y:0.55 },
-  gate:     { x:0.50, y:0.82 },
+  profile:  { x:0.28, y:0.15 },
+  feed:     { x:0.72, y:0.15 },
+  scraper:  { x:0.50, y:0.35 },
+  analyst:  { x:0.25, y:0.60 },
+  reporter: { x:0.75, y:0.60 },
+  gate:     { x:0.50, y:0.85 },
 };
 
 const EDGES = [
+  { from:'profile',  to:'analyst'  },
+  { from:'feed',     to:'analyst'  },
   { from:'scraper',  to:'analyst'  },
-  { from:'scraper',  to:'reporter' },
+  { from:'profile',  to:'reporter' },
+  { from:'feed',     to:'reporter' },
   { from:'analyst',  to:'gate'     },
   { from:'reporter', to:'gate'     },
 ];
