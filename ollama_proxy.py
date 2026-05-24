@@ -21,12 +21,17 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
 
     def _check_token(self) -> bool:
         if not SECRET:
-            return True  # no token set — allow all (shouldn't happen)
+            return True
         incoming = self.headers.get("X-Hermes-Token", "")
         return incoming == SECRET
 
+    def _is_ollama_api(self) -> bool:
+        # Ollama API paths — allow through without token
+        return self.path.startswith(("/api/", "/v1/"))
+
     def _proxy(self):
-        if not self._check_token():
+        # Gate: token required for root health check; Ollama API paths pass through
+        if not self._is_ollama_api() and not self._check_token():
             self.send_response(403)
             self.send_header("Content-Type", "text/plain")
             self.end_headers()
@@ -67,10 +72,10 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
     def do_HEAD(self):   self._proxy()
 
     def log_message(self, fmt, *args):
-        token_ok = self._check_token()
+        allowed = self._is_ollama_api() or self._check_token()
         status = args[1] if len(args) > 1 else "?"
         src = self.client_address[0]
-        tag = "✅" if token_ok else "🚫 BLOCKED"
+        tag = "✅" if allowed else "🚫 BLOCKED"
         print(f"  {tag}  {src}  {self.command} {self.path}  → {status}", flush=True)
 
 
