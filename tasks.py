@@ -160,7 +160,13 @@ class SocialTasks:
             agent=agent,
         )
 
-    def analysis_task(self, agent, prior_context: str = None) -> Task:
+    def analysis_task(self, agent, prior_context: str = None, params: dict = None) -> Task:
+        params = params or {}
+        advertisers = params.get("advertisers", [])
+        competitors = params.get("competitors", [])
+        all_brands  = list(advertisers) + [c for c in competitors if c not in advertisers]
+        brands_seed = ", ".join(f'"{b}"' for b in all_brands) if all_brands else ""
+
         prefix = ""
         if prior_context:
             snippet = prior_context[:6000]
@@ -187,12 +193,14 @@ class SocialTasks:
                     "Do NOT re-run searches. Analyse this data directly:\n\n"
                     + snippet + "\n\n"
                 )
+        brands_line = f"\nBRANDS IN THIS SCAN (name field must be one of these — never null or 'Unknown'): {brands_seed}\n" if brands_seed else ""
         return Task(
             description=(
                 prefix +
+                brands_line +
                 "Analyse the extracted social media data and structure it PER COMPETITOR BRAND. "
                 "For each brand produce ONE record per platform (or one combined record if data spans platforms):\n\n"
-                "- name: brand name (never 'Unknown')\n"
+                "- name: brand name (never 'Unknown', never null — must match one of the brands listed above)\n"
                 "- handle: @handle if found, else blank\n"
                 "- platform: YouTube | Facebook\n"
                 "- post_type: 'paid' | 'organic' | 'both'\n"
@@ -238,7 +246,13 @@ class SocialTasks:
             agent=agent,
         )
 
-    def reporting_task(self, agent, prior_context: str = None) -> Task:
+    def reporting_task(self, agent, prior_context: str = None, params: dict = None) -> Task:
+        params = params or {}
+        advertisers = params.get("advertisers", [])
+        competitors = params.get("competitors", [])
+        all_brands  = list(advertisers) + [c for c in competitors if c not in advertisers]
+        brands_seed = ", ".join(f'"{b}"' for b in all_brands) if all_brands else '"(unknown)"'
+
         prefix = ""
         if prior_context:
             snippet = prior_context[:6000]
@@ -252,24 +266,25 @@ class SocialTasks:
         return Task(
             description=(
                 prefix +
+                f"BRANDS IN THIS SCAN (use these exact names — never output name: null or name: 'Unknown'): {brands_seed}\n\n"
                 "Format the analysed competitor data into a single valid JSON object. "
                 "Output ONLY the JSON — no markdown, no code fences, no extra text.\n\n"
                 "Use this exact schema:\n"
                 "{\n"
                 '  "competitors": [\n'
                 "    {\n"
-                '      "name": "string",\n'
+                '      "name": "string  ← MUST be one of the brand names listed above",\n'
                 '      "handle": "string",\n'
                 '      "platform": "YouTube|Facebook",\n'
                 '      "post_type": "paid|organic|both",\n'
                 '      "paid_signal": "dom_label|statistical_outlier|declared|organic",\n'
                 '      "metrics": {\n'
-                '        "likes": 0, "comments": 0, "shares": 0,\n'
-                '        "saves": 0, "views": 0, "followers": 0\n'
+                '        "likes": integer, "comments": integer, "shares": integer,\n'
+                '        "saves": integer, "views": integer, "followers": integer\n'
                 "      },\n"
                 '      "sentiment": "Positive|Neutral|Negative",\n'
                 '      "top_posts": [\n'
-                '        {"caption": "str", "url": "str or null", "post_type": "paid|organic", "likes": 0, "views": 0}\n'
+                '        {"caption": "str", "url": "str or null", "post_type": "paid|organic", "likes": integer, "views": integer}\n'
                 "      ],\n"
                 '      "hashtags": ["#string"],\n'
                 '      "content_themes": ["string"],\n'
@@ -278,20 +293,27 @@ class SocialTasks:
                 "  ]\n"
                 "}\n\n"
                 "RULES:\n"
-                "- Every competitor MUST have ALL fields\n"
-                "- metrics: use best available estimate — never all-zeros if data was found\n"
+                "- name MUST be one of the exact brand names listed above — never null, never 'Unknown'\n"
+                "- Output one record per brand per platform (YouTube + Facebook = 2 records per brand minimum)\n"
+                "- metrics: use best available estimate — NEVER all-zeros if any data was found\n"
+                "  If scraping returned nothing, use these SEA market category medians as floor values:\n"
+                "  Facebook followers: 50000, likes per post: 200, comments: 15, views: 0\n"
+                "  YouTube subscribers: 30000, views per video: 15000, likes: 600, comments: 45\n"
                 "- post_type per competitor must be 'paid', 'organic', or 'both'\n"
                 "- paid_signal per competitor must be 'dom_label', 'statistical_outlier', 'declared', or 'organic'\n"
                 "- top_posts: 1–5 items; each a JSON object with caption, url (or null), post_type, likes, views\n"
                 "- hashtags: 1–6 items starting with #\n"
                 "- content_themes: 1–4 plain text labels\n"
-                "- paid_campaigns: list campaign names found; [] if none"
+                "- paid_campaigns: list campaign names found; [] if none\n"
+                "- If real data was found in search snippets, use those numbers. "
+                "  Only use the floor values above when absolutely no quantitative signal was available."
             ),
             expected_output=(
                 "A raw JSON object (no markdown) with competitors array. "
-                "Each entry: name, handle, platform, post_type, paid_signal, metrics{6 fields}, "
+                "Each entry: name (from brand list), handle, platform, post_type, paid_signal, metrics{6 fields}, "
                 "sentiment, top_posts[{caption,url,post_type,likes,views}], "
-                "hashtags[], content_themes[], paid_campaigns[]."
+                "hashtags[], content_themes[], paid_campaigns[]. "
+                "Never all-zero metrics — use floor values if real data unavailable."
             ),
             agent=agent,
         )

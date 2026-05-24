@@ -189,7 +189,7 @@ class SocialListeningCrew:
                 feed_output    or "{}",
                 cp_scraper     or "",
             )
-            task_analyst = self.tasks.analysis_task(analyst, prior_context=analyst_context)
+            task_analyst = self.tasks.analysis_task(analyst, prior_context=analyst_context, params=self.params)
             crew_analyst = Crew(agents=[analyst], tasks=[task_analyst],
                                 process=Process.sequential, verbose=True)
             _fire_hook("analyst", "active")
@@ -202,7 +202,7 @@ class SocialListeningCrew:
                 pass
 
         # ── Phase 5: Reporter ─────────────────────────────────────────────────
-        task_reporter = self.tasks.reporting_task(reporter, prior_context=cp_analyst)
+        task_reporter = self.tasks.reporting_task(reporter, prior_context=cp_analyst, params=self.params)
         crew_reporter = Crew(agents=[reporter], tasks=[task_reporter],
                              process=Process.sequential, verbose=True)
         _fire_hook("reporter", "active")
