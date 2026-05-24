@@ -8,6 +8,57 @@ from duckduckgo_search import DDGS
 # ── Supported platforms ───────────────────────────────────────────────────────
 SUPPORTED_PLATFORMS = ["YouTube", "Facebook"]
 
+# ── Industry → short category label for query disambiguation ─────────────────
+# Appended to brand name so "Close Up" → "Close Up toothpaste brand"
+# Prevents ambiguous brand names from pulling NSFW or off-topic results.
+_INDUSTRY_CATEGORY_LABEL = {
+    "fmcg":         "consumer goods brand",
+    "food_bev":     "food beverage brand",
+    "beauty":       "beauty brand",
+    "fashion":      "fashion brand",
+    "retail":       "retail brand",
+    "tech":         "technology brand",
+    "telco":        "telecom brand",
+    "finance":      "financial services brand",
+    "insurance":    "insurance brand",
+    "automotive":   "automotive brand",
+    "travel":       "travel brand",
+    "health":       "health brand",
+    "entertainment":"entertainment brand",
+    "gaming":       "gaming brand",
+    "education":    "education brand",
+    "real_estate":  "real estate brand",
+}
+
+# ── NSFW content filter ───────────────────────────────────────────────────────
+# Block snippets that contain NSFW signals unrelated to brand advertising.
+# Conservative list — only clear NSFW terms, not ambiguous marketing language.
+_NSFW_TERMS = frozenset([
+    "pornographic", "pornography", "porn", "xxx", "onlyfans", "adult content",
+    "nude", "nudity", "naked", "nsfw", "erotic", "erotica", "sex tape",
+    "cam girl", "camgirl", "escort", "prostitut", "strip club", "stripper",
+    "masturbat", "orgasm", "genitalia", "genital", "fetish",
+])
+
+def _is_nsfw(snippet: dict) -> bool:
+    """Return True if snippet content contains NSFW signals."""
+    text = (
+        (snippet.get("content") or "") + " " +
+        (snippet.get("title")   or "")
+    ).lower()
+    return any(term in text for term in _NSFW_TERMS)
+
+def _filter_nsfw(snippets: list[dict], brand: str) -> list[dict]:
+    clean, blocked = [], 0
+    for s in snippets:
+        if _is_nsfw(s):
+            blocked += 1
+        else:
+            clean.append(s)
+    if blocked:
+        print(f"[BrandSafety] Filtered {blocked} NSFW snippet(s) for '{brand}'.", flush=True)
+    return clean
+
 # ── Localized "Sponsored" / ad label equivalents by market ───────────────────
 # Used to detect geo-targeted paid content labels that platforms render in local languages.
 # Sources: TikTok UI localization docs; Meta Ads Manager locale reference; Google ATC.
@@ -206,6 +257,11 @@ class SocialSearchTool(BaseTool):
         industry  = params.get("industry", "")
         date_hint = params.get("date_range", "2025")
 
+        # Build category disambiguation suffix — appended to brand name in all queries.
+        # Prevents ambiguous brand names (e.g. "Close Up") from pulling off-topic results.
+        _cat_label = _INDUSTRY_CATEGORY_LABEL.get(industry or "", "brand")
+        # brand_tag = f"{brand} {_cat_label}" substituted per-brand below
+
         geo = f" {country}" if country else ""
 
         # Resolve localized paid label for this market
@@ -224,6 +280,9 @@ class SocialSearchTool(BaseTool):
         results: list[dict] = []
 
         for brand in brands:
+            # Disambiguate brand name with category label for all queries
+            brand_tag = f"{brand} {_cat_label}"
+
             brand_entry: dict = {
                 "brand":         brand,
                 "platform_data": [],
@@ -259,22 +318,22 @@ class SocialSearchTool(BaseTool):
                 # ── PAID search (Tavily/DDG with localized labels) ─────────
                 if post_type in ("paid", "both"):
                     q = _PAID_QUERIES[platform].format(
-                        brand=brand, geo=geo, paid_label=paid_label
+                        brand=brand_tag, geo=geo, paid_label=paid_label
                     )
                     search_tasks.append((q, "paid"))
 
                 # ── ORGANIC search ─────────────────────────────────────────
                 if post_type in ("organic", "both"):
-                    q = _ORGANIC_QUERIES[platform].format(brand=brand, geo=geo)
+                    q = _ORGANIC_QUERIES[platform].format(brand=brand_tag, geo=geo)
                     search_tasks.append((q, "organic"))
 
                 # Cross-platform competitive benchmark (always)
                 search_tasks.append((
-                    f"{brand} vs competitors {platform} engagement share of voice{geo} {date_hint}",
+                    f"{brand_tag} vs competitors {platform} engagement share of voice{geo} {date_hint}",
                     "both",
                 ))
 
-                platform_snippets = _parallel_search(search_tasks)
+                platform_snippets = _filter_nsfw(_parallel_search(search_tasks), brand)
 
                 if platform_snippets:
                     matched = next(
@@ -319,10 +378,10 @@ class SocialSearchTool(BaseTool):
 
             # General brand social health (1 query per brand)
             gen_q = (
-                f"{brand} social media presence overview {' '.join(platforms)} "
+                f"{brand_tag} social media presence overview {' '.join(platforms)} "
                 f"followers engagement rate benchmark{geo} {date_hint}"
             )
-            gen = _search(gen_q, max_results=3)
+            gen = _filter_nsfw(_search(gen_q, max_results=3), brand)
             if gen:
                 brand_entry["general_presence"] = _enrich_snippets(gen, "organic")
 
