@@ -1,3 +1,4 @@
+import json
 from crewai import Task
 
 
@@ -22,29 +23,29 @@ class SocialTasks:
             f"{date_from} to {date_to}" if date_from and date_to else date_range
         )
 
+        api_input = json.dumps({
+            "brands": all_brands,
+            "platforms": platforms,
+            "country": country or "PH",
+        })
         return Task(
             description=(
-                f"Use the Profile Baseline Scraper tool to collect organic baseline metrics "
-                f"for the following brands: {brands_str}.\n\n"
+                f"Collect social media metrics for these brands: {brands_str}.\n\n"
                 f"PLATFORMS: {', '.join(platforms)}\n"
-                f"DATE SCOPE: {date_scope} — scrape only posts published within this window.\n"
                 f"COUNTRY/MARKET: {country or 'Global'}\n\n"
-                "Call the tool with this JSON:\n"
-                + "{\n"
-                + '  "brands": [' + ", ".join('{"name": "' + b + '", "handles": {}}' for b in all_brands) + '],\n'
-                + '  "platforms": ' + str(platforms) + ',\n'
-                + '  "date_from": "' + date_from + '",\n'
-                + '  "date_to": "' + date_to + '",\n'
-                + '  "country": "' + country + '"\n'
-                + "}\n\n"
-                "The tool returns per-brand, per-platform baselines with: "
-                "avg_likes, avg_comments, avg_views, avg_er_pct, follower_count, posts_in_scope. "
-                "Return the full JSON output from the tool unchanged."
+                "STEP 1 — Call the 'Brand API Data Fetcher' tool FIRST with this exact input:\n"
+                f"{api_input}\n\n"
+                "This tool uses the YouTube Data API v3 and Meta Ad Library API to return "
+                "real subscriber counts, video view counts, likes, and declared ad data.\n\n"
+                "STEP 2 — Return the full JSON output from the Brand API Data Fetcher tool. "
+                "Do NOT call the Profile Baseline Scraper tool unless the API tool returns "
+                "empty platform_data for every brand."
             ),
             expected_output=(
-                "JSON from the Profile Baseline Scraper tool: list of baselines per brand per platform, "
-                "each with avg_likes, avg_comments, avg_views, avg_er_pct, follower_count, "
-                "posts_in_scope, collection_method, data_source."
+                "JSON from the Brand API Data Fetcher tool: per-brand platform data with "
+                "real metrics from YouTube Data API v3 (subscribers, avg_views, avg_likes) "
+                "and Meta Ad Library API (active_ads_found, impressions_min, impressions_max). "
+                "data_source field must show 'youtube_data_api_v3' or 'meta_ad_library_api'."
             ),
             agent=agent,
         )
