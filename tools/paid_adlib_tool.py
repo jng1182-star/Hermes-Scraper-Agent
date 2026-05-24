@@ -236,7 +236,10 @@ async def _scrape_tiktok(context, brand: str, country: str) -> list[dict]:
 
 
 async def _scrape_google(context, brand: str, country: str) -> list[dict]:
-    """Scrape Google Ads Transparency Center for paid ads by brand."""
+    """
+    Scrape Google Ads Transparency Center for paid ad intelligence.
+    Extracts the advertiser list (with ~ad counts) rendered after search.
+    """
     safe_brand = _sanitise_brand(brand)
     base_url = "https://adstransparency.google.com/?region=anywhere"
 
@@ -245,64 +248,64 @@ async def _scrape_google(context, brand: str, country: str) -> list[dict]:
     try:
         await _rate_limit("adstransparency.google.com")
         await page.goto(base_url, timeout=20_000, wait_until="domcontentloaded")
-        await asyncio.sleep(2)
+        await asyncio.sleep(3)
 
-        # Step 1 — fill search input and submit
         search_input = await page.query_selector("material-input input")
         if not search_input:
             return []
+
         await search_input.fill(safe_brand)
         await search_input.press("Enter")
-        await asyncio.sleep(4)
+        await asyncio.sleep(5)
 
-        # Step 2 — advertiser list appears; click the first (most relevant) result
+        # Wait for the advertiser results table (contains brand, country, ad count)
         try:
-            await page.wait_for_selector("material-list-item", timeout=10_000)
-        except Exception:
-            return []
-
-        items = await page.query_selector_all("material-list-item")
-        if not items:
-            return []
-
-        # Click first advertiser in the list
-        await items[0].click()
-        await asyncio.sleep(4)
-
-        # Step 3 — creative gallery should now be loaded
-        try:
-            await page.wait_for_selector(
-                "material-creative-preview, [data-creative-id]",
-                timeout=15_000,
+            await page.wait_for_function(
+                f"document.body.innerText.toLowerCase().includes('{safe_brand.lower()[:20]}')"
+                " && document.body.innerText.includes('ads')",
+                timeout=12_000,
             )
         except Exception:
-            # Fallback — capture whatever body text loaded (may include ad counts)
-            body_text = await _text(await page.query_selector("body"))
-            if body_text and safe_brand.lower() in body_text.lower():
-                ads.append({
-                    "url": page.url,
-                    "title": f"{safe_brand} — Google Ads Transparency",
-                    "content": body_text[:1500],
-                    "source_type": "paid",
-                })
-            return ads
+            return []
 
-        cards = await page.query_selector_all("material-creative-preview, [data-creative-id]")
-        for card in cards[:10]:
-            raw_text = await _text(card)
-            if not raw_text:
-                continue
-            asset_el  = await card.query_selector("img[src]")
-            asset_url = await _attr(asset_el, "src") if asset_el else ""
-            content   = raw_text
-            if asset_url:
-                content += f" | Creative: {asset_url[:200]}"
+        # Extract body text and parse the advertiser results block
+        body_text = await page.inner_text("body")
+        # Find the "Advertisers" section header and extract from there
+        adv_idx = body_text.find("Advertisers")
+        if adv_idx < 0:
+            adv_idx = body_text.lower().find(safe_brand.lower())
+        if adv_idx < 0:
+            return []
+
+        # Extract the relevant block (up to 2000 chars from the advertisers section)
+        result_block = _sanitise(body_text[adv_idx:adv_idx + 2000])
+
+        # Parse into per-advertiser entries by splitting on brand name occurrences
+        lines = [l.strip() for l in result_block.splitlines() if l.strip()]
+        entries: list[str] = []
+        chunk: list[str] = []
+        for line in lines:
+            if safe_brand.lower() in line.lower() and chunk:
+                entries.append(" | ".join(chunk))
+                chunk = [line]
+            else:
+                chunk.append(line)
+        if chunk:
+            entries.append(" | ".join(chunk))
+
+        # Filter to entries that actually mention the brand
+        entries = [e for e in entries if safe_brand.lower() in e.lower()][:5]
+        if not entries:
+            entries = [result_block[:800]]
+
+        for entry in entries[:5]:
             ads.append({
-                "url": page.url,
+                "url": base_url,
                 "title": f"{safe_brand} — Google Ads Transparency",
-                "content": content[:1500],
+                "content": entry[:1500],
                 "source_type": "paid",
             })
+
     except Exception as e:
         print(f"[PaidAdLib] Google scrape error for '{brand}': {e}", flush=True)
     finally:
