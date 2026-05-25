@@ -171,7 +171,11 @@
       "real_estate": 1.1
     }
   },
-  "updated_at": "2026-05-25T04:28:37.487069+00:00",
-  "sources": [],
+  "updated_at": "2026-05-25T05:12:13.777624+00:00",
+  "sources": [
+    "https://www.meta.ai/",
+    "https://www.meta.com/about/",
+    "https://business.facebook.com/"
+  ],
   "methodology": "Auto-refreshed via DuckDuckGo web search + Ollama LLM extraction. Sources: eMarketer, Statista, Socialinsider, Sprout Social, Rival IQ, Kantar APAC. Values validated for plausible ranges; fallback to prior values if extraction fails."
 }
