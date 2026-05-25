@@ -163,9 +163,9 @@ class SocialTasks:
 
         upload_context = ""
         if uploaded:
-            upload_context = "\n\nUPLOADED REFERENCE FILES (extract geo targeting, campaign scale, and presence signals from these):\n"
-            for uf in uploaded[:5]:
-                upload_context += f"\n--- {uf['filename']} ---\n{uf['content'][:2000]}\n"
+            upload_context = "\n\nUPLOADED REFERENCE FILES (read fully — use any relevant context: competitor lists, briefs, brand data, geo targeting, campaign scale, creative themes, market presence signals):\n"
+            for uf in uploaded[:10]:
+                upload_context += f"\n--- {uf['filename']} ---\n{uf['content'][:8000]}\n"
 
         all_brands = list(advertisers) + [c for c in competitors if c not in advertisers]
         brands_str = ", ".join(all_brands) if all_brands else query
@@ -202,9 +202,9 @@ class SocialTasks:
                 "  'fallback_scraper'— Playwright DOM scrape\n"
                 "  'search_fallback' — inferred from web search snippets\n"
                 "This tag is required and will be used to assign confidence scores.\n\n"
-                "From uploaded reference files, look for: geo targeting data, "
-                "campaign launch dates, market presence evidence, and any signals "
-                "of advertising scale or creative volume. Do NOT extract spend or CPM data."
+                "From uploaded reference files, extract all relevant context: competitor brand lists, "
+                "geo targeting data, campaign briefs, market presence evidence, creative themes, "
+                "ad scale signals, and any brand-specific intelligence. Do NOT extract spend or CPM data."
             ),
             expected_output=(
                 "A per-brand, per-platform report with: ad presence signals "

@@ -202,6 +202,25 @@ def _run_worker(params: dict):
     old_out, old_err = sys.stdout, sys.stderr
     sys.stdout = sys.stderr = _Cap()
     _main._state_hook = _pipeline_hook
+
+    # Inject parsed reference files into params so tasks.py can use them
+    parsed_dir = Path("data/parsed")
+    if parsed_dir.exists():
+        uploaded_context = []
+        for f in sorted(parsed_dir.iterdir()):
+            if f.is_file():
+                try:
+                    content = f.read_text(encoding="utf-8", errors="replace")
+                    if content.strip():
+                        uploaded_context.append({
+                            "filename": f.name.removesuffix(".txt"),
+                            "content": content,
+                        })
+                except Exception:
+                    pass
+        if uploaded_context:
+            params["uploaded_context"] = uploaded_context
+
     try:
         _main.run_pipeline(params)
         with _state_lock:
