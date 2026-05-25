@@ -630,110 +630,94 @@ select.form-input { cursor: pointer; }
   border-radius: 50%;
 }
 
-.network-body {
+/* ── Agent Grid — full-bleed 2×3 / responsive ───────────────────────────── */
+.agent-grid {
   flex: 1;
-  display: flex;
-  flex-direction: row;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  grid-template-rows: repeat(2, 1fr);
+  gap: 0;
   overflow: hidden;
   min-height: 0;
 }
 
-.network-canvas-wrap {
-  flex: 1;
+/* Card base */
+.agent-card {
   position: relative;
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid rgba(30,144,255,0.08);
+  border-bottom: 1px solid rgba(30,144,255,0.08);
+  background: #060d1c;
   overflow: hidden;
+  cursor: default;
+  transition: background 0.4s;
+  padding: 16px 18px 12px;
+}
+
+/* Top accent stripe (newsletter pattern) */
+.agent-card::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 2px;
+  background: var(--acolor, transparent);
+  opacity: 0;
+  transition: opacity 0.4s;
+}
+.agent-card[data-state=active]::before { opacity: 1; }
+.agent-card[data-state=done]::before   { opacity: 0.45; }
+
+/* State backgrounds */
+.agent-card[data-state=active] { background: #07101e; }
+.agent-card[data-state=done]   { background: rgba(34,197,94,0.03); }
+
+/* Card header row */
+.acard-top {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+/* Pulsing dot */
+.acard-dot {
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  background: #2e5080;
+  flex-shrink: 0;
+  margin-top: 4px;
+  transition: background 0.4s;
+}
+.agent-card[data-state=active] .acard-dot {
+  background: var(--acolor);
+  animation: pulse-dot 1.2s ease-in-out infinite;
+}
+.agent-card[data-state=done] .acard-dot { background: #22c55e; }
+
+@keyframes pulse-dot {
+  0%,100% { opacity: 1; transform: scale(1); }
+  50%      { opacity: 0.35; transform: scale(0.6); }
+}
+
+.acard-info {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  flex: 1;
   min-width: 0;
 }
 
-#networkCanvas {
-  width: 100%;
-  height: 100%;
-  display: block;
-}
-
-/* ── Right panel: agent deck + log ──────────────────────────────────────── */
-.network-right-panel {
-  width: 340px;
-  flex-shrink: 0;
-  border-left: 1px solid var(--border);
-  display: flex;
-  flex-direction: column;
-  background: #060d1c;
-  overflow: hidden;
-}
-
-/* ── Agent Deck ─────────────────────────────────────────────────────────── */
-.agent-deck {
-  display: flex;
-  flex-direction: column;
-  gap: 0;
-  flex-shrink: 0;
-}
-
-.agent-card {
-  position: relative;
-  border-bottom: 1px solid rgba(30,144,255,0.08);
-  transition: background 200ms ease;
-  overflow: hidden;
-  cursor: default;
-}
-
-/* Accent stripe — left edge */
-.acard-stripe {
-  position: absolute;
-  left: 0; top: 0; bottom: 0;
-  width: 3px;
-  background: var(--acolor);
-  opacity: 0.35;
-  transition: opacity 200ms ease, width 200ms ease;
-}
-.agent-card.active .acard-stripe {
-  opacity: 1;
-  width: 4px;
-  box-shadow: 0 0 10px var(--acolor);
-}
-.agent-card.done .acard-stripe { opacity: 0.55; }
-
-/* Background tint when active */
-.agent-card.active {
-  background: var(--acolor-lt);
-}
-.agent-card.done {
-  background: rgba(34,197,94,0.04);
-}
-
-.acard-inner {
-  padding: 11px 14px 10px 18px;
-}
-
-.acard-top {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-bottom: 7px;
-}
-
 .acard-icon {
-  font-size: 1.1rem;
+  font-size: 1.15rem;
   color: var(--acolor);
-  opacity: 0.5;
+  opacity: 0.45;
   flex-shrink: 0;
   line-height: 1;
-  transition: opacity 200ms ease, text-shadow 200ms ease;
+  transition: opacity 0.4s;
 }
-.agent-card.active .acard-icon {
-  opacity: 1;
-  text-shadow: 0 0 12px var(--acolor);
-  animation: icon-pulse 1.5s ease-in-out infinite;
-}
-.agent-card.done .acard-icon { opacity: 0.7; }
-
-@keyframes icon-pulse {
-  0%,100% { transform: scale(1); }
-  50%      { transform: scale(1.15); }
-}
-
-.acard-info { flex: 1; min-width: 0; }
+.agent-card[data-state=active] .acard-icon { opacity: 1; }
+.agent-card[data-state=done]   .acard-icon { opacity: 0.65; }
 
 .acard-name {
   font-family: var(--mono);
@@ -741,16 +725,16 @@ select.form-input { cursor: pointer; }
   font-weight: 700;
   letter-spacing: 0.1em;
   color: var(--acolor);
-  opacity: 0.7;
-  transition: opacity 200ms ease;
+  opacity: 0.6;
+  transition: opacity 0.4s;
   white-space: nowrap;
 }
-.agent-card.active .acard-name { opacity: 1; }
-.agent-card.done .acard-name   { color: #22c55e; opacity: 0.85; }
+.agent-card[data-state=active] .acard-name { opacity: 1; }
+.agent-card[data-state=done]   .acard-name { color: #22c55e; opacity: 0.85; }
 
 .acard-role {
   font-family: var(--mono);
-  font-size: 0.60rem;
+  font-size: 0.58rem;
   color: #3d6fa8;
   letter-spacing: 0.03em;
   margin-top: 1px;
@@ -762,7 +746,7 @@ select.form-input { cursor: pointer; }
 /* Status badge */
 .acard-badge {
   font-family: var(--mono);
-  font-size: 0.58rem;
+  font-size: 0.57rem;
   font-weight: 700;
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -770,131 +754,93 @@ select.form-input { cursor: pointer; }
   border-radius: 20px;
   white-space: nowrap;
   flex-shrink: 0;
-  transition: all 200ms ease;
+  background: rgba(46,80,128,0.25);
+  color: #3d6fa8;
+  transition: all 0.3s;
 }
-.acard-badge.idle   { background: rgba(46,80,128,0.25); color: #3d6fa8; }
-.acard-badge.active {
-  background: var(--acolor-lt);
+.agent-card[data-state=active] .acard-badge {
+  background: color-mix(in srgb, var(--acolor) 15%, transparent);
   color: var(--acolor);
   border: 1px solid var(--acolor);
-  box-shadow: 0 0 8px rgba(var(--acolor), 0.3);
   animation: badge-blink 1.2s ease-in-out infinite;
 }
-.acard-badge.done   { background: rgba(34,197,94,0.15); color: #22c55e; }
+.agent-card[data-state=done] .acard-badge {
+  background: rgba(34,197,94,0.15);
+  color: #22c55e;
+  border: none;
+}
 
 @keyframes badge-blink {
   0%,100% { opacity: 1; }
-  50%      { opacity: 0.65; }
+  50%      { opacity: 0.6; }
 }
 
-/* Log line inside card */
-.acard-log {
-  font-family: var(--mono);
-  font-size: 0.62rem;
-  color: #2e5080;
-  line-height: 1.45;
-  min-height: 18px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  transition: color 200ms ease;
-  margin-bottom: 6px;
-}
-.agent-card.active .acard-log { color: #8b949e; }
-.agent-card.done   .acard-log { color: #3d6fa8; }
-
-/* Activity bar */
-.acard-bar-wrap {
+/* Scan sweep bar (newsletter style) */
+.acard-scan-bar {
   height: 2px;
   background: rgba(30,144,255,0.08);
   border-radius: 1px;
   overflow: hidden;
-}
-.acard-bar {
-  height: 100%;
-  width: 0%;
-  background: var(--acolor);
-  border-radius: 1px;
-  transition: width 0.8s ease, background 200ms ease;
-}
-.agent-card.active .acard-bar {
-  animation: bar-sweep 2.4s ease-in-out infinite;
-  width: 100%;
-}
-.agent-card.done .acard-bar {
-  width: 100%;
-  background: #22c55e;
-  animation: none;
-}
-
-@keyframes bar-sweep {
-  0%   { width: 0%;   margin-left: 0; }
-  50%  { width: 100%; margin-left: 0; }
-  100% { width: 0%;   margin-left: 100%; }
-}
-
-/* Live log panel — bottom of right panel */
-.network-log-panel {
-  flex: 1;
-  border-top: 1px solid rgba(30,144,255,0.10);
-  display: flex;
-  flex-direction: column;
-  background: #0a0f1e;
-  overflow: hidden;
-  min-height: 0;
-}
-
-.network-log-header {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 10px 14px;
-  border-bottom: 1px solid rgba(255,255,255,0.06);
+  margin-bottom: 10px;
   flex-shrink: 0;
 }
-
-.network-log-title {
-  font-family: var(--mono);
-  font-size: 0.65rem;
-  font-weight: 700;
-  letter-spacing: 0.12em;
-  color: #38bdf8;
-  text-transform: uppercase;
+.acard-scan-fill {
+  height: 100%;
+  width: 35%;
+  border-radius: 1px;
+  opacity: 0;
+  transition: opacity 0.3s;
+  animation: scan-move 1.4s ease-in-out infinite;
+}
+.agent-card[data-state=active] .acard-scan-fill { opacity: 1; }
+.agent-card[data-state=done] .acard-scan-bar {
+  background: rgba(34,197,94,0.25);
+}
+.agent-card[data-state=done] .acard-scan-fill {
+  width: 100%;
+  opacity: 0.5;
+  animation: none;
+  background: #22c55e !important;
 }
 
-.network-log-hint {
-  font-family: var(--mono);
-  font-size: 0.6rem;
-  color: rgba(255,255,255,0.25);
-  letter-spacing: 0.04em;
+@keyframes scan-move {
+  0%   { transform: translateX(-100%); }
+  100% { transform: translateX(385%); }
 }
 
-.network-log-output {
+/* Per-card thinking feed */
+.acard-feed {
   flex: 1;
-  overflow-y: auto;
-  padding: 12px 14px;
   margin: 0;
   font-family: var(--mono);
-  font-size: 0.68rem;
-  line-height: 1.6;
-  color: #94a3b8;
+  font-size: 0.62rem;
+  line-height: 1.55;
+  color: #2e5080;
   white-space: pre-wrap;
   word-break: break-word;
-  background: transparent;
+  overflow-y: auto;
+  overflow-x: hidden;
+  transition: color 0.3s;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255,255,255,0.08) transparent;
+  min-height: 0;
 }
+.agent-card[data-state=active] .acard-feed { color: #8b949e; }
+.agent-card[data-state=done]   .acard-feed { color: #3d6fa8; }
+.acard-feed::-webkit-scrollbar { width: 3px; }
+.acard-feed::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 2px; }
 
-.network-log-output::-webkit-scrollbar { width: 4px; }
-.network-log-output::-webkit-scrollbar-track { background: transparent; }
-.network-log-output::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.12); border-radius: 2px; }
+/* Legend dots */
+.legend-dot { width: 8px; height: 8px; border-radius: 50%; }
+.legend-active { background: #1f6feb; }
+.legend-done   { background: #22c55e; }
+.legend-idle   { background: #2e5080; }
 
-/* Log line colors */
+/* Log line colors (kept for backward compat) */
 .log-agent-active { color: #38bdf8; font-weight: 700; }
 .log-agent-done   { color: #4ade80; }
-.log-gate         { color: #a78bfa; }
 .log-warn         { color: #fbbf24; font-weight: 700; }
 .log-error        { color: #f87171; font-weight: 700; }
-.log-start        { color: #e2e8f0; font-weight: 700; }
-.log-done         { color: #4ade80; font-weight: 700; }
 
 /* ── Stop button (network view) ─────────────────────────────────────────── */
 .btn-stop {

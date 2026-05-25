@@ -56,26 +56,51 @@
       <div class="config-card fade-in">
         <div class="config-card-title">Scan Configuration</div>
 
-        <!-- Row 1: Advertisers (multi) + Competitors -->
-        <div class="form-row">
+        <!-- Row 1: Brand rows (Your Brands + Competitors) -->
+        <div class="form-row brand-rows-row">
+
+          <!-- Your Brands panel -->
           <div class="form-group">
-            <label class="form-label">
-              Your Brand(s) / Advertisers
-              <span class="form-hint">Type brand name, press Enter to add multiple</span>
+            <label class="form-label">Your Brand(s) / Advertiser(s)
+              <span class="form-hint">Brand name + parent advertiser per row · up to 5</span>
             </label>
-            <div class="tag-input-wrap" id="advertiserWrap">
-              <input class="tag-input" id="advertiserInput" placeholder="e.g. Colgate, Oral-B…" autocomplete="off">
+            <div class="brand-rows-wrap" id="myBrandRows">
+              <div class="brand-row-header">
+                <span class="brand-col-label">Brand</span>
+                <span class="brand-col-label">Advertiser</span>
+              </div>
+              <div class="brand-row-list" id="myBrandList">
+                <div class="brand-row">
+                  <input class="form-input brand-row-input" type="text" placeholder="e.g. Colgate" data-role="brand">
+                  <input class="form-input brand-row-input" type="text" placeholder="e.g. Colgate-Palmolive" data-role="advertiser">
+                  <button class="brand-row-remove" title="Remove row" tabindex="-1">✕</button>
+                </div>
+              </div>
+              <button class="brand-row-add" id="addMyBrandRow" title="Add another brand row">+ Add Row</button>
             </div>
           </div>
+
+          <!-- Competitors panel -->
           <div class="form-group">
-            <label class="form-label">
-              Competitor Brands
-              <span class="form-hint">Type brand name, press Enter</span>
+            <label class="form-label">Competitor Brands
+              <span class="form-hint">Brand name + parent advertiser per row · up to 5</span>
             </label>
-            <div class="tag-input-wrap" id="tagWrap">
-              <input class="tag-input" id="tagInput" placeholder="Type brand, press Enter…" autocomplete="off">
+            <div class="brand-rows-wrap" id="compBrandRows">
+              <div class="brand-row-header">
+                <span class="brand-col-label">Brand</span>
+                <span class="brand-col-label">Advertiser</span>
+              </div>
+              <div class="brand-row-list" id="compBrandList">
+                <div class="brand-row">
+                  <input class="form-input brand-row-input" type="text" placeholder="e.g. Oral-B" data-role="brand">
+                  <input class="form-input brand-row-input" type="text" placeholder="e.g. Procter &amp; Gamble" data-role="advertiser">
+                  <button class="brand-row-remove" title="Remove row" tabindex="-1">✕</button>
+                </div>
+              </div>
+              <button class="brand-row-add" id="addCompBrandRow" title="Add another competitor row">+ Add Row</button>
             </div>
           </div>
+
         </div>
 
         <!-- Row 2: Country (multi-select) + Industry -->
@@ -287,16 +312,16 @@
   <!-- ═══════════════════ PAGE 2: NETWORK VIEW ════════════════════ -->
   <div id="page-network" class="page">
     <div class="network-header">
-      <div class="network-title">Agent Network · Live Pipeline</div>
+      <div class="network-title">Agent Pipeline · Live View</div>
       <div class="network-meta">
         <div class="elapsed-badge" id="elapsedBadge" style="display:none;">
           <span class="elapsed-icon">⏱</span>
           <span id="elapsedTime">0:00</span>
         </div>
         <div class="agent-legend">
-          <div class="legend-item"><div class="legend-dot" style="background:#1f6feb"></div>Active</div>
-          <div class="legend-item"><div class="legend-dot" style="background:#22c55e"></div>Done</div>
-          <div class="legend-item"><div class="legend-dot" style="background:#2e5080"></div>Idle</div>
+          <div class="legend-item"><div class="legend-dot legend-active"></div>Active</div>
+          <div class="legend-item"><div class="legend-dot legend-done"></div>Done</div>
+          <div class="legend-item"><div class="legend-dot legend-idle"></div>Idle</div>
         </div>
         <button class="btn-stop" id="stopBtn" disabled title="Stop running analysis">■ Stop</button>
       </div>
@@ -307,120 +332,104 @@
       <span class="retry-badge" id="retryBadge"></span>
     </div>
 
-    <div class="network-body">
-      <div class="network-canvas-wrap">
-        <canvas id="networkCanvas"></canvas>
+    <div class="agent-grid">
+
+      <div class="agent-card" id="acard-profile" data-agent="profile" style="--acolor:#f59e0b;">
+        <div class="acard-top">
+          <div class="acard-dot" id="adot-profile"></div>
+          <div class="acard-info">
+            <div class="acard-icon">◉</div>
+            <div>
+              <div class="acard-name">PROFILE SCRAPER</div>
+              <div class="acard-role">Brand Profile Baseline</div>
+            </div>
+          </div>
+          <div class="acard-badge" id="abadge-profile">STANDBY</div>
+        </div>
+        <div class="acard-scan-bar"><div class="acard-scan-fill" style="background:linear-gradient(90deg,transparent,#f59e0b,transparent)"></div></div>
+        <pre class="acard-feed" id="alog-profile">Awaiting activation…</pre>
       </div>
 
-      <div class="network-right-panel">
-        <div class="agent-deck">
-
-          <div class="agent-card" id="acard-profile" data-agent="profile" style="--acolor:#f59e0b;--acolor-lt:rgba(245,158,11,0.10);">
-            <div class="acard-stripe"></div>
-            <div class="acard-inner">
-              <div class="acard-top">
-                <div class="acard-icon">◉</div>
-                <div class="acard-info">
-                  <div class="acard-name">PROFILE SCRAPER</div>
-                  <div class="acard-role">Brand Profile Baseline</div>
-                </div>
-                <div class="acard-badge idle" id="abadge-profile">○ IDLE</div>
-              </div>
-              <div class="acard-log" id="alog-profile">Awaiting activation…</div>
-              <div class="acard-bar-wrap"><div class="acard-bar" id="abar-profile"></div></div>
+      <div class="agent-card" id="acard-feed" data-agent="feed" style="--acolor:#ec4899;">
+        <div class="acard-top">
+          <div class="acard-dot" id="adot-feed"></div>
+          <div class="acard-info">
+            <div class="acard-icon">⬡</div>
+            <div>
+              <div class="acard-name">FEED SCROLLER</div>
+              <div class="acard-role">In-Feed Ad Capture</div>
             </div>
           </div>
-
-          <div class="agent-card" id="acard-feed" data-agent="feed" style="--acolor:#ec4899;--acolor-lt:rgba(236,72,153,0.10);">
-            <div class="acard-stripe"></div>
-            <div class="acard-inner">
-              <div class="acard-top">
-                <div class="acard-icon">⬡</div>
-                <div class="acard-info">
-                  <div class="acard-name">FEED SCROLLER</div>
-                  <div class="acard-role">In-Feed Ad Capture</div>
-                </div>
-                <div class="acard-badge idle" id="abadge-feed">○ IDLE</div>
-              </div>
-              <div class="acard-log" id="alog-feed">Awaiting activation…</div>
-              <div class="acard-bar-wrap"><div class="acard-bar" id="abar-feed"></div></div>
-            </div>
-          </div>
-
-          <div class="agent-card" id="acard-scraper" data-agent="scraper" style="--acolor:#1f6feb;--acolor-lt:rgba(31,111,235,0.10);">
-            <div class="acard-stripe"></div>
-            <div class="acard-inner">
-              <div class="acard-top">
-                <div class="acard-icon">⬡</div>
-                <div class="acard-info">
-                  <div class="acard-name">SCRAPER</div>
-                  <div class="acard-role">Search Fallback Collector</div>
-                </div>
-                <div class="acard-badge idle" id="abadge-scraper">○ IDLE</div>
-              </div>
-              <div class="acard-log" id="alog-scraper">Awaiting activation…</div>
-              <div class="acard-bar-wrap"><div class="acard-bar" id="abar-scraper"></div></div>
-            </div>
-          </div>
-
-          <div class="agent-card" id="acard-analyst" data-agent="analyst" style="--acolor:#38bdf8;--acolor-lt:rgba(56,189,248,0.10);">
-            <div class="acard-stripe"></div>
-            <div class="acard-inner">
-              <div class="acard-top">
-                <div class="acard-icon">◈</div>
-                <div class="acard-info">
-                  <div class="acard-name">ANALYST</div>
-                  <div class="acard-role">Share-of-Voice Analyst</div>
-                </div>
-                <div class="acard-badge idle" id="abadge-analyst">IDLE</div>
-              </div>
-              <div class="acard-log" id="alog-analyst">Awaiting data from Scraper…</div>
-              <div class="acard-bar-wrap"><div class="acard-bar" id="abar-analyst"></div></div>
-            </div>
-          </div>
-
-          <div class="agent-card" id="acard-reporter" data-agent="reporter" style="--acolor:#a78bfa;--acolor-lt:rgba(167,139,250,0.10);">
-            <div class="acard-stripe"></div>
-            <div class="acard-inner">
-              <div class="acard-top">
-                <div class="acard-icon">◎</div>
-                <div class="acard-info">
-                  <div class="acard-name">REPORTER</div>
-                  <div class="acard-role">Intelligence Reporter</div>
-                </div>
-                <div class="acard-badge idle" id="abadge-reporter">IDLE</div>
-              </div>
-              <div class="acard-log" id="alog-reporter">Awaiting analysis…</div>
-              <div class="acard-bar-wrap"><div class="acard-bar" id="abar-reporter"></div></div>
-            </div>
-          </div>
-
-          <div class="agent-card" id="acard-gate" data-agent="gate" style="--acolor:#22c55e;--acolor-lt:rgba(34,197,94,0.10);">
-            <div class="acard-stripe"></div>
-            <div class="acard-inner">
-              <div class="acard-top">
-                <div class="acard-icon">⬟</div>
-                <div class="acard-info">
-                  <div class="acard-name">APPROVAL GATE</div>
-                  <div class="acard-role">SOV · Confidence · Quality Validation</div>
-                </div>
-                <div class="acard-badge idle" id="abadge-gate">IDLE</div>
-              </div>
-              <div class="acard-log" id="alog-gate">Awaiting pipeline output…</div>
-              <div class="acard-bar-wrap"><div class="acard-bar" id="abar-gate"></div></div>
-            </div>
-          </div>
-
+          <div class="acard-badge" id="abadge-feed">STANDBY</div>
         </div>
-
-        <div class="network-log-panel" id="networkLogPanel">
-          <div class="network-log-header">
-            <span class="network-log-title">LIVE LOG</span>
-            <span class="network-log-hint">agent thoughts · tool calls · errors</span>
-          </div>
-          <pre class="network-log-output" id="networkLogOutput">Waiting for analysis to start…</pre>
-        </div>
+        <div class="acard-scan-bar"><div class="acard-scan-fill" style="background:linear-gradient(90deg,transparent,#ec4899,transparent)"></div></div>
+        <pre class="acard-feed" id="alog-feed">Awaiting activation…</pre>
       </div>
+
+      <div class="agent-card" id="acard-scraper" data-agent="scraper" style="--acolor:#1f6feb;">
+        <div class="acard-top">
+          <div class="acard-dot" id="adot-scraper"></div>
+          <div class="acard-info">
+            <div class="acard-icon">⬡</div>
+            <div>
+              <div class="acard-name">RESEARCHER</div>
+              <div class="acard-role">Social Data Researcher</div>
+            </div>
+          </div>
+          <div class="acard-badge" id="abadge-scraper">STANDBY</div>
+        </div>
+        <div class="acard-scan-bar"><div class="acard-scan-fill" style="background:linear-gradient(90deg,transparent,#1f6feb,transparent)"></div></div>
+        <pre class="acard-feed" id="alog-scraper">Awaiting activation…</pre>
+      </div>
+
+      <div class="agent-card" id="acard-analyst" data-agent="analyst" style="--acolor:#38bdf8;">
+        <div class="acard-top">
+          <div class="acard-dot" id="adot-analyst"></div>
+          <div class="acard-info">
+            <div class="acard-icon">◈</div>
+            <div>
+              <div class="acard-name">ANALYST</div>
+              <div class="acard-role">Share-of-Voice Analyst</div>
+            </div>
+          </div>
+          <div class="acard-badge" id="abadge-analyst">STANDBY</div>
+        </div>
+        <div class="acard-scan-bar"><div class="acard-scan-fill" style="background:linear-gradient(90deg,transparent,#38bdf8,transparent)"></div></div>
+        <pre class="acard-feed" id="alog-analyst">Awaiting data…</pre>
+      </div>
+
+      <div class="agent-card" id="acard-reporter" data-agent="reporter" style="--acolor:#a78bfa;">
+        <div class="acard-top">
+          <div class="acard-dot" id="adot-reporter"></div>
+          <div class="acard-info">
+            <div class="acard-icon">◎</div>
+            <div>
+              <div class="acard-name">REPORTER</div>
+              <div class="acard-role">Intelligence Reporter</div>
+            </div>
+          </div>
+          <div class="acard-badge" id="abadge-reporter">STANDBY</div>
+        </div>
+        <div class="acard-scan-bar"><div class="acard-scan-fill" style="background:linear-gradient(90deg,transparent,#a78bfa,transparent)"></div></div>
+        <pre class="acard-feed" id="alog-reporter">Awaiting analysis…</pre>
+      </div>
+
+      <div class="agent-card" id="acard-gate" data-agent="gate" style="--acolor:#22c55e;">
+        <div class="acard-top">
+          <div class="acard-dot" id="adot-gate"></div>
+          <div class="acard-info">
+            <div class="acard-icon">⬟</div>
+            <div>
+              <div class="acard-name">APPROVAL GATE</div>
+              <div class="acard-role">SOV · Confidence · Quality Validation</div>
+            </div>
+          </div>
+          <div class="acard-badge" id="abadge-gate">STANDBY</div>
+        </div>
+        <div class="acard-scan-bar"><div class="acard-scan-fill" style="background:linear-gradient(90deg,transparent,#22c55e,transparent)"></div></div>
+        <pre class="acard-feed" id="alog-gate">Awaiting pipeline output…</pre>
+      </div>
+
     </div>
   </div>
 
@@ -726,21 +735,6 @@
 
 </div>
 
-<!-- Node Popover -->
-<div class="node-popover" id="nodePopover">
-  <div class="node-popover-inner">
-    <div class="popover-header">
-      <div class="popover-agent-name" id="popoverName"></div>
-      <div class="popover-role" id="popoverRole"></div>
-    </div>
-    <div class="popover-body">
-      <div class="popover-status-badge idle" id="popoverBadge"></div>
-      <div class="popover-sep"></div>
-      <div class="popover-log" id="popoverLog"></div>
-      <div class="popover-hint">Hover to inspect · run analysis to activate</div>
-    </div>
-  </div>
-</div>
 
 <script src="app.js"></script>
 </body>

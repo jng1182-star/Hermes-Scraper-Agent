@@ -81,19 +81,6 @@ function showPage(name) {
   if (page) page.classList.add('active');
   document.querySelectorAll('[data-page="' + name + '"]').forEach(t => t.classList.add('active'));
 
-  if (name === 'network') {
-    if (!_networkInit) {
-      setTimeout(() => { initNetworkCanvas(); drawNetworkLoop(); _networkInit = true; }, 80);
-    } else {
-      setTimeout(resizeCanvas, 80);
-    }
-  } else {
-    if (_rafId && name !== 'network') {
-      cancelAnimationFrame(_rafId);
-      _rafId = null;
-      _networkInit = false;
-    }
-  }
   if (name === 'results' && State.reportData) {
     renderResults(State.reportData);
   }
@@ -412,26 +399,10 @@ async function pollStatus() {
     const s   = await res.json();
 
     if (s.logs && s.logs.length) {
-      document.getElementById('logOutput').textContent = s.logs.join('\n');
-      document.getElementById('logOutput').scrollTop = 999999;
       State.lastLogs = s.logs;
-
-      const netLog = document.getElementById('networkLogOutput');
-      if (netLog) {
-        netLog.innerHTML = s.logs.map(line => {
-          let cls = '';
-          if (line.startsWith('[Agent]') && line.includes('active'))   cls = 'log-agent-active';
-          else if (line.startsWith('[Agent]') && line.includes('done')) cls = 'log-agent-done';
-          else if (line.startsWith('[Gate]'))                           cls = 'log-gate';
-          else if (line.startsWith('[WATCHDOG]'))                       cls = 'log-warn';
-          else if (line.startsWith('ERROR') || line.includes('ERROR')) cls = 'log-error';
-          else if (line.startsWith('Starting Analysis'))                cls = 'log-start';
-          else if (line.startsWith('Pipeline complete'))                cls = 'log-done';
-          const escaped = line.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-          return cls ? `<span class="${cls}">${escaped}</span>` : escaped;
-        }).join('\n');
-        netLog.scrollTop = netLog.scrollHeight;
-      }
+      // Log panel on Configure page (if visible)
+      const logOut = document.getElementById('logOutput');
+      if (logOut) { logOut.textContent = s.logs.join('\n'); logOut.scrollTop = 999999; }
     }
 
     if (s.agent_states) {
@@ -533,30 +504,71 @@ async function pollStatus() {
 const CARD_LOG_HINTS = {
   profile:  { idle: 'Awaiting activation…', active: 'Scraping brand profile pages…',   done: 'Profile baselines collected' },
   feed:     { idle: 'Awaiting activation…', active: 'Scrolling in-feed ads…',          done: 'Feed ads captured' },
-  scraper:  { idle: 'Awaiting activation…', active: 'Collecting paid & organic data…', done: 'Data collection complete' },
+  scraper:  { idle: 'Awaiting activation…', active: 'Researching brand data across markets…', done: 'Research complete' },
   analyst:  { idle: 'Awaiting data…',       active: 'Computing 6-signal SOV index…',   done: 'Analysis complete' },
   reporter: { idle: 'Awaiting analysis…',   active: 'Composing intelligence report…',  done: 'Report compiled' },
   gate:     { idle: 'Awaiting output…',     active: 'Validating SOV, consistency & confidence…', done: 'SOV report validated ✓' },
 };
 
+// keyword → agent-id mapping for routing log lines to individual cards
+const _LOG_ROUTE = {
+  profile:  ['profile scraper', 'profile baseline', 'brand profile', '[profile]'],
+  feed:     ['feed scroller', 'in-feed', 'feed ad', '[feed]'],
+  scraper:  ['social data scraper', 'researcher', 'social data', '[scraper]', 'duckduckgo', 'search tool'],
+  analyst:  ['analyst', 'share-of-voice', 'sov', 'signal', '[analyst]'],
+  reporter: ['reporter', 'intelligence report', '[reporter]'],
+  gate:     ['approval gate', 'gate', 'validation', 'confidence', '[gate]'],
+};
+
+// Track last known log count per card to append only new lines
+const _cardLogState = { profile: 0, feed: 0, scraper: 0, analyst: 0, reporter: 0, gate: 0 };
+
+function _routeLogLine(line) {
+  const l = line.toLowerCase();
+  for (const [id, keywords] of Object.entries(_LOG_ROUTE)) {
+    if (keywords.some(k => l.includes(k))) return id;
+  }
+  return null;
+}
+
 function updateAgentCards(agentStates, logs) {
   Object.entries(agentStates).forEach(([id, status]) => {
     const card  = document.getElementById('acard-' + id);
     const badge = document.getElementById('abadge-' + id);
-    const logEl = document.getElementById('alog-'   + id);
-    if (!card || !badge || !logEl) return;
-    card.className  = 'agent-card ' + status;
-    badge.className = 'acard-badge ' + status;
-    badge.textContent = status === 'active' ? '● ACTIVE' : status === 'done' ? '✓ DONE' : '○ IDLE';
-    const hint  = CARD_LOG_HINTS[id]?.[status] || '';
-    const match = [...logs].reverse().find(l => l.toLowerCase().includes(id));
-    if (match && status === 'active') {
-      const clean = match.replace(/^\[.*?\]\s*/, '').substring(0, 52);
-      logEl.textContent = clean + (match.length > 52 ? '…' : '');
-    } else {
-      logEl.textContent = hint;
-    }
+    if (!card || !badge) return;
+
+    card.dataset.state = status;
+    badge.textContent = status === 'active' ? '⟳ WORKING' : status === 'done' ? '✓ DONE' : 'STANDBY';
   });
+
+  // Route new log lines to per-card feeds
+  if (logs && logs.length) {
+    // Build per-agent line buckets from all logs
+    const buckets = { profile: [], feed: [], scraper: [], analyst: [], reporter: [], gate: [] };
+    logs.forEach(line => {
+      const id = _routeLogLine(line);
+      if (id) buckets[id].push(line.replace(/^\[.*?\]\s*/, '').trim());
+    });
+    Object.entries(buckets).forEach(([id, lines]) => {
+      const feedEl = document.getElementById('alog-' + id);
+      if (!feedEl || !lines.length) return;
+      const state = agentStates[id] || 'idle';
+      if (state === 'idle' && !lines.length) return;
+      // Show last ~12 lines for the card
+      const show = lines.slice(-12).join('\n');
+      if (feedEl.textContent !== show) {
+        feedEl.textContent = show;
+        feedEl.scrollTop = feedEl.scrollHeight;
+      }
+    });
+    // For cards with no routed lines but active/done, show hint
+    Object.entries(agentStates).forEach(([id, status]) => {
+      if (!buckets[id]?.length) {
+        const feedEl = document.getElementById('alog-' + id);
+        if (feedEl) feedEl.textContent = CARD_LOG_HINTS[id]?.[status] || 'Awaiting…';
+      }
+    });
+  }
 }
 
 function resetAgentCards() {
@@ -565,10 +577,9 @@ function resetAgentCards() {
     const badge = document.getElementById('abadge-' + id);
     const logEl = document.getElementById('alog-'   + id);
     if (!card || !badge || !logEl) return;
-    card.className  = 'agent-card';
-    badge.className = 'acard-badge idle';
-    badge.textContent = '○ IDLE';
-    logEl.textContent = CARD_LOG_HINTS[id]?.idle || 'Awaiting…';
+    card.dataset.state = 'idle';
+    badge.textContent  = 'STANDBY';
+    logEl.textContent  = CARD_LOG_HINTS[id]?.idle || 'Awaiting…';
   });
 }
 
@@ -754,214 +765,6 @@ function hexBlend(c1, c2, t) {
   return `#${r.toString(16).padStart(2,'0')}${g.toString(16).padStart(2,'0')}${b.toString(16).padStart(2,'0')}`;
 }
 
-const AGENTS = {
-  profile:  { label:'PROFILE',       role:'Profile Baseline Scraper', color:'#f59e0b' },
-  feed:     { label:'FEED',          role:'In-Feed Ad Capture',       color:'#ec4899' },
-  scraper:  { label:'SCRAPER',       role:'Search Fallback',          color:'#1f6feb' },
-  analyst:  { label:'ANALYST',       role:'Share-of-Voice Analyst',   color:'#38bdf8' },
-  reporter: { label:'REPORTER',      role:'SOV Intelligence Reporter',color:'#a78bfa' },
-  gate:     { label:'APPROVAL GATE', role:'SOV · Confidence · Consistency', color:'#22c55e' },
-};
-
-const NODE_POS = {
-  profile:  { x:0.28, y:0.15 },
-  feed:     { x:0.72, y:0.15 },
-  scraper:  { x:0.50, y:0.35 },
-  analyst:  { x:0.25, y:0.60 },
-  reporter: { x:0.75, y:0.60 },
-  gate:     { x:0.50, y:0.85 },
-};
-
-const EDGES = [
-  { from:'profile',  to:'analyst'  },
-  { from:'feed',     to:'analyst'  },
-  { from:'scraper',  to:'analyst'  },
-  { from:'profile',  to:'reporter' },
-  { from:'feed',     to:'reporter' },
-  { from:'analyst',  to:'gate'     },
-  { from:'reporter', to:'gate'     },
-];
-
-let _canvas=null, _ctx=null, _pulse=0, _gridOff=0, _rafId=null, _packets=[];
-
-function initNetworkCanvas() {
-  _canvas = document.getElementById('networkCanvas');
-  _ctx    = _canvas.getContext('2d');
-  resizeCanvas();
-  window.addEventListener('resize', resizeCanvas);
-  _canvas.addEventListener('mousemove', onCanvasHover);
-  _canvas.addEventListener('mouseleave', hidePopover);
-  // Restart RAF loop when tab regains focus (RAF pauses in background tabs)
-  document.addEventListener('visibilitychange', () => {
-    if (!document.hidden) drawNetworkLoop();
-  });
-  window.addEventListener('pageshow', () => drawNetworkLoop());
-}
-function resizeCanvas() {
-  if (!_canvas) return;
-  const wrap = _canvas.parentElement;
-  _canvas.width  = wrap.clientWidth;
-  _canvas.height = wrap.clientHeight;
-}
-function nodePixel(id) {
-  const p = NODE_POS[id];
-  return { x: p.x * _canvas.width, y: p.y * _canvas.height };
-}
-function drawNetworkLoop() {
-  if (_rafId) cancelAnimationFrame(_rafId);
-  let first = true;
-  function frame() {
-    if (!_canvas||!_ctx) return;
-    if (first) { resizeCanvas(); first=false; }
-    drawNetwork(); _pulse+=1; _gridOff=(_gridOff+0.4)%24;
-    _rafId = requestAnimationFrame(frame);
-  }
-  _rafId = requestAnimationFrame(frame);
-}
-function drawNetwork() {
-  const W=_canvas.width, H=_canvas.height, ctx=_ctx;
-  ctx.fillStyle=SB.bg; ctx.fillRect(0,0,W,H);
-  const off=_gridOff%24;
-  ctx.strokeStyle=hexBlend(SB.bg,SB.grid,0.07); ctx.lineWidth=1; ctx.beginPath();
-  for(let x=-24+off;x<W+24;x+=24){ctx.moveTo(x,0);ctx.lineTo(x,H);}
-  for(let y=-24+off;y<H+24;y+=24){ctx.moveTo(0,y);ctx.lineTo(W,y);}
-  ctx.stroke();
-  EDGES.forEach(e=>drawEdge(ctx,e));
-  if(_pulse%15===0&&Math.random()<0.7){
-    const active=EDGES.filter(e=>(State.agentStates[e.from]||'idle')==='active');
-    if(active.length){
-      const e=active[Math.floor(Math.random()*active.length)];
-      _packets.push({from:e.from,to:e.to,t:0,speed:0.012+Math.random()*0.008,color:AGENTS[e.from].color});
-    }
-  }
-  _packets=_packets.filter(p=>{p.t+=p.speed;return p.t<1.0;});
-  _packets.forEach(p=>{
-    const a=nodePixel(p.from), b=nodePixel(p.to);
-    const px=a.x+(b.x-a.x)*p.t, py=a.y+(b.y-a.y)*p.t;
-    [[8,0.12],[5,0.28],[3,0.65]].forEach(([r,alpha])=>{
-      ctx.save(); ctx.globalAlpha=alpha; ctx.fillStyle=hexBlend(SB.bg,p.color,1.0);
-      ctx.beginPath(); ctx.arc(px,py,r,0,Math.PI*2); ctx.fill(); ctx.restore();
-    });
-  });
-  Object.keys(AGENTS).forEach(id=>drawNode(ctx,id,W,H));
-  ctx.save(); ctx.font='bold 9px Menlo,"SF Mono",monospace'; ctx.fillStyle=SB.fg3;
-  ctx.textAlign='left'; ctx.textBaseline='bottom'; ctx.setLineDash([]);
-  ctx.fillText('HERMES · NEURAL AGENT NETWORK',12,H-8); ctx.restore();
-}
-function drawEdge(ctx,edge){
-  const a=nodePixel(edge.from), b=nodePixel(edge.to);
-  const stFrom=State.agentStates[edge.from]||'idle', stTo=State.agentStates[edge.to]||'idle';
-  const isActive=stFrom==='active'||stTo==='active', isDone=stFrom==='done'&&stTo==='done';
-  const color=AGENTS[edge.from].color;
-  if(isActive){
-    [[8,hexBlend(SB.bg,color,0.12)],[4,hexBlend(SB.bg,color,0.22)],[2,hexBlend(SB.bg,color,0.60)]].forEach(([w,c])=>{
-      ctx.save(); ctx.strokeStyle=c; ctx.lineWidth=w; ctx.setLineDash([]); ctx.lineCap='round';
-      ctx.beginPath(); ctx.moveTo(a.x,a.y); ctx.lineTo(b.x,b.y); ctx.stroke(); ctx.restore();
-    });
-  } else if(isDone){
-    ctx.save(); ctx.strokeStyle=hexBlend(SB.bg,SB.success,0.30); ctx.lineWidth=1; ctx.setLineDash([]);
-    ctx.beginPath(); ctx.moveTo(a.x,a.y); ctx.lineTo(b.x,b.y); ctx.stroke(); ctx.restore();
-  } else {
-    ctx.save(); ctx.strokeStyle='#182840'; ctx.lineWidth=1; ctx.setLineDash([4,8]);
-    ctx.beginPath(); ctx.moveTo(a.x,a.y); ctx.lineTo(b.x,b.y); ctx.stroke(); ctx.restore();
-  }
-  const pipColor=isActive?hexBlend(SB.bg,color,0.60):isDone?hexBlend(SB.bg,SB.success,0.30):'#182840';
-  ctx.save(); ctx.fillStyle=pipColor; ctx.setLineDash([]);
-  ctx.beginPath(); ctx.arc(b.x,b.y,isActive?3:2,0,Math.PI*2); ctx.fill(); ctx.restore();
-}
-function drawNode(ctx,id,W,H){
-  const {x,y}=nodePixel(id), agent=AGENTS[id];
-  const status=State.agentStates[id]||'idle';
-  const isActive=status==='active', isDone=status==='done', color=agent.color;
-  const pulse=_pulse, sinFast=Math.sin(pulse*0.25), sinSlow=Math.sin(pulse*0.12);
-  const intensity=0.55+0.45*sinFast, nr=isActive?22:isDone?20:18;
-  if(isActive){
-    [[56,0.04],[40,0.08],[26,0.15]].forEach(([r,alpha])=>{
-      ctx.save(); ctx.globalAlpha=alpha*intensity;
-      const g=ctx.createRadialGradient(x,y,0,x,y,r); g.addColorStop(0,color); g.addColorStop(1,SB.bg);
-      ctx.fillStyle=g; ctx.beginPath(); ctx.arc(x,y,r,0,Math.PI*2); ctx.fill(); ctx.restore();
-    });
-    const outerR=nr+8+5*sinSlow;
-    ctx.save(); ctx.strokeStyle=hexBlend(SB.bg,color,0.28*intensity); ctx.lineWidth=1; ctx.setLineDash([]);
-    ctx.beginPath(); ctx.arc(x,y,outerR,0,Math.PI*2); ctx.stroke(); ctx.restore();
-    const midR=nr+4+3*Math.sin(pulse*0.20);
-    ctx.save(); ctx.strokeStyle=hexBlend(SB.bg,color,0.50*intensity); ctx.lineWidth=1.5; ctx.setLineDash([]);
-    ctx.beginPath(); ctx.arc(x,y,midR,0,Math.PI*2); ctx.stroke(); ctx.restore();
-  }
-  if(isDone){
-    ctx.save(); ctx.strokeStyle=hexBlend(SB.bg,SB.success,0.35); ctx.lineWidth=1.5; ctx.setLineDash([]);
-    ctx.beginPath(); ctx.arc(x,y,nr+5,0,Math.PI*2); ctx.stroke(); ctx.restore();
-    ctx.save(); ctx.globalAlpha=0.08;
-    const g=ctx.createRadialGradient(x,y,0,x,y,nr+14); g.addColorStop(0,SB.success); g.addColorStop(1,SB.bg);
-    ctx.fillStyle=g; ctx.beginPath(); ctx.arc(x,y,nr+14,0,Math.PI*2); ctx.fill(); ctx.restore();
-  }
-  ctx.save();
-  const bg=ctx.createRadialGradient(x-nr*0.25,y-nr*0.25,0,x,y,nr);
-  bg.addColorStop(0,isActive?hexBlend(SB.bg3,color,0.30*intensity):isDone?hexBlend(SB.bg3,SB.success,0.18):hexBlend(SB.bg3,SB.fg3,0.08));
-  bg.addColorStop(1,isActive?'#050f20':isDone?'#031208':'#070e1e');
-  ctx.fillStyle=bg; ctx.strokeStyle=isActive?hexBlend(SB.bg,color,0.85):isDone?SB.success:SB.idleBorder;
-  ctx.lineWidth=isActive?2:1.5; ctx.setLineDash([]);
-  ctx.beginPath(); ctx.arc(x,y,nr,0,Math.PI*2); ctx.fill(); ctx.stroke(); ctx.restore();
-  const pipVisible=!isActive||Math.sin(pulse*0.5)>0;
-  if(pipVisible){
-    const dotColor=isActive?color:isDone?SB.success:SB.idleBorder, pipR=isActive?4:3;
-    ctx.save();
-    if(isActive){ ctx.globalAlpha=0.45*intensity; ctx.fillStyle=color; ctx.beginPath(); ctx.arc(x+nr-6,y-nr+3,pipR+3,0,Math.PI*2); ctx.fill(); ctx.globalAlpha=1.0; }
-    ctx.fillStyle=dotColor; ctx.setLineDash([]);
-    ctx.beginPath(); ctx.arc(x+nr-6,y-nr+3,pipR,0,Math.PI*2); ctx.fill(); ctx.restore();
-  }
-  ctx.save(); ctx.font='bold 10px Menlo,"SF Mono",monospace';
-  ctx.fillStyle=isActive?color:isDone?SB.success:SB.fg3;
-  ctx.textAlign='center'; ctx.textBaseline='top'; ctx.setLineDash([]);
-  ctx.fillText(agent.label,x,y+nr+8); ctx.restore();
-  ctx.save(); ctx.font='600 9px Menlo,"SF Mono",monospace';
-  ctx.textAlign='center'; ctx.textBaseline='top'; ctx.setLineDash([]);
-  if(isActive){ const dots='.'.repeat((Math.floor(pulse*0.06)%3)+1); ctx.fillStyle=hexBlend(SB.bg,color,0.85); ctx.fillText('Thinking'+dots,x,y+nr+21); }
-  else if(isDone){ ctx.fillStyle=hexBlend(SB.bg,SB.success,0.70); ctx.fillText('✓ DONE',x,y+nr+21); }
-  else{ ctx.fillStyle=hexBlend(SB.bg,SB.fg3,0.55); ctx.fillText('○ IDLE',x,y+nr+21); }
-  ctx.restore();
-}
-
-// ── Popover ──────────────────────────────────────────────────────────────────
-const nodePopover = document.getElementById('nodePopover');
-let _popoverAgent=null, _popoverTO=null;
-function getNodeAt(mx,my){
-  if(!_canvas) return null;
-  const rect=_canvas.getBoundingClientRect();
-  const cx=mx-rect.left, cy=my-rect.top;
-  for(const id of Object.keys(NODE_POS)){
-    const{x,y}=nodePixel(id), r=State.agentStates[id]==='active'?26:22;
-    if(Math.hypot(cx-x,cy-y)<=r) return id;
-  }
-  return null;
-}
-function onCanvasHover(e){
-  const id=getNodeAt(e.clientX,e.clientY);
-  if(id===_popoverAgent) return;
-  hidePopover(); if(!id) return;
-  _popoverAgent=id; clearTimeout(_popoverTO);
-  _popoverTO=setTimeout(()=>showPopover(id,e.clientX,e.clientY),120);
-}
-function showPopover(id,mx,my){
-  const agent=AGENTS[id], status=State.agentStates[id]||'idle';
-  document.getElementById('popoverName').textContent=agent.label;
-  document.getElementById('popoverRole').textContent=agent.role;
-  const badge=document.getElementById('popoverBadge');
-  badge.textContent=status.toUpperCase(); badge.className='popover-status-badge '+status;
-  const lastLog=[...State.lastLogs].reverse().find(l=>l.toLowerCase().includes(agent.label.split(' ')[0].toLowerCase()))||'';
-  document.getElementById('popoverLog').textContent=lastLog?lastLog.substring(0,100)+(lastLog.length>100?'…':''):'No log output yet.';
-  const pop=nodePopover; pop.style.display='block';
-  const PW=280, PH=160;
-  let left=mx+16, top=my-80;
-  if(left+PW>window.innerWidth-8) left=mx-PW-16;
-  if(top<8) top=8;
-  if(top+PH>window.innerHeight-8) top=window.innerHeight-PH-8;
-  pop.style.left=left+'px'; pop.style.top=top+'px'; pop.classList.add('show');
-}
-function hidePopover(){
-  _popoverAgent=null; clearTimeout(_popoverTO);
-  nodePopover.classList.remove('show'); nodePopover.style.display='none';
-}
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // RESULTS RENDERING
