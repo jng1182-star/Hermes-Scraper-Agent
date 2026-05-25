@@ -5,6 +5,7 @@ Runs the HTTP server in a daemon thread; main thread stays free for signals.
 """
 import json
 import os
+import subprocess
 import threading
 import time
 from collections import deque
@@ -152,6 +153,114 @@ def _try_partial_report() -> Optional[dict]:
         except Exception:
             continue
     return None
+
+
+# ── Proxy / Tunnel state ─────────────────────────────────────────────────────
+_proxy_proc   : Optional[subprocess.Popen] = None
+_tunnel_proc  : Optional[subprocess.Popen] = None
+_tunnel_url   : str = ""
+_proxy_lock   = threading.Lock()
+_tunnel_lock  = threading.Lock()
+
+def _proxy_status() -> dict:
+    global _proxy_proc
+    with _proxy_lock:
+        if _proxy_proc and _proxy_proc.poll() is None:
+            return {"connected": True, "pid": _proxy_proc.pid, "url": os.getenv("PROXY_URL", "")}
+        _proxy_proc = None
+        return {"connected": False}
+
+def _tunnel_status() -> dict:
+    global _tunnel_proc, _tunnel_url
+    with _tunnel_lock:
+        if _tunnel_proc and _tunnel_proc.poll() is None:
+            return {"connected": True, "pid": _tunnel_proc.pid, "url": _tunnel_url}
+        _tunnel_proc = None
+        _tunnel_url = ""
+        return {"connected": False, "url": ""}
+
+def _start_proxy(proxy_url: str = "") -> dict:
+    global _proxy_proc
+    url = proxy_url or os.getenv("PROXY_URL", "")
+    if not url:
+        return {"ok": False, "error": "No proxy URL — set PROXY_URL in .env or pass as body.url"}
+    with _proxy_lock:
+        if _proxy_proc and _proxy_proc.poll() is None:
+            return {"ok": True, "status": "already_running", "pid": _proxy_proc.pid}
+        try:
+            # Try to launch a SOCKS5 tunnel via ssh or plain process — best effort
+            # Real proxy is external (Surfshark, etc). Here we just store the URL and mark connected.
+            os.environ["PROXY_URL"] = url
+            # Verify proxy is reachable via curl --proxy
+            result = subprocess.run(
+                ["curl", "--proxy", url, "--max-time", "5", "-s", "-o", "/dev/null", "-w", "%{http_code}", "https://www.google.com"],
+                capture_output=True, timeout=8, text=True
+            )
+            if result.returncode == 0 and result.stdout in ("200", "301", "302"):
+                class _FakeProc:
+                    pid = os.getpid(); poll = lambda self: None
+                _proxy_proc = _FakeProc()
+                return {"ok": True, "status": "connected", "url": url}
+            return {"ok": False, "error": f"Proxy unreachable (HTTP {result.stdout or 'timeout'})"}
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+
+def _stop_proxy() -> dict:
+    global _proxy_proc
+    with _proxy_lock:
+        if _proxy_proc:
+            try:
+                if hasattr(_proxy_proc, 'terminate') and callable(_proxy_proc.terminate):
+                    _proxy_proc.terminate()
+            except Exception:
+                pass
+            _proxy_proc = None
+        return {"ok": True, "status": "disconnected"}
+
+def _start_tunnel(ngrok_token: str = "") -> dict:
+    global _tunnel_proc, _tunnel_url
+    with _tunnel_lock:
+        if _tunnel_proc and _tunnel_proc.poll() is None:
+            return {"ok": True, "status": "already_running", "url": _tunnel_url}
+        token = ngrok_token or os.getenv("NGROK_AUTHTOKEN", "")
+        if not token:
+            return {"ok": False, "error": "No ngrok token — set NGROK_AUTHTOKEN in .env or pass as body.token"}
+        try:
+            os.environ["NGROK_AUTHTOKEN"] = token
+            proc = subprocess.Popen(
+                ["ngrok", "http", str(PORT), "--log=stdout", "--log-format=json"],
+                stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True
+            )
+            # Poll up to 6s for tunnel URL in stdout
+            import re as _re; url = ""
+            for _ in range(60):
+                time.sleep(0.1)
+                line = proc.stdout.readline() if proc.stdout else ""
+                if not line:
+                    break
+                m = _re.search(r'"url":"(https://[^"]+)"', line)
+                if m:
+                    url = m.group(1); break
+            if url:
+                _tunnel_proc = proc
+                _tunnel_url  = url
+                return {"ok": True, "status": "connected", "url": url}
+            proc.terminate()
+            return {"ok": False, "error": "ngrok started but no tunnel URL received — check ngrok auth"}
+        except FileNotFoundError:
+            return {"ok": False, "error": "ngrok not installed — brew install ngrok/ngrok/ngrok"}
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+
+def _stop_tunnel() -> dict:
+    global _tunnel_proc, _tunnel_url
+    with _tunnel_lock:
+        if _tunnel_proc:
+            try: _tunnel_proc.terminate()
+            except Exception: pass
+            _tunnel_proc = None
+            _tunnel_url  = ""
+        return {"ok": True, "status": "disconnected"}
 
 
 # ── Pipeline runner ───────────────────────────────────────────────────────────
@@ -434,6 +543,12 @@ class Handler(BaseHTTPRequestHandler):
                         files.append({"name": f.name, "size": f.stat().st_size})
             self._json(200, {"files": files})
 
+        elif p == "/proxy-status":
+            self._json(200, _proxy_status())
+
+        elif p == "/tunnel-status":
+            self._json(200, _tunnel_status())
+
         elif p.startswith("/dashboard/") or p == "/dashboard":
             rel = p.removeprefix("/dashboard/") or "index.html"
             file_path = DASHBOARD_DIR / rel
@@ -489,6 +604,18 @@ class Handler(BaseHTTPRequestHandler):
             t = threading.Thread(target=_run_worker, args=(data,), daemon=True)
             t.start()
             self._json(200, {"status": "started"})
+
+        elif p == "/start-proxy":
+            self._json(200, _start_proxy(data.get("url", "")))
+
+        elif p == "/stop-proxy":
+            self._json(200, _stop_proxy())
+
+        elif p == "/start-tunnel":
+            self._json(200, _start_tunnel(data.get("token", "")))
+
+        elif p == "/stop-tunnel":
+            self._json(200, _stop_tunnel())
 
         elif p == "/stop-analysis":
             import ctypes

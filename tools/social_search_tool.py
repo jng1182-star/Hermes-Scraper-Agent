@@ -120,7 +120,15 @@ def _search(query: str, max_results: int = 3) -> list[dict]:
 
 # ── Query builder helpers ──────────────────────────────────────────────────────
 
-def _extract_brands_and_platforms(query: str, params: dict = None) -> tuple[list[str], list[str], str]:
+def _extract_brands_and_platforms(query: str, params: dict = None) -> tuple[list[dict], list[str], str]:
+    """
+    Returns (brand_pairs, platforms, post_type).
+    brand_pairs: list of {"brand": str, "advertiser": str} dicts.
+    Advertiser is included in search queries (e.g. "Unilever Axe Philippines Facebook")
+    to avoid ambiguous brand names being confused with unrelated entities.
+    Industry context is NOT added to search queries — it is passed separately for
+    profile validation (agents use it to confirm the correct brand profile was found).
+    """
     params = params or {}
     post_type = params.get("post_type", "both") or "both"
 
@@ -140,30 +148,46 @@ def _extract_brands_and_platforms(query: str, params: dict = None) -> tuple[list
     if not platforms:
         platforms = list(SUPPORTED_PLATFORMS)
 
-    brands = []
-    advertisers = params.get("advertisers") or []
-    competitors = params.get("competitors") or []
-    if isinstance(advertisers, str):
-        advertisers = [a.strip() for a in advertisers.split(",") if a.strip()]
-    if isinstance(competitors, str):
-        competitors = [c.strip() for c in competitors.split(",") if c.strip()]
+    brand_pairs: list[dict] = []
 
-    for b in list(advertisers) + list(competitors):
-        if b and b not in brands:
-            brands.append(b)
+    # Prefer structured brand+advertiser pairs from new row-based form
+    my_brands  = params.get("my_brands")   or []   # [{"brand":..,"advertiser":..}]
+    comp_brands = params.get("comp_brands") or []   # [{"brand":..,"advertiser":..}]
+    for entry in list(my_brands) + list(comp_brands):
+        if isinstance(entry, dict) and entry.get("brand"):
+            brand_pairs.append({
+                "brand":      entry["brand"].strip(),
+                "advertiser": (entry.get("advertiser") or "").strip(),
+            })
 
-    if not brands:
+    # Fallback: flat advertisers + competitors lists (backward compat)
+    if not brand_pairs:
+        advertisers = params.get("advertisers") or []
+        competitors = params.get("competitors") or []
+        if isinstance(advertisers, str):
+            advertisers = [a.strip() for a in advertisers.split(",") if a.strip()]
+        if isinstance(competitors, str):
+            competitors = [c.strip() for c in competitors.split(",") if c.strip()]
+        seen: set[str] = set()
+        for b in list(advertisers) + list(competitors):
+            if b and b not in seen:
+                seen.add(b)
+                brand_pairs.append({"brand": b, "advertiser": ""})
+
+    # Last resort: parse from query string
+    if not brand_pairs:
         brand_part = re.split(r'\s+in\s+|\s+on\s+', query, flags=re.IGNORECASE)[0]
         brand_part = re.sub(r'\bvs\.?\b', ',', brand_part, flags=re.IGNORECASE)
         for b in brand_part.split(','):
             b = b.strip().strip('[]')
             if b and len(b) > 1:
-                brands.append(b)
+                brand_pairs.append({"brand": b, "advertiser": ""})
 
-    if not brands:
-        brands = [query.split()[0]] if query.split() else ["brand"]
+    if not brand_pairs:
+        first = query.split()[0] if query.split() else "brand"
+        brand_pairs = [{"brand": first, "advertiser": ""}]
 
-    return brands, platforms, post_type
+    return brand_pairs, platforms, post_type
 
 
 # ── Snippet enrichment ────────────────────────────────────────────────────────
@@ -219,18 +243,25 @@ class SocialSearchTool(BaseTool):
         except Exception:
             pass
 
-        brands, platforms, post_type = _extract_brands_and_platforms(query, params)
+        brand_pairs, platforms, post_type = _extract_brands_and_platforms(query, params)
         country   = params.get("country", "")
         industry  = params.get("industry", "")
         date_hint = params.get("date_range", "2025")
 
         # Multi-market: each market multiplies the brand×platform search matrix.
-        # e.g. brands=[Axe], platforms=[Facebook, YouTube, TikTok], markets=[PH, SG]
-        # → Axe Facebook Philippines, Axe YouTube Philippines, Axe TikTok Philippines,
-        #   Axe Facebook Singapore,   Axe YouTube Singapore,   Axe TikTok Singapore
+        # e.g. brands=[Axe/Unilever], platforms=[Facebook, YouTube, TikTok], markets=[PH, SG]
+        # → "Unilever Axe Facebook Philippines", "Unilever Axe YouTube Philippines", ...
         markets: list[str] = params.get("markets") or ([country] if country else [""])
 
         _cat_label = _INDUSTRY_CATEGORY_LABEL.get(industry or "", "brand")
+
+        # Industry is NOT added to search queries — used only as profile validation context
+        _industry_guard = (
+            f" INDUSTRY VALIDATION: Confirm the brand profile belongs to the '{industry}' "
+            f"industry before accepting any data. Discard profiles that are clearly unrelated "
+            f"(e.g. if industry is 'beauty', reject a profile for a hardware or food brand "
+            f"with the same name)."
+        ) if industry else ""
 
         _paid_tool = None
         if post_type in ("paid", "both"):
@@ -242,13 +273,21 @@ class SocialSearchTool(BaseTool):
 
         results: list[dict] = []
 
-        for brand in brands:
-            brand_tag = f"{brand} {_cat_label}"
+        for pair in brand_pairs:
+            brand      = pair["brand"]
+            advertiser = pair.get("advertiser", "")
+
+            # Search query: "Unilever Axe consumer goods brand" (advertiser + brand + category)
+            # Advertiser disambiguates the brand; category further narrows search intent.
+            # Industry is intentionally excluded from query — only used for profile validation.
+            brand_tag = " ".join(filter(None, [advertiser, brand, _cat_label]))
 
             brand_entry: dict = {
                 "brand":         brand,
+                "advertiser":    advertiser,
                 "platform_data": [],
                 "posts_found":   0,
+                "industry_note": _industry_guard,
             }
 
             # ── Outer loop: market — each market is a separate geo context ──
@@ -376,6 +415,7 @@ class SocialSearchTool(BaseTool):
             results.append(brand_entry)
 
         # ── Fallback to golden dataset ────────────────────────────────────
+        brands_flat = [p["brand"] for p in brand_pairs]
         if not any(b["platform_data"] for b in results):
             golden_path = os.path.join(os.path.dirname(__file__), "../data/golden_dataset.json")
             if os.path.exists(golden_path):
@@ -385,7 +425,7 @@ class SocialSearchTool(BaseTool):
                     "fallback": True,
                     "fallback_reason": "All live searches returned zero results — serving cached seed data.",
                     "query_meta": {
-                        "brands": brands, "platforms": platforms,
+                        "brands": brands_flat, "platforms": platforms,
                         "post_type": post_type, "markets": markets,
                     },
                     "results": golden_data,
@@ -399,11 +439,12 @@ class SocialSearchTool(BaseTool):
         total_snippets = sum(b["posts_found"] for b in results)
         return json.dumps({
             "query_meta": {
-                "brands":     brands,
-                "platforms":  platforms,
-                "post_type":  post_type,
-                "markets":    markets,
-                "date_range": date_hint,
+                "brands":      brands_flat,
+                "brand_pairs": brand_pairs,
+                "platforms":   platforms,
+                "post_type":   post_type,
+                "markets":     markets,
+                "date_range":  date_hint,
                 "total_snippets_retrieved": total_snippets,
             },
             "brand_results": results,

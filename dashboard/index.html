@@ -41,6 +41,44 @@
           <span class="partial-dot"></span>
           <span>Partial Results</span>
         </div>
+
+        <!-- Proxy status pill + panel -->
+        <div class="infra-pill-wrap" id="proxyWrap">
+          <button class="infra-pill" id="proxyPill" title="Proxy / VPN status">
+            <span class="infra-dot" id="proxyDot"></span>
+            <span id="proxyLabel">Proxy</span>
+          </button>
+          <div class="infra-panel" id="proxyPanel" style="display:none;">
+            <div class="infra-panel-title">Proxy / VPN</div>
+            <div class="infra-panel-status" id="proxyPanelStatus">Checking…</div>
+            <input class="infra-input" id="proxyUrlInput" type="text" placeholder="socks5://user:pass@host:port (or leave blank to use .env PROXY_URL)">
+            <div class="infra-panel-btns">
+              <button class="infra-btn-connect" id="proxyConnectBtn">Connect</button>
+              <button class="infra-btn-disconnect" id="proxyDisconnectBtn">Disconnect</button>
+            </div>
+            <div class="infra-panel-hint">Set <code>PROXY_URL=socks5://…</code> in .env to pre-fill. Used by Playwright scrapers only — DuckDuckGo and APIs don't need a proxy.</div>
+          </div>
+        </div>
+
+        <!-- Tunnel status pill + panel -->
+        <div class="infra-pill-wrap" id="tunnelWrap">
+          <button class="infra-pill" id="tunnelPill" title="ngrok tunnel status">
+            <span class="infra-dot" id="tunnelDot"></span>
+            <span id="tunnelLabel">Tunnel</span>
+          </button>
+          <div class="infra-panel" id="tunnelPanel" style="display:none;">
+            <div class="infra-panel-title">ngrok Tunnel</div>
+            <div class="infra-panel-status" id="tunnelPanelStatus">Checking…</div>
+            <div class="infra-tunnel-url" id="tunnelUrlDisplay" style="display:none;"></div>
+            <input class="infra-input" id="ngrokTokenInput" type="text" placeholder="ngrok authtoken (or set NGROK_AUTHTOKEN in .env)">
+            <div class="infra-panel-btns">
+              <button class="infra-btn-connect" id="tunnelConnectBtn">Start Tunnel</button>
+              <button class="infra-btn-disconnect" id="tunnelDisconnectBtn">Stop Tunnel</button>
+            </div>
+            <div class="infra-panel-hint">Exposes <code>http://localhost:8000</code> via a public ngrok URL for Railway / remote Ollama routing. Requires <code>brew install ngrok</code>.</div>
+          </div>
+        </div>
+
         <div class="live-badge" id="liveBadge">
           <div class="dot"></div>
           <span id="liveText">Offline</span>
@@ -106,11 +144,12 @@
         <!-- Row 2: Country (multi-select) + Industry -->
         <div class="form-row">
           <div class="form-group">
-            <label class="form-label" for="country">
+            <label class="form-label">
               Market(s)
-              <span class="form-hint">Hold Ctrl/Cmd to select multiple markets — each will be analysed</span>
+              <span class="form-hint">Select one or more markets — each will be analysed separately</span>
             </label>
-            <select class="form-input" id="country" multiple size="4" style="height:auto;min-height:90px;">
+            <!-- Hidden select keeps the value for getFormParams() -->
+            <select id="country" multiple style="display:none;">
               <option value="Singapore">Singapore</option>
               <option value="Philippines">Philippines</option>
               <option value="Thailand">Thailand</option>
@@ -131,6 +170,21 @@
               <option value="Mexico">Mexico</option>
               <option value="Canada">Canada</option>
             </select>
+            <!-- Custom multi-select UI -->
+            <div class="msel-wrap" id="marketMsel">
+              <div class="msel-trigger" id="marketMselTrigger" tabindex="0">
+                <div class="msel-pills" id="marketMselPills">
+                  <span class="msel-placeholder">Select market(s)…</span>
+                </div>
+                <span class="msel-arrow">▾</span>
+              </div>
+              <div class="msel-dropdown" id="marketMselDropdown" style="display:none;">
+                <div class="msel-search-wrap">
+                  <input class="msel-search" id="marketMselSearch" type="text" placeholder="Search markets…" autocomplete="off">
+                </div>
+                <div class="msel-options" id="marketMselOptions"></div>
+              </div>
+            </div>
           </div>
           <div class="form-group">
             <label class="form-label" for="industry">

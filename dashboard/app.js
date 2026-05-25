@@ -134,8 +134,155 @@ function _makeTagInput(wrapId, inputId, stateArray) {
   return { addTag, removeTag, renderTags };
 }
 
-const _advCtrl  = _makeTagInput('advertiserWrap', 'advertiserInput', State.advertisers);
-const _compCtrl = _makeTagInput('tagWrap',         'tagInput',        State.competitors);
+// ── Brand row helpers ────────────────────────────────────────────────────────
+
+function _makeBrandRow(brandVal, advVal, placeholderBrand, placeholderAdv) {
+  const row = document.createElement('div');
+  row.className = 'brand-row';
+  row.innerHTML = `
+    <input class="form-input" type="text" placeholder="${placeholderBrand}" data-role="brand" value="${brandVal || ''}">
+    <input class="form-input" type="text" placeholder="${placeholderAdv}"  data-role="advertiser" value="${advVal || ''}">
+    <button type="button" class="brand-row-remove" title="Remove row" tabindex="-1">✕</button>
+  `;
+  row.querySelector('.brand-row-remove').addEventListener('click', () => {
+    const list = row.parentElement;
+    if (list && list.querySelectorAll('.brand-row').length > 1) {
+      row.remove();
+      _updateAddRowBtn(list.closest('.brand-rows-wrap'));
+    }
+  });
+  return row;
+}
+
+function _updateAddRowBtn(wrap) {
+  if (!wrap) return;
+  const list = wrap.querySelector('.brand-row-list');
+  const btn  = wrap.querySelector('.brand-row-add');
+  if (list && btn) btn.disabled = list.querySelectorAll('.brand-row').length >= 5;
+}
+
+function _initBrandRows(listId, addBtnId, placeholderBrand, placeholderAdv) {
+  const list   = document.getElementById(listId);
+  const addBtn = document.getElementById(addBtnId);
+  const wrap   = addBtn ? addBtn.closest('.brand-rows-wrap') : null;
+  if (!list || !addBtn) return;
+
+  // Wire existing rows' remove buttons
+  list.querySelectorAll('.brand-row').forEach(row => {
+    row.querySelector('.brand-row-remove').addEventListener('click', () => {
+      if (list.querySelectorAll('.brand-row').length > 1) {
+        row.remove();
+        _updateAddRowBtn(wrap);
+      }
+    });
+  });
+
+  addBtn.addEventListener('click', () => {
+    if (list.querySelectorAll('.brand-row').length >= 5) return;
+    list.appendChild(_makeBrandRow('', '', placeholderBrand, placeholderAdv));
+    _updateAddRowBtn(wrap);
+  });
+
+  _updateAddRowBtn(wrap);
+}
+
+_initBrandRows('myBrandList',   'addMyBrandRow',  'e.g. Axe',    'e.g. Unilever');
+_initBrandRows('compBrandList', 'addCompBrandRow', 'e.g. Rexona', 'e.g. Unilever');
+
+// ── Custom multi-select for Market(s) ───────────────────────────────────────
+
+(function initMarketMsel() {
+  const wrap     = document.getElementById('marketMsel');
+  const trigger  = document.getElementById('marketMselTrigger');
+  const pillsEl  = document.getElementById('marketMselPills');
+  const dropdown = document.getElementById('marketMselDropdown');
+  const optionsEl= document.getElementById('marketMselOptions');
+  const searchEl = document.getElementById('marketMselSearch');
+  const hiddenSel= document.getElementById('country');
+  if (!wrap || !trigger || !hiddenSel) return;
+
+  const allOptions = Array.from(hiddenSel.options).map(o => ({ value: o.value, label: o.text }));
+  let selected = new Set();
+
+  function syncHidden() {
+    Array.from(hiddenSel.options).forEach(o => { o.selected = selected.has(o.value); });
+  }
+
+  function renderPills() {
+    pillsEl.innerHTML = '';
+    if (!selected.size) {
+      pillsEl.innerHTML = '<span class="msel-placeholder">Select market(s)…</span>';
+      return;
+    }
+    selected.forEach(val => {
+      const pill = document.createElement('span');
+      pill.className = 'msel-pill';
+      pill.innerHTML = `${esc(val)}<button type="button" class="msel-pill-remove" data-val="${esc(val)}" tabindex="-1">×</button>`;
+      pill.querySelector('.msel-pill-remove').addEventListener('click', e => {
+        e.stopPropagation();
+        selected.delete(val);
+        syncHidden(); renderPills(); renderOptions(searchEl.value);
+      });
+      pillsEl.appendChild(pill);
+    });
+  }
+
+  function renderOptions(filter) {
+    const q = (filter || '').toLowerCase();
+    optionsEl.innerHTML = '';
+    allOptions
+      .filter(o => !q || o.label.toLowerCase().includes(q))
+      .forEach(o => {
+        const div = document.createElement('div');
+        div.className = 'msel-option' + (selected.has(o.value) ? ' selected' : '');
+        div.innerHTML = `<span class="msel-option-check">${selected.has(o.value) ? '✓' : ''}</span>${esc(o.label)}`;
+        div.addEventListener('click', e => {
+          e.stopPropagation();
+          if (selected.has(o.value)) selected.delete(o.value);
+          else selected.add(o.value);
+          syncHidden(); renderPills(); renderOptions(searchEl.value);
+        });
+        optionsEl.appendChild(div);
+      });
+  }
+
+  function openDropdown() {
+    dropdown.style.display = '';
+    wrap.classList.add('open');
+    trigger.classList.add('open');
+    searchEl.value = '';
+    renderOptions('');
+    searchEl.focus();
+  }
+  function closeDropdown() {
+    dropdown.style.display = 'none';
+    wrap.classList.remove('open');
+    trigger.classList.remove('open');
+  }
+
+  trigger.addEventListener('click', e => {
+    if (dropdown.style.display === 'none') openDropdown();
+    else closeDropdown();
+  });
+  trigger.addEventListener('keydown', e => {
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openDropdown(); }
+    if (e.key === 'Escape') closeDropdown();
+  });
+  searchEl.addEventListener('input', () => renderOptions(searchEl.value));
+  document.addEventListener('click', e => {
+    if (!wrap.contains(e.target)) closeDropdown();
+  });
+
+  // Expose reset fn for resetForm()
+  wrap._mselReset = function() {
+    selected.clear();
+    syncHidden();
+    renderPills();
+    closeDropdown();
+  };
+
+  renderPills();
+})();
 
 // ── Platform checkboxes ──────────────────────────────────────────────────────
 document.querySelectorAll('.platform-option').forEach(label => {
@@ -265,18 +412,23 @@ document.getElementById('reportUpload').addEventListener('change', function(e) {
 // RUN ANALYSIS
 // ═══════════════════════════════════════════════════════════════════════════════
 
+function _readBrandRows(listId) {
+  const rows = [];
+  document.querySelectorAll(`#${listId} .brand-row`).forEach(row => {
+    const brand = (row.querySelector('[data-role="brand"]')?.value || '').trim();
+    const adv   = (row.querySelector('[data-role="advertiser"]')?.value || '').trim();
+    if (brand) rows.push({ brand, advertiser: adv });
+  });
+  return rows;
+}
+
 function getFormParams() {
-  // Auto-commit unsubmitted text
-  const advInput = document.getElementById('advertiserInput');
-  if (advInput && advInput.value.trim()) {
-    advInput.value.split(',').forEach(v => { const t=v.trim(); if(t) State.advertisers.push(t); });
-    advInput.value = '';
-  }
-  const tagInputEl = document.getElementById('tagInput');
-  if (tagInputEl && tagInputEl.value.trim()) {
-    tagInputEl.value.split(',').forEach(v => { const t=v.trim(); if(t) State.competitors.push(t); });
-    tagInputEl.value = '';
-  }
+  const my_brands   = _readBrandRows('myBrandList');
+  const comp_brands = _readBrandRows('compBrandList');
+
+  // Flat lists for backward compat with tools that expect advertisers[]/competitors[]
+  const advertisers = my_brands.map(r => r.brand).filter(Boolean);
+  const competitors = comp_brands.map(r => r.brand).filter(Boolean);
 
   const platforms = [];
   document.querySelectorAll('.platform-option input:checked').forEach(cb => platforms.push(cb.value));
@@ -300,11 +452,13 @@ function getFormParams() {
   const industry = document.getElementById('industry').value;
 
   return {
-    advertisers:  [...State.advertisers],
-    advertiser:   State.advertisers[0] || '',          // backward compat
-    competitors:  [...State.competitors],
+    my_brands,
+    comp_brands,
+    advertisers,                                        // flat — backward compat
+    advertiser:   advertisers[0] || '',
+    competitors,
     country,
-    markets,                                            // all selected markets
+    markets,
     industry,
     platforms,
     post_type:    State.postType,
@@ -320,9 +474,12 @@ document.getElementById('runBtn').addEventListener('click', async () => {
   const params = getFormParams();
 
   if (!params.advertisers.length && !params.competitors.length) {
-    const inp = document.getElementById('advertiserInput');
-    inp.focus(); inp.style.borderColor = 'var(--red)';
-    setTimeout(() => inp.style.borderColor = '', 2000);
+    const firstBrandInput = document.querySelector('#myBrandList .brand-row [data-role="brand"]');
+    if (firstBrandInput) {
+      firstBrandInput.focus();
+      firstBrandInput.style.borderColor = 'var(--red)';
+      setTimeout(() => { firstBrandInput.style.borderColor = ''; }, 2000);
+    }
     setLogStatus('error', 'Enter at least one brand to analyse.');
     showLogPanel(true);
     return;
@@ -604,7 +761,7 @@ function lockForm(locked) {
     el.style.pointerEvents = locked ? 'none' : '';
     el.style.opacity       = locked ? '0.5'  : '';
   });
-  cfg.querySelectorAll('.tag-input-wrap').forEach(el => {
+  cfg.querySelectorAll('.brand-rows-wrap').forEach(el => {
     el.style.pointerEvents = locked ? 'none' : '';
     el.style.opacity       = locked ? '0.5'  : '';
   });
@@ -619,14 +776,22 @@ function lockForm(locked) {
   if (resetBtn) resetBtn.disabled = false; // always clickable
 }
 
+function _resetBrandRowList(listId, addBtnId, placeholderBrand, placeholderAdv) {
+  const list = document.getElementById(listId);
+  if (!list) return;
+  list.innerHTML = '';
+  const row = _makeBrandRow('', '', placeholderBrand, placeholderAdv);
+  list.appendChild(row);
+  const wrap = document.getElementById(addBtnId)?.closest('.brand-rows-wrap');
+  _updateAddRowBtn(wrap);
+}
+
 function resetForm() {
   document.getElementById('keywords').value = '';
-  State.advertisers.length = 0; State.competitors.length = 0;
-  if (_advCtrl)  _advCtrl.renderTags();
-  if (_compCtrl) _compCtrl.renderTags();
-  document.getElementById('advertiserInput').value = '';
-  document.getElementById('tagInput').value        = '';
-  document.getElementById('country').value   = '';
+  _resetBrandRowList('myBrandList',   'addMyBrandRow',   'e.g. Axe',    'e.g. Unilever');
+  _resetBrandRowList('compBrandList', 'addCompBrandRow', 'e.g. Rexona', 'e.g. Unilever');
+  const mselWrap = document.getElementById('marketMsel');
+  if (mselWrap && mselWrap._mselReset) mselWrap._mselReset();
   document.getElementById('industry').value  = '';
 
   document.querySelectorAll('.platform-option').forEach(label => {
@@ -747,6 +912,148 @@ function setPartialPill(visible, phase) {
     pill.onclick = null;
   }
 }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// INFRA PILLS — Proxy + Tunnel status & control
+// ═══════════════════════════════════════════════════════════════════════════════
+
+(function initInfraPills() {
+  // ── Shared helpers ────────────────────────────────────────────────────────
+  function _setPillState(pillId, state) { // state: 'idle' | 'connecting' | 'connected' | 'error'
+    const pill = document.getElementById(pillId);
+    if (!pill) return;
+    pill.classList.remove('connected', 'error', 'connecting');
+    if (state !== 'idle') pill.classList.add(state);
+  }
+
+  function _closeOther(keepId) {
+    ['proxyPanel', 'tunnelPanel'].forEach(id => {
+      if (id !== keepId) document.getElementById(id).style.display = 'none';
+    });
+  }
+
+  // ── Proxy pill ─────────────────────────────────────────────────────────────
+  const proxyPill   = document.getElementById('proxyPill');
+  const proxyPanel  = document.getElementById('proxyPanel');
+  const proxyStatus = document.getElementById('proxyPanelStatus');
+  const proxyConnBtn= document.getElementById('proxyConnectBtn');
+  const proxyDiscBtn= document.getElementById('proxyDisconnectBtn');
+  const proxyInput  = document.getElementById('proxyUrlInput');
+
+  async function refreshProxyStatus(quiet) {
+    try {
+      const d = await fetch('/proxy-status').then(r => r.json());
+      if (d.connected) {
+        _setPillState('proxyPill', 'connected');
+        document.getElementById('proxyLabel').textContent = 'Proxy ●';
+        if (proxyStatus) proxyStatus.textContent = `Connected · ${d.url || 'proxy active'}`;
+      } else {
+        _setPillState('proxyPill', 'idle');
+        document.getElementById('proxyLabel').textContent = 'Proxy';
+        if (proxyStatus) proxyStatus.textContent = 'Not connected';
+      }
+    } catch(e) {
+      if (!quiet) { _setPillState('proxyPill', 'error'); if (proxyStatus) proxyStatus.textContent = 'Server unreachable'; }
+    }
+  }
+
+  proxyPill.addEventListener('click', e => {
+    e.stopPropagation();
+    const open = proxyPanel.style.display !== 'none';
+    _closeOther('proxyPanel');
+    proxyPanel.style.display = open ? 'none' : '';
+    if (!open) refreshProxyStatus(false);
+  });
+
+  if (proxyConnBtn) proxyConnBtn.addEventListener('click', async () => {
+    proxyConnBtn.disabled = true;
+    _setPillState('proxyPill', 'connecting');
+    if (proxyStatus) proxyStatus.textContent = 'Connecting…';
+    const url = proxyInput.value.trim();
+    try {
+      const d = await fetch('/start-proxy', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ url }) }).then(r=>r.json());
+      if (d.ok) { await refreshProxyStatus(false); }
+      else { _setPillState('proxyPill','error'); if (proxyStatus) proxyStatus.textContent = 'Error: ' + (d.error || 'unknown'); }
+    } catch(e) { _setPillState('proxyPill','error'); if (proxyStatus) proxyStatus.textContent = 'Request failed'; }
+    proxyConnBtn.disabled = false;
+  });
+
+  if (proxyDiscBtn) proxyDiscBtn.addEventListener('click', async () => {
+    proxyDiscBtn.disabled = true;
+    await fetch('/stop-proxy', { method:'POST', headers:{'Content-Type':'application/json'}, body:'{}' }).catch(()=>{});
+    await refreshProxyStatus(false);
+    proxyDiscBtn.disabled = false;
+  });
+
+  // ── Tunnel pill ────────────────────────────────────────────────────────────
+  const tunnelPill    = document.getElementById('tunnelPill');
+  const tunnelPanel   = document.getElementById('tunnelPanel');
+  const tunnelStatus  = document.getElementById('tunnelPanelStatus');
+  const tunnelUrlEl   = document.getElementById('tunnelUrlDisplay');
+  const tunnelConnBtn = document.getElementById('tunnelConnectBtn');
+  const tunnelDiscBtn = document.getElementById('tunnelDisconnectBtn');
+  const ngrokInput    = document.getElementById('ngrokTokenInput');
+
+  async function refreshTunnelStatus(quiet) {
+    try {
+      const d = await fetch('/tunnel-status').then(r => r.json());
+      if (d.connected) {
+        _setPillState('tunnelPill', 'connected');
+        document.getElementById('tunnelLabel').textContent = 'Tunnel ●';
+        if (tunnelStatus) tunnelStatus.textContent = 'Active';
+        if (tunnelUrlEl) { tunnelUrlEl.textContent = d.url; tunnelUrlEl.style.display = ''; }
+      } else {
+        _setPillState('tunnelPill', 'idle');
+        document.getElementById('tunnelLabel').textContent = 'Tunnel';
+        if (tunnelStatus) tunnelStatus.textContent = 'Not running';
+        if (tunnelUrlEl) tunnelUrlEl.style.display = 'none';
+      }
+    } catch(e) {
+      if (!quiet) { _setPillState('tunnelPill', 'error'); if (tunnelStatus) tunnelStatus.textContent = 'Server unreachable'; }
+    }
+  }
+
+  tunnelPill.addEventListener('click', e => {
+    e.stopPropagation();
+    const open = tunnelPanel.style.display !== 'none';
+    _closeOther('tunnelPanel');
+    tunnelPanel.style.display = open ? 'none' : '';
+    if (!open) refreshTunnelStatus(false);
+  });
+
+  if (tunnelConnBtn) tunnelConnBtn.addEventListener('click', async () => {
+    tunnelConnBtn.disabled = true;
+    _setPillState('tunnelPill', 'connecting');
+    if (tunnelStatus) tunnelStatus.textContent = 'Starting ngrok…';
+    const token = ngrokInput.value.trim();
+    try {
+      const d = await fetch('/start-tunnel', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ token }) }).then(r=>r.json());
+      if (d.ok) { await refreshTunnelStatus(false); }
+      else { _setPillState('tunnelPill','error'); if (tunnelStatus) tunnelStatus.textContent = 'Error: ' + (d.error || 'unknown'); }
+    } catch(e) { _setPillState('tunnelPill','error'); if (tunnelStatus) tunnelStatus.textContent = 'Request failed'; }
+    tunnelConnBtn.disabled = false;
+  });
+
+  if (tunnelDiscBtn) tunnelDiscBtn.addEventListener('click', async () => {
+    tunnelDiscBtn.disabled = true;
+    await fetch('/stop-tunnel', { method:'POST', headers:{'Content-Type':'application/json'}, body:'{}' }).catch(()=>{});
+    await refreshTunnelStatus(false);
+    tunnelDiscBtn.disabled = false;
+  });
+
+  // ── Close panels on outside click ─────────────────────────────────────────
+  document.addEventListener('click', e => {
+    if (!document.getElementById('proxyWrap')?.contains(e.target))  proxyPanel.style.display  = 'none';
+    if (!document.getElementById('tunnelWrap')?.contains(e.target)) tunnelPanel.style.display = 'none';
+  });
+
+  // ── Initial status poll (quiet — don't show error if server is cold) ───────
+  refreshProxyStatus(true);
+  refreshTunnelStatus(true);
+  // Poll every 15s
+  setInterval(() => { refreshProxyStatus(true); refreshTunnelStatus(true); }, 15000);
+})();
+
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // NETWORK CANVAS — Silicon Boardroom dark theme

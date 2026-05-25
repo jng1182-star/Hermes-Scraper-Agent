@@ -148,9 +148,12 @@ class SocialTasks:
         post_type   = params.get("post_type",  "both")
         advertisers = params.get("advertisers", [])
         competitors = params.get("competitors", [])
+        my_brands   = params.get("my_brands",   [])   # [{"brand":..,"advertiser":..}]
+        comp_brands = params.get("comp_brands",  [])   # [{"brand":..,"advertiser":..}]
         uploaded    = params.get("uploaded_context", [])
         country     = params.get("country", "")
         markets     = params.get("markets", [country] if country else [])
+        industry    = params.get("industry", "")
 
         if date_from and date_to:
             date_scope = (
@@ -176,34 +179,60 @@ class SocialTasks:
             for uf in uploaded[:10]:
                 upload_context += f"\n--- {uf['filename']} ---\n{uf['content'][:8000]}\n"
 
-        all_brands = list(advertisers) + [c for c in competitors if c not in advertisers]
-        brands_str = ", ".join(all_brands) if all_brands else query
+        # Build brand display strings — prefer advertiser+brand pairs
+        all_brand_pairs = list(my_brands) + [
+            b for b in comp_brands
+            if not any(b.get("brand") == x.get("brand") for x in my_brands)
+        ]
+        # Fallback to flat lists if no pairs
+        if not all_brand_pairs:
+            all_brands = list(advertisers) + [c for c in competitors if c not in advertisers]
+            all_brand_pairs = [{"brand": b, "advertiser": ""} for b in all_brands]
+
+        brands_display = ", ".join(
+            f"{p['advertiser']} {p['brand']}".strip() if p.get("advertiser") else p["brand"]
+            for p in all_brand_pairs
+        ) or query
         markets_str = ", ".join(markets) if markets else "all markets"
+
+        industry_guard = (
+            f"\nINDUSTRY VALIDATION: Industry is '{industry}'. The search tool queries include "
+            "the advertiser name to disambiguate (e.g. 'Unilever Axe' not just 'Axe'). "
+            "When evaluating results, verify the brand profile matches this industry — "
+            "reject any profile that clearly belongs to a different sector "
+            "(e.g. 'Axe' the hardware tool if industry is personal care/FMCG).\n"
+        ) if industry else ""
 
         return Task(
             description=(
                 f"Use the Social Media Intelligence Search tool to research: {query}\n\n"
-                f"TARGET BRANDS: {brands_str}\n"
+                f"TARGET BRANDS: {brands_display}\n"
                 f"TARGET MARKETS: {markets_str}\n"
                 f"PLATFORMS: {plat_str} (include TikTok)\n"
                 f"DATE SCOPE: {date_scope}\n"
                 f"CONTENT TYPE: {post_scope}\n"
+                f"{industry_guard}"
                 f"{upload_context}\n\n"
                 f"IMPORTANT — MARKET SCOPING: All data collected MUST be scoped to the target "
-                f"market(s): {markets_str}. The search tool automatically fires one query per "
-                "brand × platform × market combination when you pass the markets list in the "
-                "JSON params block. You MUST include the markets list in EVERY tool call.\n\n"
+                f"market(s): {markets_str}. The search tool fires one query per "
+                "brand × platform × market combination automatically when you pass my_brands, "
+                "comp_brands, and markets in the JSON params block. "
+                "Search queries include the advertiser name (e.g. 'Unilever Axe Facebook Philippines').\n\n"
                 "TOOL CALL FORMAT — append this JSON block to your query string:\n"
-                f'{{"advertisers": {json.dumps(advertisers)}, '
+                f'{{"my_brands": {json.dumps(my_brands)}, '
+                f'"comp_brands": {json.dumps(comp_brands)}, '
+                f'"advertisers": {json.dumps(advertisers)}, '
                 f'"competitors": {json.dumps([c for c in competitors if c not in advertisers])}, '
                 f'"markets": {json.dumps(markets)}, '
                 f'"platforms": {json.dumps(platforms)}, '
-                f'"post_type": "{params.get("post_type", "both")}", '
-                f'"industry": "{params.get("industry", "")}", '
+                f'"post_type": "{post_type}", '
+                f'"industry": "{industry}", '
                 f'"date_range": "{date_range}"}}\n\n'
-                "Example: if markets=['Philippines','Singapore'] and brand='Axe', the tool will\n"
-                "automatically search: 'Axe Facebook Philippines', 'Axe Facebook Singapore',\n"
-                "'Axe YouTube Philippines', 'Axe YouTube Singapore', etc.\n"
+                "Example: my_brands=[{{\"brand\":\"Axe\",\"advertiser\":\"Unilever\"}}], "
+                "markets=['Philippines','Singapore'] → tool searches:\n"
+                "  'Unilever Axe consumer goods brand Facebook Philippines'\n"
+                "  'Unilever Axe consumer goods brand Facebook Singapore'\n"
+                "  'Unilever Axe consumer goods brand YouTube Philippines' ... etc.\n"
                 "Do NOT call the tool once per market — pass all markets in one call.\n\n"
                 "For EACH brand on EACH platform, extract PRESENCE SIGNALS:\n"
                 "1. AD SIGNALS (primary):\n"
