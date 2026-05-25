@@ -68,12 +68,18 @@ def _kill_ollama_now():
 
 # Map CrewAI Agent.role → dashboard node IDs (C5 fix: all 6 roles mapped)
 _ROLE_TO_NODE = {
-    "brand profile collector": "profile",
-    "in-feed ad collector":    "feed",
-    "social data scraper":     "scraper",
-    "engagement analyst":      "analyst",
-    "intelligence reporter":   "reporter",
-    "approval gate":           "gate",
+    "profile baseline scraper": "profile",
+    "feed ad capture agent":    "feed",
+    "social data researcher":   "scraper",   # researcher maps to the 'scraper' card
+    "share-of-voice analyst":   "analyst",
+    "sov intelligence reporter":"reporter",
+    "approval gate":            "gate",
+    # legacy aliases
+    "brand profile collector":  "profile",
+    "in-feed ad collector":     "feed",
+    "social data scraper":      "scraper",
+    "engagement analyst":       "analyst",
+    "intelligence reporter":    "reporter",
 }
 
 

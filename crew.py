@@ -39,7 +39,7 @@ def _run_with_timeout(fn, timeout_secs: int, phase_name: str):
     return result[0]
 
 _CHECKPOINT_DIR = Path("data/checkpoints")
-_PHASE_NAMES    = ["profile", "feed", "scraper", "analyst", "reporter"]
+_PHASE_NAMES    = ["researcher", "profile", "feed", "analyst", "reporter"]
 
 
 def _cp_path(phase: str) -> Path:
@@ -92,31 +92,52 @@ class SocialListeningCrew:
         self.resume = resume
 
     def run(self):
+        researcher    = self.agents.researcher_agent()
         profile_agent = self.agents.profile_agent()
         feed_agent    = self.agents.feed_agent()
-        scraper       = self.agents.scraper_agent()   # fallback search-based
         analyst       = self.agents.analyst_agent()
         reporter      = self.agents.reporter_agent()
 
         # ── Checkpoint recovery ───────────────────────────────────────────────
-        cp_profile = _load_checkpoint("profile") if self.resume else None
-        cp_feed    = _load_checkpoint("feed")    if self.resume else None
-        cp_scraper = _load_checkpoint("scraper") if self.resume else None
-        cp_analyst = _load_checkpoint("analyst") if self.resume else None
+        cp_researcher = _load_checkpoint("researcher") if self.resume else None
+        cp_profile    = _load_checkpoint("profile")    if self.resume else None
+        cp_feed       = _load_checkpoint("feed")       if self.resume else None
+        cp_analyst    = _load_checkpoint("analyst")    if self.resume else None
 
-        # ── Phase 1 + 2: Profile baseline + Feed scroll (run concurrently) ───
-        # Both are I/O-bound Playwright tasks — running them concurrently cuts
-        # total scrape time roughly in half. They feed the analyst independently.
+        # ── Phase 0: Researcher — identify correct social profiles ────────────
+        # Runs first so profile_scraper and feed_scroller know exactly which
+        # pages/handles to target, rather than guessing from brand names alone.
+        profile_map = cp_researcher
+        if not profile_map:
+            _fire_hook("scraper", "active")
+            print("[PHASE] Researcher — identifying brand social profiles.", flush=True)
+            task_research = self.tasks.researcher_task(researcher, self.params)
+            crew_research = Crew(agents=[researcher], tasks=[task_research],
+                                 process=Process.sequential, verbose=True)
+            try:
+                crew_research.kickoff()
+                profile_map = str(task_research.output)
+                _save_checkpoint("researcher", profile_map)
+                print("[PHASE] Researcher complete.", flush=True)
+            except Exception as exc:
+                print(f"[PHASE] Researcher failed: {exc} — proceeding without profile map.", flush=True)
+                profile_map = ""
+            finally:
+                _fire_hook("scraper", "done")
+
+        # ── Phase 1 + 2: Profile baseline + Feed scroll (concurrent) ──────────
+        # Both receive the researcher's profile map so they target verified pages.
         profile_output = cp_profile
         feed_output    = cp_feed
 
         if not profile_output or not feed_output:
-            import concurrent.futures, json as _json
+            import concurrent.futures
 
             def _run_profile():
                 _fire_hook("profile", "active")
                 try:
-                    task = self.tasks.profile_task(profile_agent, self.params)
+                    task = self.tasks.profile_task(profile_agent, self.params,
+                                                   profile_map=profile_map)
                     crew = Crew(agents=[profile_agent], tasks=[task],
                                 process=Process.sequential, verbose=True)
                     crew.kickoff()
@@ -129,7 +150,8 @@ class SocialListeningCrew:
             def _run_feed():
                 _fire_hook("feed", "active")
                 try:
-                    task = self.tasks.feed_task(feed_agent, self.params)
+                    task = self.tasks.feed_task(feed_agent, self.params,
+                                                profile_map=profile_map)
                     crew = Crew(agents=[feed_agent], tasks=[task],
                                 process=Process.sequential, verbose=True)
                     crew.kickoff()
@@ -163,31 +185,14 @@ class SocialListeningCrew:
                         else:
                             feed_output = feed_output or "{}"
 
-        # ── Phase 3: Search fallback (only if both DOM scrapes returned nothing) ──
-        # Combine profile + feed output into context for the analyst.
-        combined_scrape = _merge_scrape_outputs(profile_output or "{}", feed_output or "{}")
-
-        if not combined_scrape.get("has_data") and not cp_scraper:
-            print("[PHASE] DOM scrapes empty — running search fallback.", flush=True)
-            _fire_hook("scraper", "active")
-            task_search = self.tasks.extraction_task(scraper, self.query, self.params)
-            crew_search = Crew(agents=[scraper], tasks=[task_search],
-                               process=Process.sequential, verbose=True)
-            crew_search.kickoff()
-            fallback_output = str(task_search.output)
-            _save_checkpoint("scraper", fallback_output)
-            cp_scraper = fallback_output
-            _fire_hook("scraper", "done")
-
-        # ── Phase 4: Analyst ──────────────────────────────────────────────────
+        # ── Phase 3: Analyst ──────────────────────────────────────────────────
         if cp_analyst:
             print("[RESUME] Analyst output restored from checkpoint. Running Reporter only.", flush=True)
         else:
-            # Pass combined first-party data + optional search fallback to analyst
             analyst_context = _build_analyst_context(
                 profile_output or "{}",
                 feed_output    or "{}",
-                cp_scraper     or "",
+                profile_map    or "",   # researcher output used as supplementary context
             )
             task_analyst = self.tasks.analysis_task(analyst, prior_context=analyst_context, params=self.params)
             crew_analyst = Crew(agents=[analyst], tasks=[task_analyst],
@@ -201,7 +206,7 @@ class SocialListeningCrew:
             except Exception:
                 pass
 
-        # ── Phase 5: Reporter ─────────────────────────────────────────────────
+        # ── Phase 4: Reporter ─────────────────────────────────────────────────
         task_reporter = self.tasks.reporting_task(reporter, prior_context=cp_analyst, params=self.params)
         crew_reporter = Crew(agents=[reporter], tasks=[task_reporter],
                              process=Process.sequential, verbose=True)

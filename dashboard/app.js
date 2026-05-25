@@ -661,7 +661,7 @@ async function pollStatus() {
 const CARD_LOG_HINTS = {
   profile:  { idle: 'Awaiting activation…', active: 'Scraping brand profile pages…',   done: 'Profile baselines collected' },
   feed:     { idle: 'Awaiting activation…', active: 'Scrolling in-feed ads…',          done: 'Feed ads captured' },
-  scraper:  { idle: 'Awaiting activation…', active: 'Researching brand data across markets…', done: 'Research complete' },
+  scraper:  { idle: 'Awaiting activation…', active: 'Identifying brand social profiles & channels…', done: 'Profile map complete' },
   analyst:  { idle: 'Awaiting data…',       active: 'Computing 6-signal SOV index…',   done: 'Analysis complete' },
   reporter: { idle: 'Awaiting analysis…',   active: 'Composing intelligence report…',  done: 'Report compiled' },
   gate:     { idle: 'Awaiting output…',     active: 'Validating SOV, consistency & confidence…', done: 'SOV report validated ✓' },
@@ -669,9 +669,11 @@ const CARD_LOG_HINTS = {
 
 // keyword → agent-id mapping for routing log lines to individual cards
 const _LOG_ROUTE = {
-  profile:  ['profile scraper', 'profile baseline', 'brand profile', '[profile]'],
-  feed:     ['feed scroller', 'in-feed', 'feed ad', '[feed]'],
-  scraper:  ['social data scraper', 'researcher', 'social data', '[scraper]', 'duckduckgo', 'search tool'],
+  profile:  ['profile scraper', 'profile baseline', 'brand profile', '[profile]', 'brand api data'],
+  feed:     ['feed scroller', 'in-feed', 'feed ad', '[feed]', 'ad capture', 'paid adlib'],
+  scraper:  ['social data researcher', 'researcher', 'profile discovery', 'profile map',
+             'social data scraper', 'social data', '[scraper]', 'duckduckgo', 'search tool',
+             'identifying brand', 'official page', 'official profile'],
   analyst:  ['analyst', 'share-of-voice', 'sov', 'signal', '[analyst]'],
   reporter: ['reporter', 'intelligence report', '[reporter]'],
   gate:     ['approval gate', 'gate', 'validation', 'confidence', '[gate]'],

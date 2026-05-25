@@ -94,26 +94,37 @@ class SocialAgents:
             verbose=True,
         )
 
-    def scraper_agent(self) -> Agent:
-        """Legacy search-based scraper — used as fallback when DOM scraping yields zero results."""
+    def researcher_agent(self) -> Agent:
+        """Agent 3 — profile discovery: find and verify the correct social handles/URLs for
+        each brand × market combination before scraping begins."""
         return Agent(
-            role="Social Data Scraper",
+            role="Social Data Researcher",
             goal=(
-                "Retrieve supplementary engagement intelligence via web search for brands "
-                "where direct profile scraping returned no data. Extract the best available "
-                "numbers from search snippets: likes, comments, shares, views, followers."
+                "For each brand + advertiser + market combination, identify and verify the correct "
+                "official social media profiles and ad library pages across all target platforms. "
+                "Use web search to find the exact YouTube channel URL, Facebook Page URL, TikTok "
+                "handle, and Instagram handle for each brand in each market. "
+                "Verify the profile belongs to the correct brand (match industry context) and "
+                "output a structured profile map that the scraper agents will use as their targets."
             ),
             backstory=(
-                "You are a senior social media intelligence analyst at a top media agency. "
-                "You use search intelligence as a fallback when direct scraping is unavailable. "
-                "You know the difference between a primary DOM observation and a search snippet "
-                "inference — you flag search-derived data as lower confidence in your output. "
-                "You never return zero-data — if one source is dry you try another angle."
+                "You are a senior social media intelligence researcher at a global media agency. "
+                "You specialise in brand profile identification — finding the authoritative, "
+                "brand-owned social channels versus fan pages or unrelated namesakes. "
+                "You search using the advertiser name + brand + market to disambiguate "
+                "(e.g. 'Unilever Axe Facebook Philippines official page') and cross-check "
+                "profile bios and branding to confirm the match. "
+                "You never assume — you verify, and you flag low-confidence matches. "
+                "Your output is a clean, structured profile map consumed directly by the scrapers."
             ),
-            tools=[self.search_tool, self.api_tool],
+            tools=[self.search_tool],
             llm=self.scraper_llm,
             verbose=True,
         )
+
+    def scraper_agent(self) -> Agent:
+        """Legacy alias kept for checkpoint compatibility — delegates to researcher_agent."""
+        return self.researcher_agent()
 
     def analyst_agent(self) -> Agent:
         return Agent(
