@@ -413,6 +413,12 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_response(200)
                 self.send_header("Content-Type", ct)
                 self.send_header("Content-Length", str(len(data)))
+                # Prevent browser and CDN caching of HTML/JS/CSS so deploys are instant
+                if file_path.suffix in (".html", ".js", ".css"):
+                    self.send_header("Cache-Control", "no-store, no-cache, must-revalidate")
+                    self.send_header("Pragma", "no-cache")
+                else:
+                    self.send_header("Cache-Control", "public, max-age=3600")
                 self.end_headers()
                 self.wfile.write(data)
             else:
