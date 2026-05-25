@@ -282,6 +282,7 @@ def run_pipeline(params: dict):
                     or "ngrok" in str(exc).lower()
                     or "ERR_NGROK" in str(exc)
                     or "incomplete HTTP response" in str(exc)
+                    or "[PHASE TIMEOUT]" in str(exc)
                 )
                 if is_stall:
                     _attempt += 1

@@ -8,18 +8,21 @@ from agents import SocialAgents
 from tasks import SocialTasks
 
 # Per-phase caps (scraper has no cap — runs until complete)
-_ANALYST_TIMEOUT  = int(os.getenv("ANALYST_TIMEOUT",  "300"))  # 5 min
-_REPORTER_TIMEOUT = int(os.getenv("REPORTER_TIMEOUT", "180"))  # 3 min
+_ANALYST_TIMEOUT  = int(os.getenv("ANALYST_TIMEOUT",  "600"))  # 10 min — complex analysis needs time
+_REPORTER_TIMEOUT = int(os.getenv("REPORTER_TIMEOUT", "300"))  # 5 min
 _GATE_TIMEOUT     = int(os.getenv("GATE_TIMEOUT",     "120"))  # 2 min
 
 
 def _run_with_timeout(fn, timeout_secs: int, phase_name: str):
-    """Run fn() in the current thread with a background timer that raises RuntimeError on timeout."""
+    """Run fn() in a thread; raise RuntimeError (treated as stall) if it exceeds timeout_secs."""
+    import ctypes
     result      = [None]
     exc_holder  = [None]
     done_evt    = threading.Event()
+    tid_holder  = [None]
 
     def _target():
+        tid_holder[0] = threading.current_thread().ident
         try:
             result[0] = fn()
         except Exception as e:
@@ -30,9 +33,19 @@ def _run_with_timeout(fn, timeout_secs: int, phase_name: str):
     t = threading.Thread(target=_target, daemon=True, name=f"phase-{phase_name}")
     t.start()
     if not done_evt.wait(timeout=timeout_secs):
+        # Interrupt the stuck phase thread so it doesn't keep consuming resources
+        if tid_holder[0]:
+            try:
+                ctypes.pythonapi.PyThreadState_SetAsyncExc(
+                    ctypes.c_ulong(tid_holder[0]),
+                    ctypes.py_object(RuntimeError),
+                )
+            except Exception:
+                pass
+        # Raise with "None or empty" so main.py stall-detection triggers a retry
         raise RuntimeError(
             f"[PHASE TIMEOUT] {phase_name} exceeded {timeout_secs}s cap. "
-            "Will retry from checkpoint."
+            "None or empty — will retry from checkpoint."
         )
     if exc_holder[0]:
         raise exc_holder[0]

@@ -39,6 +39,10 @@ _META_TOK = os.getenv("META_AD_LIBRARY_TOKEN", "")
 
 _HTTP_TIMEOUT = 12  # seconds
 
+# Set to True the first time Meta Ad Library returns HTTP 400 OAuthException code 10
+# (missing Ad Library permission). Avoids spamming identical failing requests.
+_META_TOK_INVALID = False
+
 
 def _get(url: str, headers: dict = None) -> dict | None:
     try:
@@ -50,6 +54,24 @@ def _get(url: str, headers: dict = None) -> dict | None:
     except urllib.error.HTTPError as e:
         body = e.read().decode(errors="ignore")[:300]
         logger.warning("[APIDataTool] HTTP %d for %s — %s", e.code, url[:120], body)
+        # Detect Meta Ad Library permission error (OAuthException code 10) and
+        # disable all subsequent Meta API calls — retrying with the same token
+        # will always fail (requires Ad Library API access to be granted at
+        # developers.facebook.com/apps → Permissions → ads_read).
+        if e.code == 400 and "graph.facebook.com" in url:
+            try:
+                err_body = json.loads(body)
+                if err_body.get("error", {}).get("code") == 10:
+                    global _META_TOK_INVALID
+                    _META_TOK_INVALID = True
+                    logger.error(
+                        "[APIDataTool] Meta Ad Library token lacks 'ads_read' permission "
+                        "(OAuthException code 10). Disabling Meta API for this run. "
+                        "Fix: go to developers.facebook.com → your app → Permissions → "
+                        "request 'ads_read', then regenerate the token."
+                    )
+            except Exception:
+                pass
         return None
     except Exception as e:
         logger.warning("[APIDataTool] GET failed: %s — %s", url[:120], e)
@@ -225,7 +247,7 @@ def _meta_ad_library(brand: str, country: str = "PH") -> dict:
     country: full name ('Philippines') or ISO-2 code ('PH').
     Token: free from developers.facebook.com/tools/explorer
     """
-    if not _META_TOK:
+    if not _META_TOK or _META_TOK_INVALID:
         return {}
     country_code = _resolve_country_code(country)
     q = urllib.parse.quote_plus(brand)

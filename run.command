@@ -1,14 +1,28 @@
 #!/bin/bash
 # Double-click this file in Finder to start the app.
-cd "$(dirname "$0")"
+DIR="$(cd "$(dirname "$0")" && pwd)"
+cd "$DIR"
 
-if ! python3 -c "import uvicorn" 2>/dev/null; then
-    echo "Installing dependencies..."
-    pip install -r requirements.txt -q
+echo "╔══════════════════════════════════════╗"
+echo "  ║        HERMES — Starting up…         ║"
+echo "  ╚══════════════════════════════════════╝"
+
+# Ensure venv uses Python 3.12 (crewai requires <3.13)
+if [ ! -f ".venv/bin/python" ] || ! .venv/bin/python -c "import sys; exit(0 if sys.version_info[:2] == (3,12) else 1)" 2>/dev/null; then
+    echo "  → Rebuilding venv with Python 3.12…"
+    PY312="$(command -v python3.12 || echo /opt/homebrew/bin/python3.12)"
+    "$PY312" -m venv .venv
 fi
 
-echo "Starting server → http://127.0.0.1:8000/dashboard/index.html"
-echo "Press Ctrl+C to stop."
+# Install / update dependencies using the venv pip
+if ! .venv/bin/python -c "import crewai" 2>/dev/null; then
+    echo "  → Installing dependencies..."
+    .venv/bin/pip install -r requirements.txt -q
+fi
+
+echo "  → Starting Hermes at http://127.0.0.1:8000"
+echo "  → Press Ctrl+C to stop."
+echo ""
 
 (sleep 2 && open "http://127.0.0.1:8000/dashboard/index.html") &
-python3 -m uvicorn api:app --host 127.0.0.1 --port 8000
+.venv/bin/python server.py

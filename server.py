@@ -194,20 +194,31 @@ def _start_proxy(proxy_url: str = "") -> dict:
         if _proxy_proc and _proxy_proc.poll() is None:
             return {"ok": True, "status": "already_running", "pid": _proxy_proc.pid}
         try:
-            # Try to launch a SOCKS5 tunnel via ssh or plain process — best effort
-            # Real proxy is external (Surfshark, etc). Here we just store the URL and mark connected.
+            # Store the URL and verify the proxy is reachable.
+            # SOCKS5 proxies often return http_code "000" because curl tunnels the
+            # connection but cannot read a plain HTTP response code — exit code 0
+            # still means the proxy accepted the connection. Accept any successful
+            # curl exit (0) or any HTTP 2xx/3xx response as "connected".
             os.environ["PROXY_URL"] = url
-            # Verify proxy is reachable via curl --proxy
             result = subprocess.run(
-                ["curl", "--proxy", url, "--max-time", "5", "-s", "-o", "/dev/null", "-w", "%{http_code}", "https://www.google.com"],
-                capture_output=True, timeout=8, text=True
+                ["curl", "--proxy", url, "--max-time", "8", "-s",
+                 "-o", "/dev/null", "-w", "%{http_code}", "https://www.google.com"],
+                capture_output=True, timeout=12, text=True
             )
-            if result.returncode == 0 and result.stdout in ("200", "301", "302"):
+            http_code = (result.stdout or "").strip()
+            ok = result.returncode == 0 and (
+                http_code in ("200", "301", "302", "000") or
+                (http_code.isdigit() and 200 <= int(http_code) < 400)
+            )
+            if ok:
                 class _FakeProc:
                     pid = os.getpid(); poll = lambda self: None
                 _proxy_proc = _FakeProc()
                 return {"ok": True, "status": "connected", "url": url}
-            return {"ok": False, "error": f"Proxy unreachable (HTTP {result.stdout or 'timeout'})"}
+            err_detail = f"HTTP {http_code}" if http_code else "timeout/connection refused"
+            return {"ok": False, "error": f"Proxy unreachable ({err_detail}) — check URL format: socks5://user:pass@host:port"}
+        except subprocess.TimeoutExpired:
+            return {"ok": False, "error": "Proxy connection timed out (>12s) — check host/port"}
         except Exception as e:
             return {"ok": False, "error": str(e)}
 
