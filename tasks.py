@@ -190,12 +190,21 @@ class SocialTasks:
                 f"CONTENT TYPE: {post_scope}\n"
                 f"{upload_context}\n\n"
                 f"IMPORTANT — MARKET SCOPING: All data collected MUST be scoped to the target "
-                f"market(s): {markets_str}. When searching, always append the market name to "
-                f"your query (e.g. 'Brand Facebook ads Philippines'). Discard any results that "
-                f"clearly relate to other markets. Tag every data point with the market it "
-                f"belongs to using a 'market' field.\n\n"
-                "Call the search tool ONCE per brand-platform-market combination. "
-                "Do not call repeatedly for the same brand-platform combination.\n\n"
+                f"market(s): {markets_str}. The search tool automatically fires one query per "
+                "brand × platform × market combination when you pass the markets list in the "
+                "JSON params block. You MUST include the markets list in EVERY tool call.\n\n"
+                "TOOL CALL FORMAT — append this JSON block to your query string:\n"
+                f'{{"advertisers": {json.dumps(advertisers)}, '
+                f'"competitors": {json.dumps([c for c in competitors if c not in advertisers])}, '
+                f'"markets": {json.dumps(markets)}, '
+                f'"platforms": {json.dumps(platforms)}, '
+                f'"post_type": "{params.get("post_type", "both")}", '
+                f'"industry": "{params.get("industry", "")}", '
+                f'"date_range": "{date_range}"}}\n\n'
+                "Example: if markets=['Philippines','Singapore'] and brand='Axe', the tool will\n"
+                "automatically search: 'Axe Facebook Philippines', 'Axe Facebook Singapore',\n"
+                "'Axe YouTube Philippines', 'Axe YouTube Singapore', etc.\n"
+                "Do NOT call the tool once per market — pass all markets in one call.\n\n"
                 "For EACH brand on EACH platform, extract PRESENCE SIGNALS:\n"
                 "1. AD SIGNALS (primary):\n"
                 "   - Ad campaign names, creatives, slogans\n"
