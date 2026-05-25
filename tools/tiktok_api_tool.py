@@ -5,7 +5,7 @@ Paid ads  → POST https://open.tiktokapis.com/v2/research/adlib/ad/query/
             Auth: client credentials (TIKTOK_APP_ID + TIKTOK_APP_SECRET → 2hr Bearer token)
             No run limit. Docs: developers.tiktok.com/doc/commercial-content-api-query-ads
 
-Organic   → handled by social_search_tool.py (Tavily/DDG) — nothing to do here.
+Organic   → handled by social_search_tool.py (DuckDuckGo) — nothing to do here.
 
 Required env vars:
   TIKTOK_APP_ID      — client_key from TikTok for Developers app
@@ -184,7 +184,7 @@ def fetch_tiktok(brand: str, country: str = "", post_type: str = "both") -> list
 
     post_type: "paid" | "organic" | "both"
     Paid  → TikTok Commercial Content API (native, no run limit)
-    Organic → returns [] — handled upstream by Tavily/DDG in social_search_tool.py
+    Organic → returns [] — handled upstream by DuckDuckGo in social_search_tool.py
     """
     if post_type in ("paid", "both"):
         return fetch_tiktok_paid_ads(brand, country)

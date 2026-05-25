@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 # ── Secret value set for scrub() — loaded once at import time ─────────────────
 _SECRET_VALUES: set[str] = {
     v for k in (
-        "TAVILY_API_KEY", "TIKTOK_APP_SECRET", "TIKTOK_APP_ID",
+        "TIKTOK_APP_SECRET", "TIKTOK_APP_ID",
         "META_AD_LIBRARY_TOKEN", "SEARCHAPI_KEY", "OPENAI_API_KEY",
         "PROXY_TH", "PROXY_PH", "PROXY_VN", "PROXY_ID", "PROXY_MY", "PROXY_SG",
     )

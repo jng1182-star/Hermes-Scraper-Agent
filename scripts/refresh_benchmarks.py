@@ -24,6 +24,7 @@ import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
+from duckduckgo_search import DDGS
 
 # Allow running from repo root or scripts/ dir
 _HERE = Path(__file__).parent
@@ -96,21 +97,16 @@ _FALLBACK = {
 }
 
 
-def _tavily_search(query: str, max_results: int = 5) -> list[dict]:
+def _ddg_search(query: str, max_results: int = 5) -> list[dict]:
     try:
-        from tavily import TavilyClient
-        key = os.getenv("TAVILY_API_KEY", "")
-        if not key:
-            return []
-        client = TavilyClient(api_key=key)
-        resp = client.search(query, search_depth="advanced", topic="general",
-                             max_results=max_results, include_answer=False)
+        with DDGS() as ddgs:
+            raw = list(ddgs.text(query, max_results=max_results))
         return [
-            {"url": r.get("url",""), "title": r.get("title",""), "content": r.get("content","")[:1500]}
-            for r in resp.get("results", []) if r.get("content")
+            {"url": r.get("href",""), "title": r.get("title",""), "content": r.get("body","")[:1500]}
+            for r in raw if r.get("body")
         ]
     except Exception as e:
-        logger.warning("Tavily search failed: %s", e)
+        logger.warning("DuckDuckGo search failed: %s", e)
         return []
 
 
@@ -166,7 +162,7 @@ def refresh_er_benchmarks(existing: dict) -> tuple[dict, list[str]]:
     ]
     snippets = []
     for q in queries:
-        results = _tavily_search(q, max_results=3)
+        results = _ddg_search(q, max_results=3)
         snippets.extend(results)
         sources.extend([r["url"] for r in results if r.get("url")])
         time.sleep(0.5)
@@ -231,7 +227,7 @@ def refresh_cpm(existing: dict) -> tuple[dict, list[str]]:
     ]
     snippets = []
     for q in queries:
-        results = _tavily_search(q, max_results=3)
+        results = _ddg_search(q, max_results=3)
         snippets.extend(results)
         sources.extend([r["url"] for r in results if r.get("url")])
         time.sleep(0.5)
@@ -304,7 +300,7 @@ def refresh_vtr(existing: dict) -> tuple[dict, list[str]]:
     ]
     snippets = []
     for q in queries:
-        results = _tavily_search(q, max_results=3)
+        results = _ddg_search(q, max_results=3)
         snippets.extend(results)
         sources.extend([r["url"] for r in results if r.get("url")])
         time.sleep(0.5)
@@ -403,7 +399,7 @@ def run_refresh(force: bool = False) -> dict:
         "updated_at":       datetime.now(timezone.utc).isoformat(),
         "sources":          all_sources[:20],  # cap stored sources
         "methodology":      (
-            "Auto-refreshed via Tavily web search + Ollama LLM extraction. "
+            "Auto-refreshed via DuckDuckGo web search + Ollama LLM extraction. "
             "Sources: eMarketer, Statista, Socialinsider, Sprout Social, Rival IQ, Kantar APAC. "
             "Values validated for plausible ranges; fallback to prior values if extraction fails."
         ),

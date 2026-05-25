@@ -1,0 +1,28 @@
+[ApprovalGate] Benchmark constants (CPM, VTR, ER) were last updated 388 days ago (2025-05-01). Consider refreshing from eMarketer/Kantar/Socialinsider sources. Set _CONSTANTS_LAST_UPDATED after any refresh.
+INFO:     Started server process [12718]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://127.0.0.1:8000 (Press CTRL+C to quit)
+INFO:     127.0.0.1:50916 - "GET / HTTP/1.1" 307 Temporary Redirect
+INFO:     127.0.0.1:50917 - "GET /dashboard/index.html HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50918 - "GET /dashboard/index.html HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50918 - "GET /uploaded-files HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50920 - "GET /saved-runs HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50920 - "GET /saved-runs HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50920 - "GET /status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50918 - "GET /favicon.ico HTTP/1.1" 404 Not Found
+INFO:     127.0.0.1:50918 - "GET /report HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51295 - "GET / HTTP/1.1" 307 Temporary Redirect
+INFO:     127.0.0.1:51296 - "GET /dashboard/index.html HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51300 - "GET /dashboard/index.html HTTP/1.1" 304 Not Modified
+INFO:     127.0.0.1:51300 - "GET /dashboard/app.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51301 - "GET /dashboard/styles.css HTTP/1.1" 304 Not Modified
+INFO:     127.0.0.1:51300 - "GET /uploaded-files HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51301 - "GET /saved-runs HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51301 - "GET /saved-runs HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51301 - "GET /status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51301 - "GET /report HTTP/1.1" 200 OK
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     Finished server process [12718]

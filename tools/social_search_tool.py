@@ -98,33 +98,6 @@ _CATEGORY_SOV_QUERIES = {
 }
 
 
-# ── Tavily ────────────────────────────────────────────────────────────────────
-
-def _tavily_search(query: str, max_results: int = 3) -> list[dict]:
-    from tavily import TavilyClient
-    key = os.getenv("TAVILY_API_KEY", "")
-    if not key:
-        raise EnvironmentError("TAVILY_API_KEY not set")
-    client = TavilyClient(api_key=key)
-    resp = client.search(
-        query,
-        search_depth="basic",
-        topic="general",
-        max_results=max_results,
-        include_answer=False,
-    )
-    results = []
-    for r in resp.get("results", []):
-        content = r.get("content") or r.get("snippet") or ""
-        if content:
-            results.append({
-                "url":     r.get("url", ""),
-                "title":   r.get("title", ""),
-                "content": content,
-            })
-    return results
-
-
 # ── DuckDuckGo fallback ───────────────────────────────────────────────────────
 
 def _ddg_search(query: str, max_results: int = 3) -> list[dict]:
@@ -139,15 +112,9 @@ def _ddg_search(query: str, max_results: int = 3) -> list[dict]:
         return []
 
 
-# ── Unified search (Tavily → DDG fallback) ────────────────────────────────────
+# ── Unified search (DuckDuckGo only) ────────────────────────────────────────
 
 def _search(query: str, max_results: int = 3) -> list[dict]:
-    try:
-        results = _tavily_search(query, max_results=max_results)
-        if results:
-            return results
-    except Exception:
-        pass
     return _ddg_search(query, max_results=max_results)
 
 
@@ -215,7 +182,7 @@ def _parallel_search(tasks: list[tuple[str, str]], max_workers: int = 5) -> list
     """
     tasks: list of (query, source_type) tuples.
     Returns flat list of enriched snippets, order not guaranteed.
-    max_workers capped at 5 to stay within Tavily rate limits.
+    max_workers capped at 5 to keep search concurrency modest.
     """
     snippets: list[dict] = []
     with ThreadPoolExecutor(max_workers=min(max_workers, len(tasks))) as pool:
@@ -315,7 +282,7 @@ class SocialSearchTool(BaseTool):
             for platform in platforms:
                 search_tasks: list[tuple[str, str]] = []
 
-                # ── PAID search (Tavily/DDG with localized labels) ─────────
+                # ── PAID search (DuckDuckGo with localized labels) ─────────
                 if post_type in ("paid", "both"):
                     q = _PAID_QUERIES[platform].format(
                         brand=brand_tag, geo=geo, paid_label=paid_label
