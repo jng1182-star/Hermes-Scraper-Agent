@@ -133,19 +133,25 @@ async def _scrape_meta(context, brand: str, country: str) -> list[dict]:
         await page.goto(url, timeout=20_000, wait_until="domcontentloaded")
         await asyncio.sleep(3)  # let React render ad cards
 
-        # Meta renders ad cards inside carousel containers
-        # Each [data-testid="ad-library-ad-carousel-container"] wraps one ad
+        # Meta Ad Library DOM selectors (updated 2025 — old carousel testid removed):
+        # Each ad block is wrapped in [data-testid="ad-library-dynamic-content-container"]
+        # Individual ad creatives are [data-testid="ad-content-body-video-container"]
         try:
             await page.wait_for_selector(
-                '[data-testid="ad-library-ad-carousel-container"]',
+                '[data-testid="ad-library-dynamic-content-container"],'
+                '[data-testid="ad-content-body-video-container"]',
                 timeout=15_000,
             )
         except Exception:
             return []
 
         cards = await page.query_selector_all(
-            '[data-testid="ad-library-ad-carousel-container"]'
+            '[data-testid="ad-library-dynamic-content-container"]'
         )
+        if not cards:
+            cards = await page.query_selector_all(
+                '[data-testid="ad-content-body-video-container"]'
+            )
 
         for card in cards[:10]:
             # Get the full inner text of the card — Meta uses hashed class names

@@ -112,7 +112,7 @@ _patch_crewai_agent()
 # ── Partial results helper ────────────────────────────────────────────────────
 
 def _try_partial_report() -> Optional[dict]:
-    """Return whatever structured competitor data is available from checkpoints.
+    """Return whatever structured brand/competitor data is available from checkpoints.
     Priority: reporter cp → analyst cp → scraper cp (raw, best-effort parse).
     Returns None if nothing parseable is available yet."""
     cp_dir = Path("data/checkpoints")
@@ -122,25 +122,25 @@ def _try_partial_report() -> Optional[dict]:
             continue
         try:
             raw = json.loads(cp.read_text(encoding="utf-8")).get("output", "")
-            # Try to extract a competitors array from the text
             import re as _re
-            # Strip markdown code fences
             cleaned = _re.sub(r"```(?:json)?\s*", "", raw)
             cleaned = _re.sub(r"```", "", cleaned).strip()
             start = cleaned.find("{")
             end   = cleaned.rfind("}") + 1
             if start != -1 and end > start:
                 data = json.loads(cleaned[start:end])
-                if "competitors" in data and data["competitors"]:
+                # Accept new brands[] schema or legacy competitors[] schema
+                key = "brands" if data.get("brands") else "competitors"
+                if data.get(key):
                     data["_partial_phase"] = phase
                     return data
-            # Try array
+            # Try bare array — wrap under brands key
             start = cleaned.find("[")
             end   = cleaned.rfind("]") + 1
             if start != -1 and end > start:
                 lst = json.loads(cleaned[start:end])
                 if lst:
-                    return {"competitors": lst, "_partial_phase": phase}
+                    return {"brands": lst, "_partial_phase": phase}
         except Exception:
             continue
     return None

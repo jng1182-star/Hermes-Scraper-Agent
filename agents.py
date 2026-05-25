@@ -5,6 +5,7 @@ from tools.social_search_tool import SocialSearchTool
 from tools.profile_scraper import ProfileScraperTool
 from tools.feed_scroller import FeedScrollerTool
 from tools.api_data_tool import APIDataTool
+from tools.paid_adlib_tool import PaidAdLibTool
 
 _OLLAMA_HOST     = os.getenv("OLLAMA_HOST", "http://127.0.0.1:11434").rstrip("/")
 _OLLAMA_BASE_URL = _OLLAMA_HOST + "/v1"
@@ -38,6 +39,7 @@ class SocialAgents:
         self.profile_tool  = ProfileScraperTool()
         self.feed_tool     = FeedScrollerTool()
         self.api_tool      = APIDataTool()
+        self.adlib_tool    = PaidAdLibTool()
         # Scraper always uses e4b — structured data extraction, not deep reasoning.
         # e4b fits fully in GPU; 26b runs mixed CPU/GPU on this machine and stalls at 600s.
         self.scraper_llm = _make_llm("ollama/gemma4:e4b")
@@ -69,24 +71,25 @@ class SocialAgents:
         )
 
     def feed_agent(self) -> Agent:
-        """Agent 2 — doom scrolls feeds and captures declared paid ads via DOM markers."""
+        """Agent 2 — paid ad capture via Meta Ad Library API (primary) + Playwright scraper fallback."""
         return Agent(
             role="Feed Ad Capture Agent",
             goal=(
-                "Scroll the algorithmic feed for each platform and capture every declared paid "
-                "advertisement using strict DOM marker detection. Do NOT flag content as paid "
-                "based on engagement numbers — only capture posts where an explicit 'Sponsored', "
-                "'Paid partnership', ad badge, or CTA overlay is present in the DOM. "
-                "Return structured records: advertiser, creative URL, ad copy, live metrics."
+                "Collect declared paid advertising data for each brand on Facebook and YouTube. "
+                "Use the Brand API Data Fetcher tool first — it calls the Meta Ad Library API "
+                "and returns structured ad counts, impression ranges, and spend ranges. "
+                "If the API tool returns empty data for Facebook (Meta API pending approval), "
+                "fall back to the Paid Ad Library Scraper tool which scrapes facebook.com/ads/library "
+                "directly via headless browser. "
+                "Return structured records: advertiser, ad copy, impressions, spend signals."
             ),
             backstory=(
-                "You are a paid media intelligence specialist trained to identify platform-native "
-                "ad declarations. You know the exact DOM markers each platform uses: Facebook's "
-                "'Sponsored' link, YouTube's ad badge near the channel handle. "
-                "Your rule is strict: if no explicit DOM marker is present, do not call it an ad. "
-                "The engagement-based outlier detection runs downstream — your job is pure observation."
+                "You are a paid media intelligence specialist. Your primary source is the Meta Ad "
+                "Library API — structured, authoritative, fast. When that API is unavailable or "
+                "returns no data, you fall back to headless browser scraping of the Ad Library website. "
+                "You never fabricate ad data — you report exactly what the tools return."
             ),
-            tools=[self.api_tool, self.feed_tool],
+            tools=[self.api_tool, self.adlib_tool, self.feed_tool],
             llm=self.scraper_llm,
             verbose=True,
         )
@@ -114,21 +117,33 @@ class SocialAgents:
 
     def analyst_agent(self) -> Agent:
         return Agent(
-            role="Engagement Analyst",
+            role="Share-of-Voice Analyst",
             goal=(
-                "Structure the raw intelligence into clean, per-brand, per-platform records "
-                "with separate paid and organic metrics. Compute or estimate engagement numbers "
-                "from the snippets — never leave metrics as zero if the snippets contain "
-                "any quantitative signals (e.g. '2.3M views', '45K likes', '8% ER')."
+                "Compute a directional Share-of-Voice index for each brand on each platform "
+                "(Facebook, YouTube, TikTok) using six observable proxy signals: "
+                "creative volume (total active ads normalized across brands), "
+                "creative velocity (new ads launched in last 7 days), "
+                "ad longevity (avg days since earliest start_date), "
+                "geographic presence (countries targeted), "
+                "reach bucket (impression range tier 1–4), "
+                "and engagement corroboration (er_pct vs category benchmark). "
+                "Normalize each signal, apply weights (35/10/15/15/15/10%), produce a 0–100 "
+                "SOV index per brand per platform, apply a cross-signal consistency check "
+                "to validate confidence, then compute a composite cross-platform SOV. "
+                "Assign confidence (High/Medium/Low) — a brand with conflicting signals "
+                "(rank divergence >2 positions on primary signals) can never exceed Medium."
             ),
             backstory=(
-                "You are a data analyst specialising in paid media and organic social benchmarking "
-                "for large FMCG and consumer brands. You extract numbers from messy text with "
-                "precision. You understand that '2.3M' means 2,300,000 and '45K' means 45,000. "
-                "When a snippet says a post got '8% engagement rate' and 'the brand has 500K followers' "
-                "you compute: 8% × 500,000 = 40,000 interactions. "
-                "You label each data point as paid or organic based on context clues "
-                "(e.g. 'sponsored', 'ad library', 'boosted' = paid; 'viral', 'organic', 'UGC' = organic)."
+                "You are a media intelligence analyst specialising in competitive share-of-voice "
+                "measurement for FMCG and consumer brands. You understand that true ad spend data "
+                "is not publicly available, so you use observable proxy signals — ad creative "
+                "volume and velocity, presence duration, geographic footprint, reach tiers, and "
+                "engagement signals — as directional indicators of advertising intensity. "
+                "You treat TikTok with equal methodological rigor as Facebook and YouTube. "
+                "You produce indexed, normalized SOV scores (0–100) clearly labeled as "
+                "directional estimates, not actual spend values. "
+                "When signals conflict directionally, you conservatively downgrade confidence "
+                "rather than averaging away the discrepancy."
             ),
             llm=self.llm,
             verbose=True,
@@ -136,18 +151,23 @@ class SocialAgents:
 
     def reporter_agent(self) -> Agent:
         return Agent(
-            role="Intelligence Reporter",
+            role="SOV Intelligence Reporter",
             goal=(
-                "Produce a single, valid JSON report that a Fortune 500 brand manager "
-                "can act on immediately. Every competitor entry must have real numbers — "
-                "synthesise and estimate if exact figures are absent, but never output zeros "
-                "when the context contains quantitative signals."
+                "Produce a single valid JSON report containing directional Share-of-Voice "
+                "indices for each brand across Facebook, YouTube, and TikTok. "
+                "Every brand entry must have a sov_index and sov_label (including the "
+                "'(Directional / Indexed – Not Actual Spend)' suffix), confidence level, "
+                "consistency_flag, and signal breakdown per platform. "
+                "Include the full methodology_disclaimer with competitive set scope caveat. "
+                "Never output dollar amounts, CPM values, or spend estimates. "
+                "Output clean JSON only — no markdown, no code fences."
             ),
             backstory=(
                 "You are the lead intelligence reporter at a global media consultancy. "
                 "Your deliverables go directly to CMOs and media directors. "
-                "You synthesise paid vs organic performance, flag notable campaigns, "
-                "and ensure every data field is populated with the best available estimate. "
+                "You synthesise relative advertising presence by platform across Facebook, "
+                "YouTube, and TikTok, flag brands with low confidence or conflicting signals, "
+                "and ensure every SOV index carries the correct directional label. "
                 "You output clean JSON only — no markdown, no commentary, no code fences."
             ),
             llm=self.llm,

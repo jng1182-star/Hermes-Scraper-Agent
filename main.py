@@ -37,7 +37,7 @@ for _candidate in [
         break
 
 
-SUPPORTED_PLATFORMS = ["YouTube", "Facebook"]
+SUPPORTED_PLATFORMS = ["YouTube", "Facebook", "TikTok"]
 
 
 def _build_query(params: dict) -> str:
@@ -99,9 +99,7 @@ def _kill_ollama_runner():
 
 def run_pipeline(params: dict):
     query     = _build_query(params)
-    cpm_rate  = float(params.get("cpm_rate", 0)) or None  # None → auto (market×industry×seasonal)
     depth     = params.get("depth", "deep")
-    post_type = params.get("post_type", "both")
     country   = params.get("country", "").strip()
     industry  = params.get("industry", "").strip()
 
@@ -305,7 +303,7 @@ def run_pipeline(params: dict):
     if _state_hook:
         _state_hook("gate", "active")
     print("Running Approval Gate…", flush=True)
-    gate = ApprovalGate(cpm_rate=cpm_rate, post_type=post_type, country=country, industry=industry)
+    gate = ApprovalGate(country=country, industry=industry)
 
     import concurrent.futures as _cf
     with _cf.ThreadPoolExecutor(max_workers=1) as _pool:
@@ -342,9 +340,8 @@ if __name__ == "__main__":
         "advertiser": sys.argv[1] if len(sys.argv) > 1 else "Nike",
         "competitors": ["Adidas", "Puma"],
         "country":    "Singapore",
-        "platforms":  ["YouTube", "Facebook"],
+        "platforms":  ["YouTube", "Facebook", "TikTok"],
         "date_range": "Last 30 days",
-        "cpm_rate":   15.0,
         "keywords":   "",
     }
     run_pipeline(p)

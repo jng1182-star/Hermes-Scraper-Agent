@@ -108,7 +108,7 @@
           <div class="form-group">
             <label class="form-label" for="industry">
               Industry / Vertical
-              <span class="form-hint">Adjusts CPM benchmarks to category norms</span>
+              <span class="form-hint">Used for ER benchmarking and confidence scoring</span>
             </label>
             <select class="form-input" id="industry">
               <option value="">General / Mixed</option>
@@ -129,20 +129,6 @@
               <option value="education">Education</option>
               <option value="real_estate">Real Estate</option>
             </select>
-          </div>
-        </div>
-
-        <!-- Row 2b: CPM Override -->
-        <div class="form-row">
-          <div class="form-group" style="flex:1;">
-            <label class="form-label" for="cpmRate">
-              CPM Override ($ per 1,000 impressions)
-              <span class="form-hint" id="cpmHint">Leave at 0 to use market + industry defaults</span>
-            </label>
-            <div class="cpm-wrap">
-              <span class="cpm-prefix">$</span>
-              <input class="form-input" id="cpmRate" type="number" value="0" min="0" step="0.01" placeholder="0 = auto (market × industry × seasonal)">
-            </div>
           </div>
         </div>
 
@@ -262,7 +248,7 @@
         <div class="form-section" style="margin-top:8px;">
           <div class="form-row" style="align-items:center;gap:12px;">
             <span style="font-size:0.78rem;color:var(--text3);">Benchmarks: <span id="benchmarkStatus" style="color:var(--text2);">checking…</span></span>
-            <button class="btn-ghost" id="refreshBenchmarksBtn" style="font-size:0.75rem;padding:4px 10px;" title="Refresh CPM / ER / VTR benchmarks via live search">↻ Refresh</button>
+            <button class="btn-ghost" id="refreshBenchmarksBtn" style="font-size:0.75rem;padding:4px 10px;" title="Refresh ER benchmarks via live search">↻ Refresh</button>
           </div>
         </div>
 
@@ -376,7 +362,7 @@
                 <div class="acard-icon">◈</div>
                 <div class="acard-info">
                   <div class="acard-name">ANALYST</div>
-                  <div class="acard-role">Engagement &amp; Spend Analyst</div>
+                  <div class="acard-role">Share-of-Voice Analyst</div>
                 </div>
                 <div class="acard-badge idle" id="abadge-analyst">IDLE</div>
               </div>
@@ -408,7 +394,7 @@
                 <div class="acard-icon">⬟</div>
                 <div class="acard-info">
                   <div class="acard-name">APPROVAL GATE</div>
-                  <div class="acard-role">CPM · ER · Spend Validation</div>
+                  <div class="acard-role">SOV · Confidence · Quality Validation</div>
                 </div>
                 <div class="acard-badge idle" id="abadge-gate">IDLE</div>
               </div>
@@ -441,6 +427,12 @@
       </div>
 
       <div id="resultsContent" style="display:none;">
+        <!-- SOV Disclaimer Banner -->
+        <div class="sov-disclaimer-banner" id="sovDisclaimer" style="display:flex;align-items:flex-start;gap:10px;background:var(--bg2);border:1px solid var(--border);border-left:3px solid var(--accent);border-radius:6px;padding:10px 14px;margin-bottom:18px;font-size:0.78rem;color:var(--text2);line-height:1.5;">
+          <span style="font-size:1rem;flex-shrink:0;">ℹ</span>
+          <span><strong>Directional / Indexed – Not Actual Spend.</strong> All indices reflect relative advertising presence within the selected competitor group only. These estimates are not actual spend figures and do not represent total market share.</span>
+        </div>
+
 
         <!-- Scan Summary bar -->
         <div class="scan-summary-bar" id="scanSummaryBar">
@@ -509,27 +501,27 @@
           <button class="dd-reset" id="ddReset" title="Reset all filters">↺ Reset</button>
         </div>
 
-        <!-- KPI cards — professional labels -->
+        <!-- KPI cards -->
         <div class="kpi-grid">
           <div class="kpi-card">
-            <div class="kpi-label">Posts Scanned</div>
-            <div class="kpi-value" id="kpiCount">—</div>
-            <div class="kpi-sub" id="kpiPostCount" style="font-size:0.7rem;color:var(--text3);margin-top:4px;">across — brands</div>
+            <div class="kpi-label">Brands Tracked</div>
+            <div class="kpi-value" id="kpiBrandCount">—</div>
+            <div class="kpi-sub" id="kpiBrandSub" style="font-size:0.7rem;color:var(--text3);margin-top:4px;">across — platforms</div>
           </div>
           <div class="kpi-card" style="--accent:#2563eb;">
-            <div class="kpi-label">Est. Total Media Value</div>
-            <div class="kpi-value accent" id="kpiSpend">—</div>
-            <div class="kpi-sub" style="font-size:0.7rem;color:var(--text3);margin-top:4px;">paid + organic earned value</div>
+            <div class="kpi-label">Highest SOV Brand</div>
+            <div class="kpi-value accent" id="kpiTopSov" style="font-size:1.1rem;">—</div>
+            <div class="kpi-sub" id="kpiTopSovSub" style="font-size:0.7rem;color:var(--text3);margin-top:4px;">composite SOV index (Directional)</div>
           </div>
           <div class="kpi-card">
-            <div class="kpi-label">Avg. Engagement Rate</div>
-            <div class="kpi-value green" id="kpiEngage">—</div>
-            <div class="kpi-sub" id="kpiBenchmark" style="font-size:0.7rem;color:var(--text3);margin-top:4px;">vs. platform benchmarks</div>
+            <div class="kpi-label">Platform Leader</div>
+            <div class="kpi-value" id="kpiPlatformLeader" style="font-size:1rem;">—</div>
+            <div class="kpi-sub" id="kpiPlatformLeaderSub" style="font-size:0.7rem;color:var(--text3);margin-top:4px;">highest SOV per platform</div>
           </div>
           <div class="kpi-card">
-            <div class="kpi-label">Share of Spend</div>
-            <div class="kpi-value" id="kpiTopSpender" style="font-size:1.1rem;">—</div>
-            <div class="kpi-sub" id="kpiTopSpenderSub" style="font-size:0.7rem;color:var(--text3);margin-top:4px;">largest est. media value</div>
+            <div class="kpi-label">Avg Data Confidence</div>
+            <div class="kpi-value green" id="kpiConfidence">—</div>
+            <div class="kpi-sub" id="kpiConfidenceSub" style="font-size:0.7rem;color:var(--text3);margin-top:4px;">High / Medium / Low</div>
           </div>
         </div>
 
@@ -537,17 +529,17 @@
         <div class="charts-grid" style="margin-bottom:20px;">
           <div class="chart-card">
             <div class="chart-card-title">
-              Share of Spend
-              <span class="chart-note">Est. media value per brand (paid CPM + organic engagement)</span>
+              Composite Share of Voice (Directional / Indexed – Not Actual Spend)
+              <span class="chart-note">Composite SOV index per brand — directional estimate, not actual spend</span>
             </div>
-            <canvas id="spendChart" height="220"></canvas>
+            <canvas id="sovCompositeChart" height="220"></canvas>
           </div>
           <div class="chart-card">
             <div class="chart-card-title">
-              Share of Voice
-              <span class="chart-note">Total impressions per brand vs competitive set</span>
+              Platform SOV Breakdown (Directional / Indexed – Not Actual Spend)
+              <span class="chart-note">SOV index per platform per brand — directional estimate</span>
             </div>
-            <canvas id="sovChart" height="220"></canvas>
+            <canvas id="platformSovChart" height="220"></canvas>
           </div>
         </div>
 
@@ -555,17 +547,17 @@
         <div class="charts-grid" style="margin-bottom:20px;">
           <div class="chart-card">
             <div class="chart-card-title">
-              Engagement Rate (%)
-              <span class="chart-note">vs. platform industry benchmarks</span>
+              Signal Breakdown (Directional / Indexed – Not Actual Spend)
+              <span class="chart-note">Proxy signal components per brand (Creative Vol · Velocity · Longevity · Geo · Reach · Engagement)</span>
             </div>
-            <canvas id="engageChart" height="220"></canvas>
+            <canvas id="signalBreakdownChart" height="220"></canvas>
           </div>
           <div class="chart-card">
             <div class="chart-card-title">
-              Platform Impression Share
-              <span class="chart-note">Total impressions by platform across all brands</span>
+              Data Confidence Distribution
+              <span class="chart-note">High / Medium / Low confidence count by platform</span>
             </div>
-            <canvas id="platformChart" height="220"></canvas>
+            <canvas id="confidenceChart" height="220"></canvas>
           </div>
         </div>
 
@@ -589,20 +581,15 @@
               <thead>
                 <tr>
                   <th>Brand</th>
-                  <th>Handle</th>
                   <th>Platform</th>
-                  <th>Type</th>
-                  <th>Impressions</th>
-                  <th>Interactions</th>
-                  <th>Likes</th>
-                  <th>Comments</th>
-                  <th>Shares</th>
-                  <th>Saves</th>
-                  <th>Followers</th>
-                  <th>Eng. Rate</th>
-                  <th>vs Benchmark</th>
-                  <th>Est. Value</th>
-                  <th>SoS %</th>
+                  <th title="Directional / Indexed – Not Actual Spend">SOV Index <span style="font-weight:400;opacity:0.6;">(Dir.)</span></th>
+                  <th>Confidence</th>
+                  <th>Creative Vol</th>
+                  <th>Velocity</th>
+                  <th>Reach Tier</th>
+                  <th>Geo Presence</th>
+                  <th>Ad Longevity (days)</th>
+                  <th>Engagement</th>
                   <th>Sentiment</th>
                 </tr>
               </thead>
@@ -617,24 +604,6 @@
         </div>
         <div id="topPostsSection" style="display:none; margin-bottom:28px;">
           <div id="topPostsGrid"></div>
-        </div>
-
-        <!-- Calculation Tree -->
-        <div class="table-card" id="calcTreeCard" style="margin-top:20px;display:none;">
-          <div class="table-card-header">
-            <div class="table-card-title">Calculation Methodology &amp; Assumptions</div>
-            <div style="display:flex;align-items:center;gap:12px;">
-              <label style="font-size:0.75rem;color:var(--text3);font-family:var(--mono);display:flex;align-items:center;gap:6px;">
-                CPM Override
-                <span style="color:var(--text3);">$</span>
-                <input type="number" id="cpmOverride" step="0.5" min="0"
-                  placeholder="0 = defaults"
-                  style="width:88px;background:var(--bg3);border:1px solid var(--border);border-radius:4px;padding:3px 8px;color:var(--text);font-size:0.82rem;font-family:var(--mono);">
-                <button class="btn-secondary" id="recalcBtn" style="padding:4px 10px;font-size:0.72rem;">↺ Recalc</button>
-              </label>
-            </div>
-          </div>
-          <div id="calcTreeBody" style="padding:16px 20px;"></div>
         </div>
 
         <!-- Export -->

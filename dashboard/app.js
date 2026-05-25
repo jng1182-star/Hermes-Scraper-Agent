@@ -35,7 +35,7 @@ const State = {
   partialShown: false,   // true once partial results have been rendered this run
 };
 
-const Charts = { spend: null, sov: null, engage: null, platform: null, sentiment: null };
+const Charts = { sovComposite: null, platformSov: null, signalBreakdown: null, confidence: null };
 
 // ── Colour palette ───────────────────────────────────────────────────────────
 const C = {
@@ -60,123 +60,6 @@ const C = {
 
 const BRAND_COLORS = ['#1f6feb','#38bdf8','#a78bfa','#f59e0b','#f85149','#22c55e','#e879f9','#fb923c'];
 
-// ── CPM Engine ───────────────────────────────────────────────────────────────
-// Base CPMs: market-level platform benchmarks (USD per 1,000 impressions)
-// Source: eMarketer, Statista, agency trading desk benchmarks 2024-25
-const COUNTRY_CPM = {
-  '':               { youtube:9.50,  facebook:7.50  },
-  'United States':  { youtube:15.00, facebook:11.00 },
-  'United Kingdom': { youtube:13.00, facebook:9.50  },
-  'Canada':         { youtube:12.50, facebook:9.00  },
-  'Australia':      { youtube:11.50, facebook:8.50  },
-  'Germany':        { youtube:11.00, facebook:8.00  },
-  'France':         { youtube:10.50, facebook:7.50  },
-  'Japan':          { youtube:12.00, facebook:9.00  },
-  'South Korea':    { youtube:10.00, facebook:7.00  },
-  'UAE':            { youtube:11.50, facebook:8.50  },
-  'Saudi Arabia':   { youtube:11.00, facebook:8.00  },
-  'Singapore':      { youtube:11.00, facebook:8.00  },
-  'Malaysia':       { youtube:4.50,  facebook:3.00  },
-  'Thailand':       { youtube:4.00,  facebook:2.80  },
-  'Vietnam':        { youtube:3.50,  facebook:2.20  },
-  'Indonesia':      { youtube:3.00,  facebook:2.00  },
-  'Philippines':    { youtube:3.00,  facebook:1.80  },
-  'India':          { youtube:2.50,  facebook:1.50  },
-  'Brazil':         { youtube:4.00,  facebook:2.80  },
-  'Mexico':         { youtube:3.80,  facebook:2.50  },
-};
-
-// Industry multipliers relative to general baseline (1.0)
-// Derived from category-level CPM premium data (DV360, Meta Ads Manager benchmarks)
-const INDUSTRY_CPM_MULT = {
-  '':            1.00, // General / Mixed
-  'fmcg':        0.95, // High volume, moderate CPM
-  'food_bev':    0.90,
-  'beauty':      1.10,
-  'fashion':     1.05,
-  'retail':      1.00,
-  'tech':        1.30,
-  'telco':       1.25,
-  'finance':     2.20, // Highest category CPM
-  'insurance':   2.00,
-  'automotive':  1.80,
-  'travel':      1.40,
-  'health':      1.50,
-  'entertainment':0.85,
-  'gaming':      1.10,
-  'education':   0.90,
-  'real_estate': 1.60,
-};
-
-const INDUSTRY_LABELS = {
-  '':'General / Mixed','fmcg':'FMCG / CPG','food_bev':'Food & Beverage',
-  'beauty':'Beauty & Personal Care','fashion':'Fashion & Apparel','retail':'Retail & E-commerce',
-  'tech':'Technology & Electronics','telco':'Telecoms','finance':'Financial Services',
-  'insurance':'Insurance','automotive':'Automotive','travel':'Travel & Hospitality',
-  'health':'Health & Pharma','entertainment':'Entertainment & Media',
-  'gaming':'Gaming','education':'Education','real_estate':'Real Estate',
-};
-
-// 3-month rolling seasonal index (month 0=Jan … 11=Dec)
-// Reflects ad spend seasonality: Q1 dip → Q2/Q3 moderate → Q4 peak
-// Methodology: 3-month centred moving average applied to observed monthly spend curves
-// (Source: Meta, TikTok quarterly revenue disclosures; Nielsen ad spend indices)
-const SEASONAL_INDEX = [
-  0.82, // Jan — post-holiday spend drop
-  0.85, // Feb — Valentine's lift
-  0.90, // Mar — Q1 close, spring campaigns
-  0.93, // Apr
-  0.95, // May
-  0.97, // Jun — mid-year
-  0.95, // Jul — summer lull in some markets
-  0.97, // Aug
-  1.02, // Sep — Q3/Q4 ramp
-  1.10, // Oct — pre-holiday surge
-  1.25, // Nov — peak (Singles Day, Black Friday)
-  1.40, // Dec — peak (Christmas, year-end)
-];
-
-function getSeasonalIndex() {
-  return SEASONAL_INDEX[new Date().getMonth()];
-}
-
-function getSeasonalLabel() {
-  const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-  const m = new Date().getMonth();
-  const prev2 = [(m+10)%12,(m+11)%12].map(i=>months[i]).join(', ');
-  return `3-month rolling avg (${prev2}, ${months[m]}): ×${getSeasonalIndex().toFixed(2)}`;
-}
-
-function effectiveCpm(platform, country, industry) {
-  const base  = (COUNTRY_CPM[country] || COUNTRY_CPM[''])[platform.toLowerCase()] || 7.00;
-  const iMult = INDUSTRY_CPM_MULT[industry] ?? 1.00;
-  const sMult = getSeasonalIndex();
-  return Math.round(base * iMult * sMult * 100) / 100;
-}
-
-function cpmDerivation(platform, country, industry) {
-  const base  = (COUNTRY_CPM[country] || COUNTRY_CPM[''])[platform.toLowerCase()] || 7.00;
-  const iMult = INDUSTRY_CPM_MULT[industry] ?? 1.00;
-  const sMult = getSeasonalIndex();
-  const eff   = Math.round(base * iMult * sMult * 100) / 100;
-  return {
-    base, iMult, sMult, effective: eff,
-    label: `$${base} (${platform} ${country||'global'}) × ${iMult.toFixed(2)} (${INDUSTRY_LABELS[industry]||'general'} industry) × ${sMult.toFixed(2)} (seasonal) = $${eff}`,
-  };
-}
-
-function getCpmDefaults(country) {
-  return COUNTRY_CPM[country] || COUNTRY_CPM[''];
-}
-
-function updateCpmHint(country, industry) {
-  const platforms = ['youtube','facebook'];
-  const labels    = ['YT','FB'];
-  const hint = document.getElementById('cpmHint');
-  if (!hint) return;
-  const parts = platforms.map((p,i) => `${labels[i]} $${effectiveCpm(p, country, industry||'')}`);
-  hint.textContent = `Auto CPM for ${country||'global'} · ${INDUSTRY_LABELS[industry||'']||'general'} (${new Date().toLocaleString('default',{month:'short'})} seasonal): ${parts.join(', ')}`;
-}
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // PAGE ROUTER
@@ -298,15 +181,6 @@ document.querySelectorAll('.date-preset').forEach(btn => {
 document.getElementById('dateFrom').addEventListener('change', e => { State.customDateFrom = e.target.value; });
 document.getElementById('dateTo').addEventListener('change', e => { State.customDateTo = e.target.value; });
 
-// ── Country/Industry → update CPM hint live ──────────────────────────────────
-function _refreshCpmHint() {
-  const country  = document.getElementById('country').value;
-  const industry = document.getElementById('industry').value;
-  updateCpmHint(country, industry);
-}
-document.getElementById('country').addEventListener('change', _refreshCpmHint);
-document.getElementById('industry').addEventListener('change', _refreshCpmHint);
-
 // ── Depth radio ──────────────────────────────────────────────────────────────
 document.querySelectorAll('.depth-option').forEach(label => {
   label.addEventListener('click', () => {
@@ -424,7 +298,6 @@ function getFormParams() {
     dateTo   = document.getElementById('dateTo').value   || null;
   }
 
-  const cpmVal    = parseFloat(document.getElementById('cpmRate').value) || 0;
   const country   = document.getElementById('country').value;
   const industry  = document.getElementById('industry').value;
 
@@ -439,7 +312,6 @@ function getFormParams() {
     date_range:   dateRange,
     date_from:    dateFrom,
     date_to:      dateTo,
-    cpm_rate:     cpmVal,
     keywords:     document.getElementById('keywords').value.trim(),
     depth:        State.depth,
   };
@@ -588,7 +460,7 @@ async function pollStatus() {
     }
 
     // ── Partial results: render as soon as scraper/analyst checkpoint is ready ──
-    if (s.running && s.partial_report && s.partial_report.competitors && s.partial_report.competitors.length) {
+    if (s.running && s.partial_report && (s.partial_report.brands || s.partial_report.competitors) && (s.partial_report.brands?.length || s.partial_report.competitors?.length)) {
       if (!State.partialShown) {
         State.partialShown = true;
         // Tag scan_params so results page knows it came from params
@@ -640,9 +512,9 @@ const CARD_LOG_HINTS = {
   profile:  { idle: 'Awaiting activation…', active: 'Scraping brand profile pages…',   done: 'Profile baselines collected' },
   feed:     { idle: 'Awaiting activation…', active: 'Scrolling in-feed ads…',          done: 'Feed ads captured' },
   scraper:  { idle: 'Awaiting activation…', active: 'Collecting paid & organic data…', done: 'Data collection complete' },
-  analyst:  { idle: 'Awaiting data…',       active: 'Analysing engagement & spend…',   done: 'Analysis complete' },
+  analyst:  { idle: 'Awaiting data…',       active: 'Computing 6-signal SOV index…',   done: 'Analysis complete' },
   reporter: { idle: 'Awaiting analysis…',   active: 'Composing intelligence report…',  done: 'Report compiled' },
-  gate:     { idle: 'Awaiting output…',     active: 'Validating · computing CPM & ER…', done: 'Report approved ✓' },
+  gate:     { idle: 'Awaiting output…',     active: 'Validating SOV, consistency & confidence…', done: 'SOV report validated ✓' },
 };
 
 function updateAgentCards(agentStates, logs) {
@@ -716,7 +588,6 @@ function lockForm(locked) {
 
 function resetForm() {
   document.getElementById('keywords').value = '';
-  document.getElementById('cpmRate').value  = '0';
   State.advertisers.length = 0; State.competitors.length = 0;
   if (_advCtrl)  _advCtrl.renderTags();
   if (_compCtrl) _compCtrl.renderTags();
@@ -724,7 +595,6 @@ function resetForm() {
   document.getElementById('tagInput').value        = '';
   document.getElementById('country').value   = '';
   document.getElementById('industry').value  = '';
-  _refreshCpmHint();
 
   document.querySelectorAll('.platform-option').forEach(label => {
     const cb  = label.querySelector('input[type=checkbox]');
@@ -866,9 +736,9 @@ const AGENTS = {
   profile:  { label:'PROFILE',       role:'Profile Baseline Scraper', color:'#f59e0b' },
   feed:     { label:'FEED',          role:'In-Feed Ad Capture',       color:'#ec4899' },
   scraper:  { label:'SCRAPER',       role:'Search Fallback',          color:'#1f6feb' },
-  analyst:  { label:'ANALYST',       role:'Engagement Analyst',       color:'#38bdf8' },
-  reporter: { label:'REPORTER',      role:'Intelligence Reporter',    color:'#a78bfa' },
-  gate:     { label:'APPROVAL GATE', role:'CPM · ER · Validation',   color:'#22c55e' },
+  analyst:  { label:'ANALYST',       role:'Share-of-Voice Analyst',   color:'#38bdf8' },
+  reporter: { label:'REPORTER',      role:'SOV Intelligence Reporter',color:'#a78bfa' },
+  gate:     { label:'APPROVAL GATE', role:'SOV · Confidence · Consistency', color:'#22c55e' },
 };
 
 const NODE_POS = {
@@ -1085,11 +955,12 @@ const CHART_OPTS = {
   },
 };
 
-// Platform metadata — YouTube + Facebook (Instagram modelled only)
+// Platform metadata
 const PLATFORM_META = {
   'youtube':   { cls:'ch-youtube',   icon:'pi-youtube',   label:'YouTube' },
   'facebook':  { cls:'ch-facebook',  icon:'pi-facebook',  label:'Facebook' },
   'instagram': { cls:'ch-instagram', icon:'pi-instagram', label:'~Instagram', modelled:true },
+  'tiktok':    { cls:'ch-tiktok',    icon:'pi-tiktok',    label:'TikTok' },
 };
 function platformMeta(s) {
   const key=(s||'').toLowerCase().replace(/[^a-z]/g,'');
@@ -1117,10 +988,15 @@ function benchmarkFor(platform, industry) {
   return platMap[ind] ?? platMap[''] ?? 2.0;
 }
 
-function renderResults(data) {
-  if (!data || !data.competitors || !data.competitors.length) {
+function renderResults(rawData) {
+  const data   = normalizeReportData(rawData || {});
+  const brands = data.brands || [];
+  // For context/drill-down bar: create a flat comp-like list from brands
+  const comp   = brands.map(b => ({ name: b.name, platform: Object.keys(b.platforms||{})[0] || 'Social Media', sentiment: b.sentiment }));
+
+  if (!brands.length) {
     const nd = document.getElementById('noDataState');
-    const params = (data && data.scan_params) || {};
+    const params = data.scan_params || {};
     const hadQuery = params.advertisers?.length || params.advertiser || params.competitors?.length;
     nd.innerHTML = hadQuery
       ? `<div class="nd-icon">🔍</div>
@@ -1142,7 +1018,6 @@ function renderResults(data) {
   document.getElementById('noDataState').style.display   = 'none';
   document.getElementById('resultsContent').style.display = 'block';
 
-  const comp   = data.competitors;
   const params = data.scan_params || {};
 
   // Wire post-type filter toggle
@@ -1172,9 +1047,13 @@ function buildContextBar(params, comp) {
   const bar = document.getElementById('contextBar');
 
   const paramPlats = params.platforms || [];
-  const dataPlats  = [...new Set(comp.map(c => c.platform).filter(Boolean))];
+  // Flatten all platform keys from all brands (title-case to match paramPlats)
+  const data_      = normalizeReportData(State.reportData || {});
+  const dataPlats  = [...new Set(
+    (data_.brands || []).flatMap(b => Object.keys(b.platforms || {}).map(p => p.charAt(0).toUpperCase() + p.slice(1)))
+  )];
   const allPlats   = [...new Set([...paramPlats, ...dataPlats])].filter(p =>
-    ['YouTube','Facebook','Instagram'].includes(p)
+    ['YouTube','Facebook','Instagram','Tiktok','TikTok'].includes(p)
   );
 
   if (State.activePlatforms.size === 0) allPlats.forEach(p => State.activePlatforms.add(p));
@@ -1330,58 +1209,57 @@ function buildDrilldownBar(params, comp) {
   }
 }
 
-function filteredComp() {
+// Returns filtered brands[] based on current drill-down state.
+// Brand-level filtering (view/brand/vs) reduces which brands appear.
+// Platform filtering reduces which platform rows are shown per brand.
+function filteredBrands() {
   if (!State.reportData) return [];
-  const params   = State.reportData.scan_params || {};
+  const data    = normalizeReportData(State.reportData);
+  const brands  = data.brands || [];
+  const params  = data.scan_params || {};
   const myBrands = new Set(
     ((params.advertisers || (params.advertiser ? [params.advertiser] : [])))
-      .map(b => (b||'').toLowerCase().trim())
-      .filter(Boolean)
+      .map(b => (b||'').toLowerCase().trim()).filter(Boolean)
   );
   const dd = State.dd;
 
-  let all = State.reportData.competitors || [];
+  let filtered = brands;
 
-  // ── View dimension ────────────────────────────────────────────────
+  // ── View dimension (brand-level) ──────────────────────────────────
   if (dd.view === 'mine') {
-    all = all.filter(c => myBrands.has((c.name||'').toLowerCase().trim()));
+    filtered = filtered.filter(b => myBrands.has((b.name||'').toLowerCase().trim()));
   } else if (dd.view === 'competitors') {
-    all = all.filter(c => !myBrands.has((c.name||'').toLowerCase().trim()));
+    filtered = filtered.filter(b => !myBrands.has((b.name||'').toLowerCase().trim()));
   } else if (dd.view === 'vs') {
-    // Multi-select vs: keep only selected my-brands + selected competitor brands
-    const selMine = new Set((dd.vsMyBrands || []).map(b => (b||'').toLowerCase().trim()).filter(Boolean));
-    const selComp = new Set((dd.vsCompBrands || []).map(b => (b||'').toLowerCase().trim()).filter(Boolean));
-    const anyMine = selMine.size > 0;
-    const anyComp = selComp.size > 0;
-    if (anyMine || anyComp) {
-      all = all.filter(c => {
-        const n = (c.name||'').toLowerCase().trim();
-        return (anyMine && selMine.has(n)) || (anyComp && selComp.has(n));
+    const selMine = new Set((dd.vsMyBrands  || []).map(b => (b||'').toLowerCase().trim()).filter(Boolean));
+    const selComp = new Set((dd.vsCompBrands|| []).map(b => (b||'').toLowerCase().trim()).filter(Boolean));
+    if (selMine.size || selComp.size) {
+      filtered = filtered.filter(b => {
+        const n = (b.name||'').toLowerCase().trim();
+        return selMine.has(n) || selComp.has(n);
       });
     }
-    // If both sets empty (nothing selected yet) show all — colours differentiate
   }
 
-  // ── Specific brand pick (non-vs views only) ───────────────────────
+  // ── Specific brand pick ───────────────────────────────────────────
   if (dd.view !== 'vs' && dd.brand) {
-    const b = dd.brand.toLowerCase().trim();
-    all = all.filter(c => (c.name||'').toLowerCase().trim() === b);
+    const pick = dd.brand.toLowerCase().trim();
+    filtered = filtered.filter(b => (b.name||'').toLowerCase().trim() === pick);
   }
 
-  // ── Platform dimension ────────────────────────────────────────────
+  // ── Platform dimension — filter platforms dict per brand ──────────
   if (dd.platform !== 'all') {
-    all = all.filter(c => c.platform === dd.platform);
-  } else if (State.activePlatforms.size > 0) {
-    all = all.filter(c => State.activePlatforms.has(c.platform));
+    const platKey = dd.platform.toLowerCase();
+    filtered = filtered
+      .map(b => {
+        const plats = {};
+        if (b.platforms && b.platforms[platKey]) plats[platKey] = b.platforms[platKey];
+        return { ...b, platforms: plats };
+      })
+      .filter(b => Object.keys(b.platforms).length > 0);
   }
 
-  // ── Post type dimension ───────────────────────────────────────────
-  const pt = dd.postType !== 'all' ? dd.postType : State.activePostTypeFilter;
-  if (pt !== 'all') {
-    all = all.filter(c => !c.post_type || c.post_type === pt || c.post_type === 'both');
-  }
-
-  return all;
+  return filtered;
 }
 
 // Whether a brand entry belongs to "my brands" (for vs-view colouring)
@@ -1395,168 +1273,270 @@ function _isMyBrand(comp) {
   return myBrands.has((comp.name||'').toLowerCase().trim());
 }
 
+// Backward-compat adapter: converts old competitors[] schema to new brands[].
+// Returns a new object — never mutates the input.
+function normalizeReportData(data) {
+  if (!data) return { brands: [] };
+  if (data.brands && data.brands.length) return data;
+  if (!data.competitors || !data.competitors.length) return data;
+  const byBrand = {};
+  data.competitors.forEach(c => {
+    const name = c.name || 'Unknown';
+    if (!byBrand[name]) byBrand[name] = {
+      name,
+      platforms: {},
+      composite_sov: c.sov_pct || 0,
+      composite_confidence: 'Low',
+      content_themes: c.content_themes || [],
+      hashtags: c.hashtags || [],
+      top_posts: c.top_posts || [],
+      sentiment: c.sentiment || 'Neutral',
+    };
+    const plat = (c.platform || 'facebook').toLowerCase().split('/')[0].trim();
+    byBrand[name].platforms[plat] = {
+      sov_index: c.sov_pct || 0,
+      sov_label: `${c.sov_pct || 0} (Directional / Indexed – Not Actual Spend)`,
+      confidence: 'Low',
+      consistency_flag: false,
+      signals: {
+        creative_volume_share: 0,
+        creative_velocity_score: 0,
+        longevity_score: 0,
+        geo_presence_score: 0,
+        reach_bucket_score: 0,
+        engagement_corroboration: (c.metrics||{}).er_pct || c.engagement_rate || 0,
+      },
+    };
+  });
+  return { ...data, brands: Object.values(byBrand) };
+}
+
 function renderResultsFiltered() {
-  const data = State.reportData;
-  if (!data) return;
-  const comp     = filteredComp();
-  const bgColors = comp.map((_, i) => BRAND_COLORS[i % BRAND_COLORS.length]);
+  const rawData = State.reportData;
+  if (!rawData) return;
+  const data   = normalizeReportData(rawData);
+  const brands = filteredBrands();
+  const bgColors = brands.map((_, i) => BRAND_COLORS[i % BRAND_COLORS.length]);
 
   // ── KPIs ────────────────────────────────────────────────────────────────
-  const totalSpend    = comp.reduce((s,c) => s + (c.estimated_spend_usd||0), 0);
-  const avgEngage     = comp.length
-    ? comp.reduce((s,c) => s+(c.engagement_rate||0), 0) / comp.length : 0;
+  const brandCount = brands.length;
 
-  // Unique brands (by name)
-  const uniqueBrands = new Set(comp.map(c => (c.name||'').toLowerCase().trim()).filter(Boolean));
-  const uniqueBrandCount = uniqueBrands.size || comp.length;
-
-  // Top spender for Share of Spend KPI
-  const topSpenderEntry = comp.length
-    ? comp.reduce((best,c) => (c.estimated_spend_usd||0) > (best.estimated_spend_usd||0) ? c : best, comp[0])
+  // Top SOV brand by composite_sov
+  const topSovEntry = brands.length
+    ? brands.reduce((best, b) => (b.composite_sov||0) > (best.composite_sov||0) ? b : best, brands[0])
     : null;
-  const topSpenderSos = totalSpend > 0 && topSpenderEntry
-    ? ((topSpenderEntry.estimated_spend_usd||0) / totalSpend * 100).toFixed(1)
-    : '—';
 
-  document.getElementById('kpiCount').textContent     = comp.length;
-  document.getElementById('kpiPostCount').textContent = `across ${uniqueBrandCount} brand${uniqueBrandCount!==1?'s':''}`;
-  document.getElementById('kpiSpend').textContent     = '$' + totalSpend.toLocaleString(undefined,{maximumFractionDigits:0});
-  document.getElementById('kpiEngage').textContent    = avgEngage.toFixed(2) + '%';
+  // Per-platform leader (highest sov_index on that platform)
+  const platLeader = {};
+  ['facebook','youtube','tiktok'].forEach(p => {
+    let best = null, bestVal = -1;
+    brands.forEach(b => {
+      const v = (b.platforms||{})[p]?.sov_index || 0;
+      if (v > bestVal) { bestVal = v; best = b.name; }
+    });
+    if (best && bestVal > 0) platLeader[p] = best;
+  });
+  const platLeaderStr = Object.entries(platLeader)
+    .map(([p,n]) => `${p.charAt(0).toUpperCase()+p.slice(1)}: ${n}`)
+    .join(' · ') || '—';
 
-  const kpiTop = document.getElementById('kpiTopSpender');
-  const kpiTopSub = document.getElementById('kpiTopSpenderSub');
-  if (kpiTop) kpiTop.textContent = topSpenderEntry ? esc(topSpenderEntry.name||'—') : '—';
-  if (kpiTopSub) kpiTopSub.textContent = totalSpend > 0 && topSpenderEntry
-    ? `${topSpenderSos}% of total est. spend · ${topSpenderEntry.platform||''}`
-    : 'largest est. media value';
+  // Avg confidence
+  const confOrder = { High: 3, Medium: 2, Low: 1 };
+  const avgConfScore = brands.length
+    ? brands.reduce((s,b) => s + (confOrder[b.composite_confidence] || 1), 0) / brands.length
+    : 1;
+  const avgConfLabel = avgConfScore >= 2.5 ? 'High' : avgConfScore >= 1.5 ? 'Medium' : 'Low';
 
-  // Benchmark comparison (industry-adjusted)
-  const scanIndustry = (data.scan_params || {}).industry || '';
-  const avgBench = comp.length
-    ? comp.reduce((s,c)=>s+benchmarkFor(c.platform, scanIndustry),0)/comp.length : 2.0;
-  const diff = avgEngage - avgBench;
-  const kpiBench = document.getElementById('kpiBenchmark');
-  if (kpiBench) {
-    kpiBench.textContent = diff >= 0
-      ? `+${diff.toFixed(2)}% above industry avg`
-      : `${diff.toFixed(2)}% below industry avg`;
-    kpiBench.style.color = diff >= 0 ? 'var(--green)' : 'var(--red)';
-  }
+  const kpiBrandCount  = document.getElementById('kpiBrandCount');
+  const kpiTopSov      = document.getElementById('kpiTopSov');
+  const kpiPlatLeader  = document.getElementById('kpiPlatformLeader');
+  const kpiConfidence  = document.getElementById('kpiConfidence');
+  const kpiBrandSub = document.getElementById('kpiBrandSub');
+  if (kpiBrandCount) kpiBrandCount.textContent = brandCount;
+  if (kpiBrandSub)   kpiBrandSub.textContent   = `across ${Object.keys(platLeader).length || '—'} platform(s)`;
+  if (kpiTopSov)     kpiTopSov.textContent = topSovEntry ? `${esc(topSovEntry.name)} · ${(topSovEntry.composite_sov||0).toFixed(1)} (Dir.)` : '—';
+  if (kpiPlatLeader) kpiPlatLeader.textContent = platLeaderStr;
+  if (kpiConfidence) kpiConfidence.textContent = avgConfLabel;
 
   // Table subtitle
   const params = data.scan_params || {};
   const tSub = document.getElementById('tableSubtitle');
-  if (tSub) {
-    const pt = params.post_type || 'both';
-    const label = pt === 'paid' ? 'Paid only' : pt === 'organic' ? 'Organic only' : 'Paid + Organic';
-    tSub.textContent = `${comp.length} entries across ${uniqueBrandCount} brand${uniqueBrandCount!==1?'s':''} · ${label} · sorted by est. media value`;
-  }
+  if (tSub) tSub.textContent = `Directional / Indexed – Not Actual Spend · Share of voice within selected competitor group only`;
 
   // ── Charts ───────────────────────────────────────────────────────────────
-  const labels  = comp.map(c => c.name || c.handle || '?');
-  const spends  = comp.map(c => c.estimated_spend_usd || 0);
-  const engages = comp.map(c => c.engagement_rate || 0);
-  const benchmarks = comp.map(c => benchmarkFor(c.platform, scanIndustry));
+  const brandNames = brands.map(b => b.name || '?');
 
   destroyCharts();
 
-  // Share of Spend — absolute est. media value per brand entry
-  Charts.spend = new Chart(document.getElementById('spendChart').getContext('2d'), {
-    type: 'bar',
-    data: { labels, datasets: [{ data: spends, backgroundColor: bgColors, borderRadius:5, borderSkipped:false, label:'Est. Value (USD)' }] },
-    options: { ...CHART_OPTS, plugins: { legend:{display:false}, tooltip:{callbacks:{label:ctx=>`$${Number(ctx.parsed.y).toLocaleString()}`}} } },
-  });
-
-  // Share of Voice — total impressions per brand entry
-  const sovLabels = comp.map(c => c.name || c.handle || '?');
-  const sovViews  = comp.map(c => (c.metrics||{}).views||0);
-  const totalViews = sovViews.reduce((s,v)=>s+v,0);
-  Charts.sov = new Chart(document.getElementById('sovChart').getContext('2d'), {
-    type: 'bar',
-    data: { labels: sovLabels, datasets: [{ data: sovViews, backgroundColor: bgColors, borderRadius:5, borderSkipped:false, label:'Impressions' }] },
-    options: { ...CHART_OPTS, plugins: { legend:{display:false}, tooltip:{callbacks:{label:ctx=>{
-      const pct = totalViews > 0 ? (ctx.parsed.y/totalViews*100).toFixed(1)+'%' : '';
-      return `${Number(ctx.parsed.y).toLocaleString()} views${pct?' · SoV: '+pct:''}`;
-    }}} } },
-  });
-
-  // Engagement Rate vs benchmark
-  Charts.engage = new Chart(document.getElementById('engageChart').getContext('2d'), {
+  // Chart 1 — Composite SOV per brand
+  Charts.sovComposite = new Chart(document.getElementById('sovCompositeChart').getContext('2d'), {
     type: 'bar',
     data: {
-      labels,
-      datasets: [
-        { data: engages,    backgroundColor: bgColors,              borderRadius:5, borderSkipped:false, label:'Engagement Rate %' },
-        { data: benchmarks, backgroundColor: 'rgba(248,81,73,0.15)',borderRadius:3, borderSkipped:false, label:'Platform Benchmark', borderColor:'rgba(248,81,73,0.6)', borderWidth:1 },
-      ]
+      labels: brandNames,
+      datasets: [{
+        label: 'Composite SOV (Directional)',
+        data: brands.map(b => b.composite_sov || 0),
+        backgroundColor: bgColors,
+        borderRadius: 5,
+        borderSkipped: false,
+      }],
     },
-    options: { ...CHART_OPTS, plugins: { legend:{display:true,position:'top',labels:{color:'#8b949e',font:{size:10}}}, tooltip:{callbacks:{label:ctx=>`${ctx.dataset.label}: ${ctx.parsed.y.toFixed(2)}%`}} } },
+    options: {
+      ...CHART_OPTS,
+      plugins: {
+        legend: { display: false },
+        tooltip: { callbacks: { label: ctx => `SOV Index: ${ctx.parsed.y.toFixed(1)} (Directional / Indexed – Not Actual Spend)` } },
+      },
+      scales: { y: { ...CHART_OPTS.scales?.y, title: { display: true, text: 'SOV Index (Directional)', color: '#8b949e', font: { size: 10 } } } },
+    },
   });
 
-  // Platform impression share — doughnut by platform
-  const platViewMap = {};
-  comp.forEach(c => {
-    const p = c.platform || 'Unknown';
-    platViewMap[p] = (platViewMap[p]||0) + ((c.metrics||{}).views||0);
+  // Chart 2 — Per-platform SOV grouped bar (FB · YT · TikTok)
+  const platColors = { facebook: C.accent, youtube: C.red, tiktok: '#e879f9' };
+  Charts.platformSov = new Chart(document.getElementById('platformSovChart').getContext('2d'), {
+    type: 'bar',
+    data: {
+      labels: brandNames,
+      datasets: [
+        { label: 'Facebook SOV (Dir.)',  data: brands.map(b => (b.platforms||{}).facebook?.sov_index || 0), backgroundColor: platColors.facebook, borderRadius: 4, borderSkipped: false },
+        { label: 'YouTube SOV (Dir.)',   data: brands.map(b => (b.platforms||{}).youtube?.sov_index  || 0), backgroundColor: platColors.youtube,  borderRadius: 4, borderSkipped: false },
+        { label: 'TikTok SOV (Dir.)',    data: brands.map(b => (b.platforms||{}).tiktok?.sov_index   || 0), backgroundColor: platColors.tiktok,   borderRadius: 4, borderSkipped: false },
+      ],
+    },
+    options: {
+      ...CHART_OPTS,
+      plugins: {
+        legend: { display: true, position: 'top', labels: { color: '#8b949e', font: { size: 10 } } },
+        tooltip: { callbacks: { label: ctx => `${ctx.dataset.label}: ${ctx.parsed.y.toFixed(1)} (Directional)` } },
+      },
+    },
   });
-  const platLabels = Object.keys(platViewMap);
-  Charts.platform = new Chart(document.getElementById('platformChart').getContext('2d'), {
-    type: 'doughnut',
-    data: { labels: platLabels, datasets: [{ data: platLabels.map(k=>platViewMap[k]), backgroundColor: BRAND_COLORS, hoverOffset:6, borderColor:'#060d1c', borderWidth:2 }] },
-    options: { responsive:true, cutout:'62%', plugins:{ legend:{display:true,position:'right',labels:{font:{size:11},color:'#8b949e'}}, tooltip:{callbacks:{label:ctx=>`${ctx.label}: ${Number(ctx.parsed).toLocaleString()} views`}} } },
+
+  // Chart 3 — 6-signal stacked bar per brand
+  const sigKeys = [
+    { key: 'creative_volume_share',    label: 'Creative Vol (35%)',  color: C.accent },
+    { key: 'creative_velocity_score',  label: 'Velocity (10%)',      color: C.cyan },
+    { key: 'longevity_score',          label: 'Longevity (15%)',     color: C.green },
+    { key: 'geo_presence_score',       label: 'Geo (15%)',           color: C.amber },
+    { key: 'reach_bucket_score',       label: 'Reach (15%)',         color: C.purple },
+    { key: 'engagement_corroboration', label: 'Engagement (10%)',    color: C.red },
+  ];
+  // Use composite platform signals: average across all platforms that have data
+  function _avgSig(brand, sigKey) {
+    const plats = Object.values(brand.platforms || {});
+    if (!plats.length) return 0;
+    const vals = plats.map(p => (p.signals||{})[sigKey] || 0);
+    return vals.reduce((s,v)=>s+v,0) / vals.length;
+  }
+  Charts.signalBreakdown = new Chart(document.getElementById('signalBreakdownChart').getContext('2d'), {
+    type: 'bar',
+    data: {
+      labels: brandNames,
+      datasets: sigKeys.map(s => ({
+        label: s.label,
+        data: brands.map(b => _avgSig(b, s.key)),
+        backgroundColor: s.color,
+        borderRadius: 3,
+        borderSkipped: false,
+      })),
+    },
+    options: {
+      ...CHART_OPTS,
+      plugins: {
+        legend: { display: true, position: 'top', labels: { color: '#8b949e', font: { size: 9 } } },
+        tooltip: { callbacks: { label: ctx => `${ctx.dataset.label}: ${ctx.parsed.y.toFixed(1)} (Directional – Not Actual Spend)` } },
+      },
+      scales: {
+        x: { stacked: true, grid: { color: C.chartGrid }, ticks: { color: C.chartTick, font: { size: 11 } } },
+        y: { stacked: true, grid: { color: C.chartGrid }, ticks: { color: C.chartTick, font: { size: 11 } } },
+      },
+    },
+  });
+
+  // Chart 4 — Confidence distribution per platform
+  const confCounts = { facebook: {High:0,Medium:0,Low:0}, youtube: {High:0,Medium:0,Low:0}, tiktok: {High:0,Medium:0,Low:0} };
+  brands.forEach(b => {
+    ['facebook','youtube','tiktok'].forEach(p => {
+      const conf = (b.platforms||{})[p]?.confidence || 'Low';
+      confCounts[p][conf]++;
+    });
+  });
+  Charts.confidence = new Chart(document.getElementById('confidenceChart').getContext('2d'), {
+    type: 'bar',
+    data: {
+      labels: ['Facebook', 'YouTube', 'TikTok'],
+      datasets: [
+        { label: 'High',   data: ['facebook','youtube','tiktok'].map(p=>confCounts[p].High),   backgroundColor: C.green,  borderRadius: 4, borderSkipped: false },
+        { label: 'Medium', data: ['facebook','youtube','tiktok'].map(p=>confCounts[p].Medium), backgroundColor: C.amber,  borderRadius: 4, borderSkipped: false },
+        { label: 'Low',    data: ['facebook','youtube','tiktok'].map(p=>confCounts[p].Low),    backgroundColor: C.red,    borderRadius: 4, borderSkipped: false },
+      ],
+    },
+    options: {
+      ...CHART_OPTS,
+      plugins: {
+        legend: { display: true, position: 'top', labels: { color: '#8b949e', font: { size: 10 } } },
+        tooltip: { callbacks: { label: ctx => `${ctx.dataset.label}: ${ctx.parsed.y} brand${ctx.parsed.y!==1?'s':''}` } },
+      },
+    },
   });
 
   // ── Content Intel ─────────────────────────────────────────────────────────
-  renderContentIntel(comp, bgColors);
+  // Adapt brands[] to comp-like structure for renderContentIntel
+  const compAdapted = brands.map(b => ({
+    name: b.name,
+    top_posts: b.top_posts || [],
+    hashtags: b.hashtags || [],
+    content_themes: b.content_themes || [],
+    sentiment: b.sentiment || 'Neutral',
+  }));
+  renderContentIntel(compAdapted, bgColors);
 
-  // ── Table ─────────────────────────────────────────────────────────────────
-  const totalTableSpend = comp.reduce((s,c)=>(s+(c.estimated_spend_usd||0)),0);
-  const sorted = [...comp].sort((a,b) => (b.estimated_spend_usd||0) - (a.estimated_spend_usd||0));
-  const isVsView = State.dd.view === 'vs';
+  // ── Table (one row per brand × platform) ──────────────────────────────────
+  const PLAT_ORDER = ['facebook','youtube','tiktok'];
+  const confBadgeColor = { High: 'var(--green)', Medium: 'var(--amber)', Low: 'var(--red)' };
   const tbody = document.getElementById('resultsTableBody');
-  tbody.innerHTML = sorted.map((c, i) => {
-    const m = c.metrics || {};
-    const interactions = (m.likes||0) + (m.comments||0) + (m.shares||0) + (m.saves||0);
-    const sentClass = (c.sentiment||'').toLowerCase();
-    // In vs-view: my brands = green, competitors = accent blue
-    const color = isVsView
-      ? (_isMyBrand(c) ? C.green : C.accent)
-      : bgColors[i % bgColors.length];
-    const pt = c.post_type || 'both';
-    const ptBadge = `<span class="post-type-badge ${pt}">${esc(pt)}</span>`;
-    const bench = benchmarkFor(c.platform, scanIndustry);
-    const erDiff = (c.engagement_rate||0) - bench;
-    const erColor = erDiff >= 0 ? 'var(--green)' : 'var(--red)';
-    const erDiffStr = (erDiff >= 0 ? '+' : '') + erDiff.toFixed(2) + '%';
-    const sos = totalTableSpend > 0
-      ? ((c.estimated_spend_usd||0) / totalTableSpend * 100).toFixed(1) + '%'
-      : '—';
-    return `<tr>
-      <td><span style="display:inline-flex;align-items:center;gap:7px;">
-        <span style="width:8px;height:8px;border-radius:50%;background:${color};display:inline-block;flex-shrink:0;"></span>
-        <strong>${esc(c.name||'—')}</strong>
-      </span></td>
-      <td style="color:#64748b;">${esc(c.handle||'—')}</td>
-      <td><span class="platform-badge${c.data_source==='modelled_from_facebook'?' modelled':''}" ${c.data_source==='modelled_from_facebook'?`title="${esc(c.modelling_note||'Modelled from Facebook data')}"`:''}>
-        ${c.data_source==='modelled_from_facebook'?'~':''}${esc(c.platform||'Multi')}</span></td>
-      <td>${ptBadge}</td>
-      <td>${fmtShort(m.views)}</td>
-      <td>${fmtShort(interactions)}</td>
-      <td>${fmtShort(m.likes)}</td>
-      <td>${fmtShort(m.comments)}</td>
-      <td>${fmtShort(m.shares)}</td>
-      <td>${fmtShort(m.saves)}</td>
-      <td>${fmtShort(m.followers)}</td>
-      <td><strong>${(c.engagement_rate||0).toFixed(2)}%</strong></td>
-      <td style="color:${erColor};font-size:0.78rem;">${erDiffStr}</td>
-      <td style="color:#2563eb;font-weight:700;">$${(c.estimated_spend_usd||0).toLocaleString(undefined,{maximumFractionDigits:0})}</td>
-      <td style="color:var(--text2);font-weight:600;">${sos}</td>
-      <td><span class="sentiment-badge ${sentClass}">${esc(c.sentiment||'—')}</span></td>
-    </tr>`;
-  }).join('');
+  const rows = [];
+  brands.forEach((b, bi) => {
+    const color = bgColors[bi % bgColors.length];
+    const sentClass = (b.sentiment||'').toLowerCase();
+    PLAT_ORDER.forEach(p => {
+      const pd = (b.platforms||{})[p];
+      if (!pd) return;
+      const sigs  = pd.signals || {};
+      const conf  = pd.confidence || 'Low';
+      const confColor = confBadgeColor[conf] || 'var(--text3)';
+      const flagBadge = pd.consistency_flag
+        ? '<span style="font-size:0.65rem;color:var(--amber);margin-left:4px;" title="Cross-signal consistency flag">⚠</span>'
+        : '';
+      const platLabel = p.charAt(0).toUpperCase() + p.slice(1);
+      rows.push(`<tr>
+        <td><span style="display:inline-flex;align-items:center;gap:7px;">
+          <span style="width:8px;height:8px;border-radius:50%;background:${color};display:inline-block;flex-shrink:0;"></span>
+          <strong>${esc(b.name||'—')}</strong>
+        </span></td>
+        <td><span class="platform-badge">${esc(platLabel)}</span></td>
+        <td style="font-weight:700;color:var(--accent);" title="${esc(pd.sov_label||'')}">
+          ${(pd.sov_index||0).toFixed(1)}
+        </td>
+        <td><span style="color:${confColor};font-size:0.78rem;font-weight:600;">${esc(conf)}</span>${flagBadge}</td>
+        <td>${(sigs.creative_volume_share||0).toFixed(1)}</td>
+        <td>${(sigs.creative_velocity_score||0).toFixed(1)}</td>
+        <td>${(sigs.reach_bucket_score||0).toFixed(1)}</td>
+        <td>${(sigs.geo_presence_score||0).toFixed(1)}</td>
+        <td>${(sigs.longevity_score||0).toFixed(1)}</td>
+        <td>${(sigs.engagement_corroboration||0).toFixed(1)}</td>
+        <td><span class="sentiment-badge ${sentClass}">${esc(b.sentiment||'—')}</span></td>
+      </tr>`);
+    });
+  });
+  tbody.innerHTML = rows.join('');
 
-  renderTopPosts({ competitors: comp });
-  renderCalcTree(data);
+  // Top posts — adapt to expected format; pass first real platform key for icon/colour
+  renderTopPosts({ competitors: brands.map(b => ({
+    name: b.name,
+    top_posts: b.top_posts || [],
+    platform: Object.keys(b.platforms || {})[0] || 'Social Media',
+  })) });
 }
 
 function renderContentIntel(comp, bgColors) {
@@ -1694,189 +1674,6 @@ function renderTopPosts(data){
   section.style.display=grid.children.length?'block':'none';
 }
 
-// ── Calculation Tree ──────────────────────────────────────────────────────────
-
-function renderCalcTree(data) {
-  const card = document.getElementById('calcTreeCard');
-  const body = document.getElementById('calcTreeBody');
-  if (!card || !body) return;
-
-  const a = data.assumptions;
-  if (!a) { card.style.display='none'; return; }
-  card.style.display = 'block';
-
-  const cpmInput = document.getElementById('cpmOverride');
-  if (cpmInput && !cpmInput._seeded) {
-    cpmInput.value = typeof a.cpm_rate_usd === 'number' ? a.cpm_rate_usd : 0;
-    cpmInput._seeded = true;
-  }
-
-  const pt       = a.post_type || 'both';
-  const country  = (data.scan_params||{}).country  || '';
-  const industry = (data.scan_params||{}).industry || '';
-  const iLabel   = INDUSTRY_LABELS[industry] || 'General';
-  const iMult    = INDUSTRY_CPM_MULT[industry] ?? 1.00;
-  const sMult    = getSeasonalIndex();
-  const sLabel   = getSeasonalLabel();
-
-  // Build per-platform effective CPM derivation table for display
-  const platList = ['YouTube','Facebook'];
-  const cpmRows  = platList.map(p => {
-    const base = (COUNTRY_CPM[country] || COUNTRY_CPM[''])[p.toLowerCase()] || 7.00;
-    const eff  = Math.round(base * iMult * sMult * 100) / 100;
-    return `<tr><td style="color:var(--text2);padding:3px 8px;">${p}</td><td style="padding:3px 8px;">$${base.toFixed(2)}</td><td style="padding:3px 8px;">×${iMult.toFixed(2)}</td><td style="padding:3px 8px;">×${sMult.toFixed(2)}</td><td style="color:var(--accent);font-weight:700;padding:3px 8px;">= $${eff.toFixed(2)}</td></tr>`;
-  }).join('');
-
-  let html = `
-    <div class="calc-assumptions">
-      <div class="calc-pill">Content Type: <strong>${esc(pt)}</strong></div>
-      <div class="calc-pill">Market: <strong>${esc(country||'Global')}</strong></div>
-      <div class="calc-pill">Industry: <strong>${esc(iLabel)}</strong></div>
-      <div class="calc-pill">Total Interactions: <strong>${fmt(a.total_interactions)}</strong></div>
-      <div class="calc-pill">Total Impressions: <strong>${fmt(a.total_impressions)}</strong></div>
-      <div class="calc-pill">Est. Paid Value: <strong>$${fmt(a.total_spend_paid_usd)}</strong></div>
-      <div class="calc-pill">Est. Organic Value: <strong>$${fmt(a.total_spend_org_usd)}</strong></div>
-      <div class="calc-pill total">Est. Total Media Value: <strong>$${fmt(a.total_spend_usd)}</strong></div>
-    </div>
-
-    <div class="calc-formula-row" style="flex-direction:column;align-items:flex-start;gap:8px;">
-      <div class="calc-formula-label" style="margin-bottom:4px;">CPM Derivation — Market × Industry × Seasonal</div>
-      <div style="font-size:0.75rem;color:var(--text3);margin-bottom:6px;">
-        Formula: <strong>Base market CPM</strong> × <strong>Industry multiplier</strong> × <strong>Seasonal index</strong><br>
-        Industry: ${esc(iLabel)} (×${iMult.toFixed(2)}) · ${esc(sLabel)}<br>
-        Sources: eMarketer, Statista, Meta/TikTok/YouTube quarterly revenue disclosures, agency trading desk benchmarks 2024-25
-      </div>
-      <table style="border-collapse:collapse;font-size:0.75rem;font-family:var(--mono);">
-        <thead><tr style="color:var(--text3);">
-          <th style="padding:3px 8px;text-align:left;">Platform</th>
-          <th style="padding:3px 8px;">Base (${esc(country||'Global')})</th>
-          <th style="padding:3px 8px;">Industry ×</th>
-          <th style="padding:3px 8px;">Seasonal ×</th>
-          <th style="padding:3px 8px;">Effective CPM</th>
-        </tr></thead>
-        <tbody>${cpmRows}</tbody>
-      </table>
-    </div>
-    ${(typeof a.cpm_rate_usd === 'number' && a.cpm_rate_usd > 0) ? `
-    <div class="calc-formula-row" style="border-left:3px solid var(--amber);padding-left:10px;">
-      <div class="calc-formula-label" style="color:var(--amber);">CPM Override Active</div>
-      ${esc('$' + a.cpm_rate_usd + '/1K impressions applied uniformly. Market/industry/seasonal adjustments bypassed.')}
-    </div>` : ''}
-    <div class="calc-formula-row">
-      <div class="calc-formula-label">Paid Spend Formula</div>${esc(a.spend_formula_paid||'(Views / Avg Platform View Rate) / 1,000 × Platform CPM')}
-    </div>
-    <div class="calc-formula-row">
-      <div class="calc-formula-label">Avg View-Through Rates</div>${(() => {
-        const vr = a.avg_view_rates || {YouTube:'32%',Facebook:'22%'};
-        return Object.entries(vr).filter(([k])=>k!=='default').map(([k,v])=>`${esc(k)}: ${esc(String(v))}`).join(' · ');
-      })()}
-    </div>
-    <div class="calc-formula-row">
-      <div class="calc-formula-label">Organic Value Formula</div>${esc(a.spend_formula_organic||'interactions × $0.75')}
-    </div>
-    <div class="calc-formula-row">
-      <div class="calc-formula-label">Mixed Formula</div>${esc(a.spend_formula_both||'(Views×60%/Avg View Rate/1K×CPM) + (Interactions×40%×$0.75)')}
-    </div>
-    <div class="calc-formula-row">
-      <div class="calc-formula-label">Engagement Rate</div>${esc(a.engagement_rate_formula||'YouTube: interactions/views×100 · Facebook: interactions/followers×100').replace(/\n/g,'<br>')}
-    </div>
-    <div class="calc-formula-row">
-      <div class="calc-formula-label">ER Benchmarks</div>${esc(a.benchmark_note||'3-month rolling industry standard. Source: Socialinsider, Sprout Social, Rival IQ 2024-25.')}
-    </div>`;
-
-  if (a.brand_breakdowns && a.brand_breakdowns.length) {
-    html += '<div class="calc-brand-grid">';
-    a.brand_breakdowns.forEach((b, i) => {
-      const color = BRAND_COLORS[i % BRAND_COLORS.length];
-      const erSign = (b.er_vs_benchmark||0) >= 0 ? '+' : '';
-      const erColor = (b.er_vs_benchmark||0) >= 0 ? 'var(--green)' : 'var(--red)';
-      const noData = b.data_unavailable || (b.interactions === 0 && b.followers === 0 && b.views === 0 && b.likes === 0);
-      html += `
-        <div class="calc-brand-card${noData ? ' no-data-card' : ''}">
-          <div class="calc-brand-name">
-            <span style="width:8px;height:8px;border-radius:50%;background:${color};display:inline-block;flex-shrink:0;"></span>
-            ${esc(b.brand)}
-            <span class="post-type-badge ${b.post_type||'both'}" style="font-size:0.62rem;margin-left:4px;">${esc(b.post_type||'both')}</span>
-          </div>
-          ${noData ? `<div class="no-data-notice">⚠ No data collected for this brand on this platform.<br>Set <code>YOUTUBE_API_KEY</code> and <code>META_AD_LIBRARY_TOKEN</code> in Railway Variables for real metrics.</div>` : `
-          <div class="calc-row"><span>Platform</span><span class="calc-val">${esc(b.platform||'—')}</span></div>
-          <div class="calc-row"><span>Likes</span><span class="calc-val">${fmt(b.likes)}</span></div>
-          <div class="calc-row"><span>Comments</span><span class="calc-val">${fmt(b.comments)}</span></div>
-          <div class="calc-row"><span>Shares</span><span class="calc-val">${fmt(b.shares)}</span></div>
-          <div class="calc-row"><span>Saves</span><span class="calc-val">${fmt(b.saves)}</span></div>
-          <div class="calc-row"><span>Views / Impressions</span><span class="calc-val">${fmt(b.views)}</span></div>
-          <div class="calc-row"><span>Followers</span><span class="calc-val">${fmt(b.followers)}</span></div>
-          <div class="calc-row"><span>Interactions</span><span class="calc-val accent">${fmt(b.interactions)}</span></div>
-          <div class="calc-row"><span>ER Denominator</span><span class="calc-val" style="font-size:0.72rem;">${fmt(b.er_denominator)} ${esc(b.er_denominator_label||'')}</span></div>
-          <div class="calc-row"><span>Engagement Rate</span><span class="calc-val green">${(b.engagement_rate||0).toFixed(2)}%</span></div>
-          <div class="calc-row"><span>vs Benchmark</span><span class="calc-val" style="color:${erColor};">${erSign}${(b.er_vs_benchmark||0).toFixed(2)}%</span></div>
-          <div class="calc-row"><span>CPM Used</span><span class="calc-val">$${b.cpm_used||'—'}</span></div>
-          <div class="calc-row"><span>Est. Value</span><span class="calc-val accent">$${fmt(b.spend_usd)}</span></div>
-          <div class="calc-formula-inline">${esc(b.spend_note||b.spend_formula||'')}</div>
-          <div class="calc-formula-inline" style="color:var(--text3);">${esc(b.er_formula||'')}</div>
-          `}
-        </div>`;
-    });
-    html += '</div>';
-  }
-
-  body.innerHTML = html;
-}
-
-// ── Recalc ────────────────────────────────────────────────────────────────────
-;(function wireRecalc() {
-  const btn = document.getElementById('recalcBtn');
-  if (!btn) return;
-  btn.addEventListener('click', () => {
-    const newCpm    = parseFloat(document.getElementById('cpmOverride').value) || 0;
-    if (!State.reportData) return;
-    const data      = State.reportData;
-    const a         = data.assumptions;
-    const country   = (data.scan_params||{}).country || '';
-    const industry  = (data.scan_params||{}).industry || '';
-
-    ;(data.competitors||[]).forEach((c, i) => {
-      const m    = c.metrics || {};
-      const plat = (c.platform||'').toLowerCase().split('/')[0].trim();
-      const cpm  = newCpm > 0 ? newCpm : effectiveCpm(plat, country, industry);
-      const deriv = newCpm > 0 ? null : cpmDerivation(plat, country, industry);
-      const pt   = c.post_type || 'both';
-      const views = m.views || 0;
-      const interactions = (m.likes||0)+(m.comments||0)+(m.shares||0)+(m.saves||0);
-
-      let spend;
-      if      (pt==='paid')    spend = Math.round((views/1000)*cpm*100)/100;
-      else if (pt==='organic') spend = Math.round(interactions*0.75*100)/100;
-      else {
-        const paid_part = Math.round((views*0.60/1000)*cpm*100)/100;
-        const org_part  = Math.round(interactions*0.40*0.75*100)/100;
-        spend = Math.round((paid_part+org_part)*100)/100;
-      }
-      c.estimated_spend_usd = spend;
-      c.cpm_used = cpm;
-
-      if (a && a.brand_breakdowns && a.brand_breakdowns[i]) {
-        const b = a.brand_breakdowns[i];
-        b.spend_usd  = spend;
-        b.cpm_used   = cpm;
-        b.spend_note = newCpm > 0
-          ? `User CPM override: $${newCpm}/1K impressions`
-          : `Auto CPM: ${deriv ? deriv.label : `$${cpm}`}`;
-      }
-    });
-
-    if (a) {
-      a.cpm_rate_usd = newCpm > 0 ? newCpm : 'market+industry+seasonal';
-      a.cpm_note     = newCpm > 0
-        ? `User-set override: $${newCpm}/1K impressions (bypasses market/industry/seasonal adjustments)`
-        : `Auto: base market CPM × industry multiplier (${INDUSTRY_LABELS[industry]||'general'}) × seasonal index (${getSeasonalLabel()})`;
-      a.total_spend_usd = Math.round((data.competitors||[]).reduce((s,c)=>s+(c.estimated_spend_usd||0),0)*100)/100;
-    }
-
-    if (cpmInput) cpmInput._seeded = false;
-    renderResults(data);
-  });
-})();
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // SAVED RUNS
@@ -1895,7 +1692,7 @@ async function _fetchSavedRuns() {
 }
 
 async function saveRun(report) {
-  if (!report || !report.competitors) return;
+  if (!report || (!report.brands && !report.competitors)) return;
   const sp    = report.scan_params || {};
   const entry = {
     id:     Date.now(),
@@ -1931,11 +1728,10 @@ function buildRunLabel(sp) {
 }
 
 function buildRunCsv(report) {
-  const sp    = report.scan_params || {};
-  const comps = report.competitors || [];
-  const total = comps.reduce((s,c) => s + (c.estimated_spend_usd||0), 0);
+  const norm  = normalizeReportData(report);
+  const sp    = norm.scan_params || {};
+  const brands = norm.brands || [];
 
-  // Sheet 1 header: scan metadata
   const metaRows = [
     ['Run Date', new Date().toLocaleString()],
     ['Brands', [...(sp.advertisers||[]), ...(sp.competitors||[])].join(', ')],
@@ -1943,28 +1739,32 @@ function buildRunCsv(report) {
     ['Industry', sp.industry || 'General'],
     ['Date Range', sp.date_range || ''],
     ['Platforms', (sp.platforms||[]).join(', ')],
-    ['Content Type', sp.post_type || ''],
     ['Analysis Depth', sp.depth || ''],
     [],
   ].map(r => r.map(v => `"${String(v||'').replace(/"/g,'""')}"`).join(','));
 
   const cols = [
-    'Brand','Handle','Platform','Type','Impressions','Interactions',
-    'Likes','Comments','Shares','Saves','Followers',
-    'Eng. Rate (%)','Benchmark ER (%)','ER vs Benchmark (%)','Est. Value (USD)',
-    'Share of Spend (%)','CPM Used','Sentiment',
+    'brand','platform','sov_index','confidence','consistency_flag',
+    'creative_volume','creative_velocity','reach_tier','geo_presence',
+    'ad_longevity','engagement_corroboration',
+    'composite_sov','composite_confidence','sentiment',
   ];
 
-  const dataRows = comps.map(c => {
-    const m   = c.metrics || {};
-    const interactions = (m.likes||0)+(m.comments||0)+(m.shares||0)+(m.saves||0);
-    const sos = total > 0 ? ((c.estimated_spend_usd||0)/total*100).toFixed(2) : '0';
-    return [
-      c.name, c.handle, c.platform, c.post_type,
-      m.views, interactions, m.likes, m.comments, m.shares, m.saves, m.followers,
-      c.engagement_rate, c.benchmark_er_pct, c.er_vs_benchmark,
-      c.estimated_spend_usd, sos, c.cpm_used, c.sentiment,
-    ].map(v => `"${String(v||'').replace(/"/g,'""')}"`).join(',');
+  const dataRows = [];
+  brands.forEach(b => {
+    const plats = ['facebook','youtube','tiktok'];
+    plats.forEach(p => {
+      const pd   = (b.platforms||{})[p];
+      if (!pd) return;
+      const sigs = pd.signals || {};
+      dataRows.push([
+        b.name, p, pd.sov_index, pd.confidence, pd.consistency_flag,
+        sigs.creative_volume_share, sigs.creative_velocity_score,
+        sigs.reach_bucket_score, sigs.geo_presence_score,
+        sigs.longevity_score, sigs.engagement_corroboration,
+        b.composite_sov, b.composite_confidence, b.sentiment,
+      ].map(v => `"${String(v==null?'':v).replace(/"/g,'""')}"`).join(','));
+    });
   });
 
   return [...metaRows, cols.join(','), ...dataRows].join('\n');
@@ -1999,12 +1799,15 @@ function renderSavedRunsList() {
   if (empty) empty.style.display = 'none';
 
   list.innerHTML = runs.map(entry => {
-    const sp     = entry.params || {};
-    const comps  = (entry.report.competitors || []);
-    const total  = comps.reduce((s,c) => s + (c.estimated_spend_usd||0), 0);
-    const avgER  = comps.length ? (comps.reduce((s,c) => s + (c.engagement_rate||0), 0) / comps.length) : 0;
-    const brands = [...(sp.advertisers||[]), ...(sp.competitors||[])];
-    const tsLabel = new Date(entry.ts).toLocaleString('en-SG', { dateStyle:'medium', timeStyle:'short' });
+    const sp        = entry.params || {};
+    const norm      = normalizeReportData(entry.report || {});
+    const repBrands = norm.brands || [];
+    const topSov    = repBrands.length
+      ? repBrands.reduce((best,b) => (b.composite_sov||0) > (best.composite_sov||0) ? b : best, repBrands[0])
+      : null;
+    const topSovStr = topSov ? `${topSov.name} ${(topSov.composite_sov||0).toFixed(1)} (Dir.)` : '—';
+    const brandList = [...(sp.advertisers||[]), ...(sp.competitors||[])];
+    const tsLabel   = new Date(entry.ts).toLocaleString('en-SG', { dateStyle:'medium', timeStyle:'short' });
 
     return `
     <div class="saved-run-card" data-id="${entry.id}">
@@ -2020,13 +1823,12 @@ function renderSavedRunsList() {
         </div>
       </div>
       <div class="src-pills">
-        ${brands.slice(0,6).map(b => `<span class="src-pill">${esc(b)}</span>`).join('')}
-        ${brands.length > 6 ? `<span class="src-pill muted">+${brands.length-6} more</span>` : ''}
+        ${brandList.slice(0,6).map(b => `<span class="src-pill">${esc(b)}</span>`).join('')}
+        ${brandList.length > 6 ? `<span class="src-pill muted">+${brandList.length-6} more</span>` : ''}
       </div>
       <div class="src-stats">
-        <div class="src-stat"><span class="src-stat-label">Posts</span><span class="src-stat-val">${comps.length}</span></div>
-        <div class="src-stat"><span class="src-stat-label">Est. Value</span><span class="src-stat-val">$${fmtShort(total)}</span></div>
-        <div class="src-stat"><span class="src-stat-label">Avg ER</span><span class="src-stat-val">${avgER.toFixed(2)}%</span></div>
+        <div class="src-stat"><span class="src-stat-label">Brands</span><span class="src-stat-val">${repBrands.length}</span></div>
+        <div class="src-stat"><span class="src-stat-label">Top SOV</span><span class="src-stat-val">${esc(topSovStr)}</span></div>
         <div class="src-stat"><span class="src-stat-label">Market</span><span class="src-stat-val">${esc(sp.country||'Global')}</span></div>
         <div class="src-stat"><span class="src-stat-label">Platforms</span><span class="src-stat-val">${(sp.platforms||[]).join(', ')||'—'}</span></div>
         <div class="src-stat"><span class="src-stat-label">Range</span><span class="src-stat-val">${esc(sp.date_range||'—')}</span></div>
@@ -2079,20 +1881,8 @@ document.getElementById('exportJson').addEventListener('click', () => {
 });
 
 document.getElementById('exportCsv').addEventListener('click', () => {
-  if (!State.reportData||!State.reportData.competitors) return;
-  const allComp = filteredComp();
-  const totalCsvSpend = allComp.reduce((s,c)=>s+(c.estimated_spend_usd||0),0);
-  const cols = ['brand','handle','platform','post_type','impressions','interactions','likes','comments','shares','saves','followers','engagement_rate_pct','benchmark_er_pct','er_vs_benchmark_pct','est_value_usd','share_of_spend_pct','cpm_used','sentiment'];
-  const rows = allComp.map(c => {
-    const m = c.metrics||{};
-    const interactions = (m.likes||0)+(m.comments||0)+(m.shares||0)+(m.saves||0);
-    const sos = totalCsvSpend > 0 ? ((c.estimated_spend_usd||0)/totalCsvSpend*100).toFixed(2) : 0;
-    return [c.name,c.handle,c.platform,c.post_type,m.views,interactions,m.likes,m.comments,m.shares,m.saves,m.followers,
-            c.engagement_rate,c.benchmark_er_pct,c.er_vs_benchmark,c.estimated_spend_usd,sos,c.cpm_used,c.sentiment]
-      .map(v=>`"${String(v||'').replace(/"/g,'""')}"`)
-      .join(',');
-  });
-  const csv  = [cols.join(','),...rows].join('\n');
+  if (!State.reportData) return;
+  const csv  = buildRunCsv(State.reportData);
   const blob = new Blob([csv],{type:'text/csv'});
   const url  = URL.createObjectURL(blob);
   const a    = document.createElement('a');
@@ -2125,9 +1915,6 @@ function destroyCharts() {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 (async function init() {
-  // Seed CPM hint with initial (Global / General) defaults
-  _refreshCpmHint();
-
   // Load saved runs index
   await _fetchSavedRuns();
   renderSavedRunsList();
@@ -2149,7 +1936,7 @@ function destroyCharts() {
 
   try {
     const rep = await fetch('/report').then(r => r.json());
-    if (rep && rep.competitors && rep.competitors.length) {
+    if (rep && (rep.brands?.length || rep.competitors?.length)) {
       State.reportData = rep;
       document.getElementById('dot-results').className = 'status-dot done';
     }

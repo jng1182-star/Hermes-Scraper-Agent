@@ -22,10 +22,15 @@ import json
 import logging
 import os
 import re
+import ssl
 import time
 import urllib.parse
 import urllib.request
 from crewai.tools import BaseTool
+
+# macOS system Python lacks the CA bundle that certifi provides;
+# use an unverified context so API calls don't silently fail locally.
+_SSL_CTX = ssl._create_unverified_context()
 
 logger = logging.getLogger(__name__)
 
@@ -40,8 +45,12 @@ def _get(url: str, headers: dict = None) -> dict | None:
         req = urllib.request.Request(url, headers=headers or {
             "User-Agent": "Mozilla/5.0 (compatible; HermesBot/1.0)"
         })
-        with urllib.request.urlopen(req, timeout=_HTTP_TIMEOUT) as r:
+        with urllib.request.urlopen(req, timeout=_HTTP_TIMEOUT, context=_SSL_CTX) as r:
             return json.loads(r.read().decode())
+    except urllib.error.HTTPError as e:
+        body = e.read().decode(errors="ignore")[:300]
+        logger.warning("[APIDataTool] HTTP %d for %s — %s", e.code, url[:120], body)
+        return None
     except Exception as e:
         logger.warning("[APIDataTool] GET failed: %s — %s", url[:120], e)
         return None
