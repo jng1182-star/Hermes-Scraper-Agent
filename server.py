@@ -601,6 +601,11 @@ class Handler(BaseHTTPRequestHandler):
             with _state_lock:
                 if _run_state["running"]:
                     self._json(200, {"status": "already_running"}); return
+                # Mark running=True synchronously so /status polls can't see
+                # report_ready:true from a previous run before the thread starts.
+                _run_state["running"] = True
+                _run_state["error"]   = None
+                _run_state["logs"].clear()
             t = threading.Thread(target=_run_worker, args=(data,), daemon=True)
             t.start()
             self._json(200, {"status": "started"})
