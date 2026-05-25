@@ -78,21 +78,23 @@
           </div>
         </div>
 
-        <!-- Row 2: Country + Industry -->
+        <!-- Row 2: Country (multi-select) + Industry -->
         <div class="form-row">
           <div class="form-group">
-            <label class="form-label" for="country">Country / Market</label>
-            <select class="form-input" id="country">
-              <option value="">Global</option>
+            <label class="form-label" for="country">
+              Market(s)
+              <span class="form-hint">Hold Ctrl/Cmd to select multiple markets — each will be analysed</span>
+            </label>
+            <select class="form-input" id="country" multiple size="4" style="height:auto;min-height:90px;">
               <option value="Singapore">Singapore</option>
               <option value="Philippines">Philippines</option>
+              <option value="Thailand">Thailand</option>
+              <option value="Vietnam">Vietnam</option>
+              <option value="Malaysia">Malaysia</option>
+              <option value="Indonesia">Indonesia</option>
               <option value="United States">United States</option>
               <option value="United Kingdom">United Kingdom</option>
               <option value="Australia">Australia</option>
-              <option value="Indonesia">Indonesia</option>
-              <option value="Malaysia">Malaysia</option>
-              <option value="Thailand">Thailand</option>
-              <option value="Vietnam">Vietnam</option>
               <option value="India">India</option>
               <option value="Japan">Japan</option>
               <option value="South Korea">South Korea</option>
@@ -132,7 +134,7 @@
           </div>
         </div>
 
-        <!-- Row 3: Platforms (4 only) -->
+        <!-- Row 3: Platforms -->
         <div class="form-row full" style="margin-bottom:20px;">
           <div class="form-group">
             <label class="form-label">Platforms</label>
@@ -142,6 +144,9 @@
               </label>
               <label class="platform-option checked">
                 <input type="checkbox" value="Facebook" checked> <span class="plabel">Facebook</span>
+              </label>
+              <label class="platform-option" title="Instagram data modelled from associated Facebook Page">
+                <input type="checkbox" value="Instagram"> <span class="plabel">Instagram <span style="font-size:0.7rem;opacity:0.6;">(modelled)</span></span>
               </label>
               <label class="platform-option checked">
                 <input type="checkbox" value="TikTok" checked> <span class="plabel">TikTok</span>
@@ -448,6 +453,9 @@
           </div>
         </div>
 
+        <!-- TikTok suppression notice -->
+        <div id="tiktokNotice" class="tiktok-notice" style="display:none;"></div>
+
         <!-- Drill-down filter bar -->
         <div class="drilldown-bar" id="drilldownBar">
           <div class="dd-group">
@@ -484,13 +492,22 @@
             </select>
           </div>
 
+          <!-- Market filter (shown only when multi-market data present) -->
+          <div class="dd-group" id="ddMarketWrap" style="display:none;">
+            <span class="dd-label">Market</span>
+            <select class="dd-select" id="ddMarketPick">
+              <option value="all">All Markets</option>
+            </select>
+          </div>
+
           <div class="dd-group">
             <span class="dd-label">Platform</span>
             <div class="dd-pills" id="ddPlatform">
               <button class="dd-pill active" data-plat="all">All</button>
               <button class="dd-pill" data-plat="YouTube">YouTube</button>
               <button class="dd-pill" data-plat="Facebook">Facebook</button>
-              <button class="dd-pill" data-plat="Instagram">~Instagram</button>
+              <button class="dd-pill" data-plat="Instagram" title="Instagram data modelled from Facebook">~Instagram</button>
+              <button class="dd-pill" data-plat="TikTok">TikTok</button>
             </div>
           </div>
           <div class="dd-group">
@@ -504,29 +521,46 @@
           <button class="dd-reset" id="ddReset" title="Reset all filters">↺ Reset</button>
         </div>
 
-        <!-- KPI cards -->
-        <div class="kpi-grid">
+        <!-- Time-grain toggle -->
+        <div class="time-grain-bar">
+          <span class="dd-label" style="margin-right:8px;">Time View</span>
+          <button class="grain-btn active" data-grain="lifetime">Lifetime</button>
+          <button class="grain-btn" data-grain="monthly">Monthly</button>
+          <button class="grain-btn" data-grain="weekly">Weekly</button>
+          <button class="grain-btn" data-grain="daily">Daily</button>
+        </div>
+
+        <!-- KPI cards (5 cards) -->
+        <div class="kpi-grid kpi-grid-5">
           <div class="kpi-card">
             <div class="kpi-label">Brands Tracked</div>
             <div class="kpi-value" id="kpiBrandCount">—</div>
-            <div class="kpi-sub" id="kpiBrandSub" style="font-size:0.7rem;color:var(--text3);margin-top:4px;">across — platforms</div>
+            <div class="kpi-sub" id="kpiBrandSub">across — platform(s)</div>
           </div>
-          <div class="kpi-card" style="--accent:#2563eb;">
+          <div class="kpi-card">
             <div class="kpi-label">Highest SOV Brand</div>
             <div class="kpi-value accent" id="kpiTopSov" style="font-size:1.1rem;">—</div>
-            <div class="kpi-sub" id="kpiTopSovSub" style="font-size:0.7rem;color:var(--text3);margin-top:4px;">composite SOV index (Directional)</div>
+            <div class="kpi-sub">composite SOV index (Directional)</div>
           </div>
           <div class="kpi-card">
             <div class="kpi-label">Platform Leader</div>
             <div class="kpi-value" id="kpiPlatformLeader" style="font-size:1rem;">—</div>
-            <div class="kpi-sub" id="kpiPlatformLeaderSub" style="font-size:0.7rem;color:var(--text3);margin-top:4px;">highest SOV per platform</div>
+            <div class="kpi-sub">highest SOV per platform</div>
           </div>
           <div class="kpi-card">
             <div class="kpi-label">Avg Data Confidence</div>
             <div class="kpi-value green" id="kpiConfidence">—</div>
-            <div class="kpi-sub" id="kpiConfidenceSub" style="font-size:0.7rem;color:var(--text3);margin-top:4px;">High / Medium / Low</div>
+            <div class="kpi-sub">High / Medium / Low</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-label">Paid Post Mix</div>
+            <div class="kpi-value amber" id="kpiPaidPct">—</div>
+            <div class="kpi-sub">confirmed + estimated paid</div>
           </div>
         </div>
+
+        <!-- Executive Insight Cards -->
+        <div id="insightCardsWrap" class="insight-cards-row" style="display:none;margin-bottom:20px;"></div>
 
         <!-- Charts row 1 -->
         <div class="charts-grid" style="margin-bottom:20px;">
@@ -546,12 +580,20 @@
           </div>
         </div>
 
+        <!-- SOV Trend Chart (shown only when grain ≠ lifetime) -->
+        <div class="chart-card" id="sovTrendChartWrap" style="display:none;margin-bottom:20px;">
+          <div class="chart-card-title">
+            SOV Trend Over Time (Directional)
+            <span class="chart-note">Composite SOV index per brand over selected time period</span>
+          </div>
+        </div>
+
         <!-- Charts row 2 -->
         <div class="charts-grid" style="margin-bottom:20px;">
           <div class="chart-card">
             <div class="chart-card-title">
               Signal Breakdown (Directional / Indexed – Not Actual Spend)
-              <span class="chart-note">Proxy signal components per brand (Creative Vol · Velocity · Longevity · Geo · Reach · Engagement)</span>
+              <span class="chart-note">Proxy signal components per brand (Creative Vol · Velocity · Longevity · Platform Presence · Reach · Engagement)</span>
             </div>
             <canvas id="signalBreakdownChart" height="220"></canvas>
           </div>
@@ -568,7 +610,7 @@
         <div class="table-card" style="margin-bottom:20px;">
           <div class="table-card-header">
             <div class="table-card-title">Content Intelligence</div>
-            <span style="font-size:0.72rem;color:var(--text3);font-family:var(--mono);">Top posts · hashtags · themes per brand</span>
+            <span style="font-size:0.72rem;color:var(--text3);font-family:var(--mono);">Brand Say · SMA · Others Say · Keywords per brand</span>
           </div>
           <div id="contentIntelBody" style="padding:0;"></div>
         </div>
@@ -587,10 +629,11 @@
                   <th>Platform</th>
                   <th title="Directional / Indexed – Not Actual Spend">SOV Index <span style="font-weight:400;opacity:0.6;">(Dir.)</span></th>
                   <th>Confidence</th>
+                  <th title="Paid (Confirmed) · Paid (Est.) · Organic post counts">Post Mix</th>
                   <th>Creative Vol</th>
                   <th>Velocity</th>
                   <th>Reach Tier</th>
-                  <th>Geo Presence</th>
+                  <th>Platform Presence</th>
                   <th>Ad Longevity (days)</th>
                   <th>Engagement</th>
                   <th>Sentiment</th>
@@ -608,6 +651,48 @@
         <div id="topPostsSection" style="display:none; margin-bottom:28px;">
           <div id="topPostsGrid"></div>
         </div>
+
+        <!-- Methodology & Sources (collapsible) -->
+        <details class="methodology-block" style="margin-bottom:20px;">
+          <summary class="methodology-summary">Methodology &amp; Data Sources <span style="font-size:0.72rem;opacity:0.6;">(click to expand)</span></summary>
+          <div class="methodology-body">
+            <h4>SOV Index Calculation</h4>
+            <p>The Composite Share-of-Voice (SOV) Index is a directional, indexed metric — not actual ad spend. It is calculated from six observable signals, weighted as follows:</p>
+            <ul>
+              <li><strong>Creative Volume (30%)</strong> — Share of active ad/post count within the competitor set per platform.</li>
+              <li><strong>Creative Velocity (10%)</strong> — Share of new ads launched in the last 7 days (pace of creative refresh).</li>
+              <li><strong>Ad Longevity (15%)</strong> — Normalized average days since earliest ad start date; measures campaign persistence.</li>
+              <li><strong>Platform Presence (15%)</strong> — Number of active platforms relative to the most platform-active brand in the set.</li>
+              <li><strong>Reach Bucket (15%)</strong> — Normalized impression tier derived from ad library reach ranges.</li>
+              <li><strong>Engagement Corroboration (15%)</strong> — Engagement rate benchmarked against industry averages; secondary signal only.</li>
+            </ul>
+            <p>All signals are normalized 0–100 across the competitor set. The composite index is the weighted sum. Values sum to ~100 across all brands for a given platform.</p>
+
+            <h4>Data Sources</h4>
+            <ul>
+              <li><strong>Meta Ad Library API</strong> — Confirmed paid posts on Facebook and Instagram. Highest reliability for Meta platforms.</li>
+              <li><strong>YouTube Data API v3</strong> — Channel-level metrics (subscribers, views, engagement).</li>
+              <li><strong>TikTok Commercial Content Library</strong> — Paid ad data. Coverage limited to EU-targeted campaigns; APAC-only campaigns may yield no data.</li>
+              <li><strong>Engagement baseline fallback (Route 2)</strong> — Where ad library data is unavailable, posts with &gt;2× median engagement are classified as "Paid (Est.)" with Medium confidence.</li>
+            </ul>
+
+            <h4>Instagram Note</h4>
+            <p>Instagram data is modelled from the associated Facebook Page via Meta Ad Library. Meta's ad library covers both Facebook and Instagram surfaces under the same advertiser. Instagram entries are labelled "(modelled)" throughout this report and should be interpreted as directional only.</p>
+
+            <h4>TikTok Suppression</h4>
+            <p>If fewer than 2 TikTok posts are detected for a given market, TikTok is excluded from the composite SOV formula and the remaining platform weights are re-normalized proportionally. This is noted explicitly wherever TikTok has been suppressed. This approach prevents misleading zero-values from inflating competitor comparisons.</p>
+
+            <h4>Paid Classification Labels</h4>
+            <ul>
+              <li><strong>Paid (Confirmed)</strong> — Post found in an official ad library. High confidence.</li>
+              <li><strong>Paid (Est.)</strong> — Post not in ad library but engagement &gt;2× brand median OR in top 10% of brand posts. Medium confidence. Marked with ~ indicator.</li>
+              <li><strong>Organic</strong> — No paid signals detected. High confidence classification by exclusion.</li>
+            </ul>
+
+            <h4>Scope &amp; Limitations</h4>
+            <p>All SOV figures reflect presence within the <em>selected competitor group only</em> — not total industry or market share. This is a directional tool for competitive benchmarking. It does not provide actual spend figures, and should not be used to estimate media investment.</p>
+          </div>
+        </details>
 
         <!-- Export -->
         <div class="export-row">

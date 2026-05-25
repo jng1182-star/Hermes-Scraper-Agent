@@ -339,11 +339,12 @@ async def _scrape_meta_google(brand: str, country: str, platforms: list[str]) ->
     return results
 
 
-async def _scrape_all(brand: str, country: str, platforms: list[str]) -> dict:
+async def _scrape_all(brand: str, country: str, platforms: list[str],
+                      markets: list[str] | None = None) -> dict:
     """
     Orchestrates all three platform scrapers.
     Meta + Google share a playwright context.
-    TikTok runs in a separate patchright context with full stealth stack.
+    TikTok uses the official API (no browser) and queries per market when markets list provided.
     Both run concurrently.
     """
     platform_map = {
@@ -351,6 +352,9 @@ async def _scrape_all(brand: str, country: str, platforms: list[str]) -> dict:
         "tiktok": ["TikTok"],
         "google": ["YouTube"],
     }
+
+    # Resolve effective markets list — prefer explicit markets, fall back to single country
+    effective_markets = markets if (markets and len(markets) > 0) else ([country] if country else [])
 
     need_meta_google = any(pl in platforms for pl in ("Facebook", "Instagram", "YouTube"))
     need_tiktok      = "TikTok" in platforms
@@ -364,9 +368,14 @@ async def _scrape_all(brand: str, country: str, platforms: list[str]) -> dict:
 
     if need_tiktok:
         # Official API path — no browser required
+        # Query per market so country_code filter is applied correctly for each market
         async def _tiktok_api_async():
-            from tools.tiktok_api_tool import fetch_tiktok
-            loop = asyncio.get_running_loop()  # W6: get_event_loop() deprecated in 3.10+
+            from tools.tiktok_api_tool import fetch_tiktok_markets, fetch_tiktok
+            loop = asyncio.get_running_loop()
+            if len(effective_markets) > 1:
+                return await loop.run_in_executor(
+                    None, fetch_tiktok_markets, brand, effective_markets, "paid"
+                )
             return await loop.run_in_executor(None, fetch_tiktok, brand, country, "paid")
         tasks.append(_tiktok_api_async())
         labels.append("tiktok")
@@ -429,14 +438,16 @@ class PaidAdLibTool(BaseTool):
 
         brand     = params.get("brand") or query.strip() or "unknown"
         country   = params.get("country", "")
+        markets   = params.get("markets") or ([country] if country else [])
         platforms = params.get("platforms") or ["Facebook", "Instagram", "TikTok", "YouTube"]
 
         try:
-            # Use a fresh event loop to avoid conflicts with any existing loop
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
             try:
-                result = loop.run_until_complete(_scrape_all(brand, country, platforms))
+                result = loop.run_until_complete(
+                    _scrape_all(brand, country, platforms, markets=markets)
+                )
             finally:
                 loop.close()
         except Exception as e:

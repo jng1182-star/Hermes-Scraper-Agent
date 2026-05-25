@@ -2278,3 +2278,337 @@ a.post-link:hover {
   letter-spacing: 0.03em;
   pointer-events: none;
 }
+
+/* ═══════════════════════════════════════════════════════════════════════
+   v3 additions — Nielsen-grade SOV: TikTok suppression, time-grain,
+   insight cards, post-classification badges, content-type tabs,
+   keyword pills, methodology block
+   ═══════════════════════════════════════════════════════════════════════ */
+
+/* ── TikTok suppression notice ──────────────────────────────────────── */
+.tiktok-notice {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  background: rgba(255,0,80,0.07);
+  border: 1px solid rgba(255,0,80,0.25);
+  border-radius: var(--radius-sm);
+  padding: 10px 14px;
+  margin-bottom: 14px;
+  font-size: 0.78rem;
+  color: #ff6e8a;
+  line-height: 1.5;
+}
+.tiktok-notice-icon {
+  font-size: 1.1rem;
+  flex-shrink: 0;
+  line-height: 1.3;
+}
+.tiktok-notice strong { color: #ff3366; font-weight: 700; }
+
+/* ── Time-grain toggle bar ──────────────────────────────────────────── */
+.time-grain-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+  padding: 8px 14px;
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.grain-btn {
+  font-family: var(--mono);
+  font-size: 0.65rem;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  padding: 4px 12px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  background: var(--bg3);
+  color: var(--text3);
+  cursor: pointer;
+  transition: var(--transition);
+}
+.grain-btn:hover { border-color: var(--accent); color: var(--text2); }
+.grain-btn.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+/* ── 5-column KPI grid variant ──────────────────────────────────────── */
+.kpi-grid-5 {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 14px;
+  margin-bottom: 28px;
+}
+@media (max-width: 1200px) {
+  .kpi-grid-5 { grid-template-columns: repeat(3, 1fr); }
+}
+@media (max-width: 700px) {
+  .kpi-grid-5 { grid-template-columns: 1fr 1fr; }
+}
+
+/* ── Executive insight cards ────────────────────────────────────────── */
+.insight-cards-row {
+  display: flex;
+  gap: 14px;
+  flex-wrap: wrap;
+  margin-bottom: 24px;
+}
+
+.insight-card {
+  flex: 1 1 220px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px 18px;
+  box-shadow: var(--shadow-sm);
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  transition: var(--transition);
+}
+.insight-card:hover { box-shadow: var(--shadow); transform: translateY(-1px); }
+
+.insight-icon {
+  font-size: 1.5rem;
+  flex-shrink: 0;
+  line-height: 1;
+}
+
+.insight-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.insight-brand {
+  font-family: var(--mono);
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text3);
+  margin-bottom: 4px;
+}
+
+.insight-text {
+  font-size: 0.82rem;
+  color: var(--text2);
+  line-height: 1.45;
+}
+.insight-text strong { color: var(--text); }
+
+/* ── Post-classification badges ─────────────────────────────────────── */
+.post-class-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-family: var(--mono);
+  font-size: 0.60rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 2px 7px;
+  border-radius: 4px;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+.post-class-badge.confirmed {
+  background: rgba(34,197,94,0.12);
+  color: #22c55e;
+  border: 1px solid rgba(34,197,94,0.35);
+}
+.post-class-badge.estimated {
+  background: rgba(245,158,11,0.10);
+  color: var(--amber);
+  border: 1px dashed rgba(245,158,11,0.40);
+}
+.post-class-badge.estimated::after {
+  content: '*';
+  font-size: 0.8em;
+  opacity: 0.8;
+}
+.post-class-badge.organic {
+  background: transparent;
+  color: var(--text3);
+  border: 1px solid var(--border);
+}
+
+/* ── Content-type tabs (Brand Say / SMA / Others Say) ───────────────── */
+.ct-tabs {
+  display: flex;
+  gap: 2px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 12px;
+}
+
+.ct-tab {
+  font-family: var(--mono);
+  font-size: 0.64rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 7px 14px;
+  border-radius: 4px 4px 0 0;
+  border: 1px solid transparent;
+  border-bottom: none;
+  background: transparent;
+  color: var(--text3);
+  cursor: pointer;
+  transition: color 0.15s, background 0.15s;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+.ct-tab:hover { color: var(--text2); background: rgba(30,144,255,0.05); }
+.ct-tab.active {
+  color: var(--accent);
+  background: var(--surface);
+  border-color: var(--border);
+  border-bottom-color: var(--surface);
+  margin-bottom: -1px;
+}
+
+.ct-count {
+  background: var(--bg3);
+  border-radius: 10px;
+  padding: 1px 6px;
+  font-size: 0.58rem;
+  color: var(--text3);
+  font-weight: 600;
+}
+.ct-tab.active .ct-count {
+  background: var(--accent-lt);
+  color: var(--accent);
+}
+
+.ct-panel { display: none; }
+.ct-panel.active { display: block; }
+
+/* ── Keyword badges (top-10 keywords) ──────────────────────────────── */
+.ci-keywords {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 6px;
+}
+
+.keyword-badge {
+  display: inline-block;
+  padding: 2px 9px;
+  border-radius: 20px;
+  font-size: 0.68rem;
+  font-weight: 600;
+  font-family: var(--mono);
+  background: var(--bg3);
+  color: var(--text2);
+  border: 1px solid var(--border);
+  transition: border-color 0.12s, color 0.12s;
+}
+.keyword-badge:hover { border-color: var(--accent); color: var(--accent); }
+
+/* ── SOV trend chart container ──────────────────────────────────────── */
+#sovTrendChartWrap {
+  margin-bottom: 20px;
+}
+#sovTrendChartWrap canvas {
+  max-height: 220px;
+}
+
+/* ── Methodology block ──────────────────────────────────────────────── */
+.methodology-block {
+  margin-top: 32px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  background: var(--surface);
+}
+
+.methodology-summary {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 20px;
+  cursor: pointer;
+  user-select: none;
+  list-style: none;
+  font-family: var(--mono);
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text3);
+  transition: color 0.15s, background 0.15s;
+}
+.methodology-summary::-webkit-details-marker { display: none; }
+.methodology-summary::before {
+  content: '▶';
+  font-size: 0.55rem;
+  transition: transform 0.2s;
+}
+details[open] .methodology-summary::before {
+  transform: rotate(90deg);
+}
+.methodology-summary:hover { color: var(--text2); background: var(--bg2); }
+
+.methodology-body {
+  padding: 18px 22px 22px;
+  border-top: 1px solid var(--border);
+  font-size: 0.8rem;
+  color: var(--text2);
+  line-height: 1.65;
+}
+.methodology-body h4 {
+  font-family: var(--mono);
+  font-size: 0.65rem;
+  font-weight: 700;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--accent);
+  margin: 16px 0 6px;
+}
+.methodology-body h4:first-child { margin-top: 0; }
+.methodology-body ul {
+  margin: 0 0 0 16px;
+  padding: 0;
+}
+.methodology-body ul li { margin-bottom: 3px; }
+.methodology-body code {
+  background: var(--bg3);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 1px 5px;
+  font-size: 0.75rem;
+  font-family: var(--mono);
+  color: var(--cyan);
+}
+.methodology-caution {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  background: rgba(245,158,11,0.07);
+  border: 1px solid rgba(245,158,11,0.22);
+  border-radius: var(--radius-sm);
+  padding: 9px 12px;
+  margin-top: 12px;
+  font-size: 0.76rem;
+  color: var(--amber);
+  line-height: 1.5;
+}
+
+/* ── Responsive: kpi-grid + kpi-grid-5 on small screens ────────────── */
+@media (max-width: 1024px) {
+  .kpi-grid-5 { grid-template-columns: repeat(3, 1fr); }
+}
+@media (max-width: 700px) {
+  .kpi-grid-5 { grid-template-columns: 1fr 1fr; }
+  .insight-cards-row { flex-direction: column; }
+  .time-grain-bar { gap: 4px; }
+  .grain-btn { padding: 4px 9px; }
+}

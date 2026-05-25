@@ -76,6 +76,24 @@ def _sanitise_brand(brand: str) -> str:
     return _BRAND_SAFE.sub("", brand).strip()[:50]
 
 
+# ── Country name → ISO-2 code ─────────────────────────────────────────────────
+
+_COUNTRY_TO_CODE = {
+    "Thailand":    "TH",
+    "Philippines": "PH",
+    "Vietnam":     "VN",
+    "Indonesia":   "ID",
+    "Malaysia":    "MY",
+    "Singapore":   "SG",
+}
+
+def _resolve_country_code(country: str) -> str:
+    """Accept full name ('Philippines') or ISO-2 ('PH'), return ISO-2 uppercase."""
+    if not country:
+        return ""
+    return _COUNTRY_TO_CODE.get(country, country.upper()[:2])
+
+
 # ── Paid: TikTok Commercial Content API ───────────────────────────────────────
 
 def fetch_tiktok_paid_ads(brand: str, country: str = "", max_results: int = 20) -> list[dict]:
@@ -111,8 +129,9 @@ def fetch_tiktok_paid_ads(brand: str, country: str = "", max_results: int = 20) 
         "advertiser_fields": "business_id,business_name",
     }
 
-    if country and len(country) == 2:
-        payload["filters"]["country_code"] = [country.upper()]
+    country_code = _resolve_country_code(country)
+    if country_code:
+        payload["filters"]["country_code"] = [country_code]
 
     ads: list[dict] = []
 
@@ -180,12 +199,33 @@ def fetch_tiktok_paid_ads(brand: str, country: str = "", max_results: int = 20) 
 
 def fetch_tiktok(brand: str, country: str = "", post_type: str = "both") -> list[dict]:
     """
-    Fetch TikTok data without a browser.
-
+    Fetch TikTok paid ads for a single market.
+    country: full name ('Philippines') or ISO-2 ('PH').
     post_type: "paid" | "organic" | "both"
-    Paid  → TikTok Commercial Content API (native, no run limit)
-    Organic → returns [] — handled upstream by DuckDuckGo in social_search_tool.py
+    Organic → [] — handled by DuckDuckGo in social_search_tool.py
     """
     if post_type in ("paid", "both"):
-        return fetch_tiktok_paid_ads(brand, country)
+        ads = fetch_tiktok_paid_ads(brand, country)
+        # Tag each result with its market for downstream per-market filtering
+        code = _resolve_country_code(country)
+        for ad in ads:
+            ad["market"] = country or code
+        return ads
     return []
+
+
+def fetch_tiktok_markets(brand: str, markets: list[str], post_type: str = "both") -> list[dict]:
+    """
+    Fetch TikTok paid ads across multiple markets, tagging each result with its market.
+    Deduplicates by ad URL across markets to avoid double-counting region-wide buys.
+    """
+    seen_urls: set[str] = set()
+    all_ads: list[dict] = []
+    for mkt in markets:
+        ads = fetch_tiktok(brand, country=mkt, post_type=post_type)
+        for ad in ads:
+            url = ad.get("url", "")
+            if url not in seen_urls:
+                seen_urls.add(url)
+                all_ads.append(ad)
+    return all_ads

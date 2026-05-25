@@ -3,7 +3,6 @@ Hermes — HTTP server (stdlib only, no FastAPI/uvicorn).
 Serves the dashboard at /dashboard/ and provides a JSON API.
 Runs the HTTP server in a daemon thread; main thread stays free for signals.
 """
-import cgi
 import json
 import os
 import threading
@@ -40,8 +39,9 @@ _run_state = {
     "retry_count":  0,
     "start_ts":     None,
 }
-_state_lock = threading.Lock()
-_stop_flag  = threading.Event()   # set to request graceful abort
+_state_lock  = threading.Lock()
+_stop_flag   = threading.Event()   # set to request graceful abort
+_run_gen     = 0                   # H8: generation counter; incremented on each new run
 _worker_thread_id: Optional[int] = None
 _worker_thread: Optional[threading.Thread] = None   # reference for join/kill
 
@@ -65,11 +65,14 @@ def _kill_ollama_now():
     except Exception:
         pass
 
-# Map CrewAI Agent.role → dashboard node IDs
+# Map CrewAI Agent.role → dashboard node IDs (C5 fix: all 6 roles mapped)
 _ROLE_TO_NODE = {
-    "social data scraper": "scraper",
-    "engagement analyst":  "analyst",
-    "intelligence reporter": "reporter",
+    "brand profile collector": "profile",
+    "in-feed ad collector":    "feed",
+    "social data scraper":     "scraper",
+    "engagement analyst":      "analyst",
+    "intelligence reporter":   "reporter",
+    "approval gate":           "gate",
 }
 
 
@@ -89,21 +92,26 @@ def _set_agent_done(node_id: str, label: str = ""):
 
 
 def _patch_crewai_agent():
-    """Monkey-patch Agent.execute_task to fire state hooks synchronously."""
-    from crewai.agent.core import Agent as _Agent
-    _orig = _Agent.execute_task
+    """Monkey-patch Agent.execute_task to fire state hooks synchronously.
+    C4 fix: guarded import; failure is logged but does not abort server start."""
+    try:
+        from crewai.agent.core import Agent as _Agent
+        _orig = _Agent.execute_task
 
-    def _patched(self, task, context=None, tools=None):
-        role = (getattr(self, "role", "") or "").lower().strip()
-        node_id = _ROLE_TO_NODE.get(role)
-        if node_id:
-            _set_agent_active(node_id, self.role)
-        result = _orig(self, task, context=context, tools=tools)
-        if node_id:
-            _set_agent_done(node_id, self.role)
-        return result
+        def _patched(self, task, context=None, tools=None):
+            role = (getattr(self, "role", "") or "").lower().strip()
+            node_id = _ROLE_TO_NODE.get(role)
+            if node_id:
+                _set_agent_active(node_id, self.role)
+            result = _orig(self, task, context=context, tools=tools)
+            if node_id:
+                _set_agent_done(node_id, self.role)
+            return result
 
-    _Agent.execute_task = _patched
+        _Agent.execute_task = _patched
+    except Exception as exc:
+        import sys
+        print(f"[WARN] crewai agent patch failed ({exc}) — agent state indicators will not update.", file=sys.stderr)
 
 
 _patch_crewai_agent()
@@ -174,10 +182,13 @@ def _run_worker(params: dict):
     import ctypes
     import main as _main
 
-    global _worker_thread_id, _worker_thread
+    global _worker_thread_id, _worker_thread, _run_gen
     _stop_flag.clear()
     _worker_thread_id  = threading.current_thread().ident
     _worker_thread     = threading.current_thread()
+    with _state_lock:
+        _run_gen += 1
+    my_gen = _run_gen
 
     with _state_lock:
         _run_state.update(
@@ -499,7 +510,8 @@ class Handler(BaseHTTPRequestHandler):
                         pass
                 # 3. Keep injecting every 500ms in background until thread dies
                 wt = _worker_thread
-                def _force_stop(tid=tid, wt=wt):
+                stop_gen = _run_gen  # H8: capture current generation
+                def _force_stop(tid=tid, wt=wt, stop_gen=stop_gen):
                     for _ in range(20):   # up to 10s
                         time.sleep(0.5)
                         if wt is None or not wt.is_alive():
@@ -512,9 +524,9 @@ class Handler(BaseHTTPRequestHandler):
                                 )
                             except Exception:
                                 pass
-                    # Final state cleanup if thread still hasn't ended
+                    # H8: only clean up if generation hasn't advanced (no new run started)
                     with _state_lock:
-                        if _run_state["running"]:
+                        if _run_gen == stop_gen and _run_state["running"]:
                             _run_state["running"] = False
                             _run_state["logs"].append("[STOP] Force-stopped by user.")
                             for aid in _run_state["agent_states"]:
@@ -538,22 +550,41 @@ class Handler(BaseHTTPRequestHandler):
         parsed_dir.mkdir(parents=True, exist_ok=True)
 
         try:
-            form = cgi.FieldStorage(
-                fp=self.rfile,
-                headers=self.headers,
-                environ={"REQUEST_METHOD": "POST", "CONTENT_TYPE": content_type},
-            )
+            # H7 fix: manual multipart parser (cgi deprecated in 3.11, removed in 3.13)
+            content_length = int(self.headers.get("Content-Length", 0))
+            body = self.rfile.read(content_length)
+
+            # Extract boundary from Content-Type header
+            import re as _re
+            boundary_match = _re.search(rb'boundary=([^\s;]+)', content_type.encode())
+            if not boundary_match:
+                self._json(400, {"error": "Missing boundary in Content-Type"}); return
+            boundary = boundary_match.group(1).strip(b'"')
+
             uploaded = []
-            for field_name in form.keys():
-                item = form[field_name]
-                if not hasattr(item, "filename") or not item.filename:
+            parts = body.split(b'--' + boundary)
+            for part in parts[1:]:  # skip preamble
+                if part.strip() in (b'', b'--'):
                     continue
-                filename = Path(item.filename).name  # strip path
+                # Split headers from body
+                if b'\r\n\r\n' in part:
+                    header_section, file_body = part.split(b'\r\n\r\n', 1)
+                elif b'\n\n' in part:
+                    header_section, file_body = part.split(b'\n\n', 1)
+                else:
+                    continue
+                # Strip trailing CRLF before boundary
+                file_body = file_body.rstrip(b'\r\n')
+
+                # Parse Content-Disposition for filename
+                cd_match = _re.search(rb'filename="?([^"\r\n]+)"?', header_section, _re.IGNORECASE)
+                if not cd_match:
+                    continue
+                filename = Path(cd_match.group(1).decode('utf-8', errors='replace')).name
+                raw_bytes = file_body
                 save_path = up_dir / filename
-                raw_bytes  = item.file.read()
                 save_path.write_bytes(raw_bytes)
 
-                # Try to extract text for agent context
                 ext = save_path.suffix.lower()
                 text_content = _extract_file_text(save_path, ext, raw_bytes)
                 if text_content:
@@ -561,10 +592,10 @@ class Handler(BaseHTTPRequestHandler):
                     parsed_path.write_text(text_content, encoding="utf-8")
 
                 uploaded.append({
-                    "name":     filename,
-                    "size":     len(raw_bytes),
-                    "parsed":   bool(text_content),
-                    "ext":      ext,
+                    "name":   filename,
+                    "size":   len(raw_bytes),
+                    "parsed": bool(text_content),
+                    "ext":    ext,
                 })
 
             self._json(200, {"status": "ok", "files": uploaded})

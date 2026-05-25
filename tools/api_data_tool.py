@@ -202,21 +202,39 @@ def _scrape_youtube_brand(brand: str) -> dict:
 
 # ── Meta Ad Library API ───────────────────────────────────────────────────────
 
+# Full country name → ISO-2 code (mirrors proxy_manager.py)
+_COUNTRY_TO_CODE = {
+    "Thailand":    "TH",
+    "Philippines": "PH",
+    "Vietnam":     "VN",
+    "Indonesia":   "ID",
+    "Malaysia":    "MY",
+    "Singapore":   "SG",
+}
+
+def _resolve_country_code(country: str) -> str:
+    """Accept full name ('Philippines') or ISO code ('PH'), always return ISO-2 uppercase."""
+    if not country:
+        return "PH"
+    return _COUNTRY_TO_CODE.get(country, country.upper()[:2])
+
+
 def _meta_ad_library(brand: str, country: str = "PH") -> dict:
     """
-    Query Meta Ad Library API for active/recent ads.
-    Returns ad count, impression range, and spend range if available.
+    Query Meta Ad Library API for active/recent ads in the specified market.
+    country: full name ('Philippines') or ISO-2 code ('PH').
     Token: free from developers.facebook.com/tools/explorer
     """
     if not _META_TOK:
         return {}
+    country_code = _resolve_country_code(country)
     q = urllib.parse.quote_plus(brand)
-    # Ad Library Search endpoint — public, no page login required
+    # ad_reached_countries filters to ads that ran in this specific market
     url = (
         f"https://graph.facebook.com/v19.0/ads_archive"
         f"?access_token={_META_TOK}"
         f"&search_terms={q}"
-        f"&ad_reached_countries={country}"
+        f"&ad_reached_countries={country_code}"
         f"&ad_active_status=ALL"
         f"&fields=id,ad_creative_bodies,ad_creative_link_captions,ad_creative_link_titles,"
         f"ad_delivery_start_time,ad_delivery_stop_time,impressions,spend,"
@@ -367,6 +385,8 @@ class APIDataTool(BaseTool):
         brands    = params.get("brands", [query.split("{")[0].strip()])
         platforms = params.get("platforms", ["YouTube", "Facebook"])
         country   = params.get("country", "PH")
+        # Accept either a 'markets' list (multi-market) or fall back to single 'country'
+        markets   = params.get("markets") or ([country] if country else ["PH"])
 
         results = []
         for brand in brands:
@@ -375,7 +395,6 @@ class APIDataTool(BaseTool):
             if "YouTube" in platforms:
                 yt = _scrape_youtube_brand(brand)
                 if not yt and not _YT_KEY:
-                    # Try SocialBlade if no API key
                     yt = _socialblade_yt(brand)
                 if yt:
                     brand_result["platform_data"].append(yt)
@@ -384,16 +403,25 @@ class APIDataTool(BaseTool):
                         brand, yt.get("followers", 0), yt.get("avg_views", 0), yt.get("data_source")
                     )
 
-            if "Facebook" in platforms:
-                fb = _meta_ad_library(brand, country=country)
-                if not fb:
+            if "Facebook" in platforms or "Instagram" in platforms:
+                # Query Meta Ad Library once per market so country filter is applied correctly.
+                # Results are tagged with their market so the analyst can split per market.
+                any_fb = False
+                for mkt in markets:
+                    fb = _meta_ad_library(brand, country=mkt)
+                    if fb:
+                        fb["market"] = mkt
+                        brand_result["platform_data"].append(fb)
+                        logger.info(
+                            "[APIDataTool] Facebook '%s' [%s]: %d ads found (source: %s)",
+                            brand, mkt, fb.get("active_ads_found", 0), fb.get("data_source")
+                        )
+                        any_fb = True
+                if not any_fb:
+                    # Fallback: public page info (no market filter available)
                     fb = _fb_public_page(brand)
-                if fb:
-                    brand_result["platform_data"].append(fb)
-                    logger.info(
-                        "[APIDataTool] Facebook '%s': %d ads found (source: %s)",
-                        brand, fb.get("active_ads_found", 0), fb.get("data_source")
-                    )
+                    if fb:
+                        brand_result["platform_data"].append(fb)
 
             if not brand_result["platform_data"]:
                 brand_result["note"] = (

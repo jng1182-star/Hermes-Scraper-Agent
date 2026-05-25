@@ -5,6 +5,9 @@
 
 'use strict';
 
+// ── Platform constant — single source of truth ───────────────────────────────
+const ACTIVE_PLATFORMS = ['facebook', 'instagram', 'youtube', 'tiktok'];
+
 // ── State ────────────────────────────────────────────────────────────────────
 const State = {
   advertisers: [],          // tag chips — your brand(s)
@@ -18,24 +21,28 @@ const State = {
   elapsedInterval: null,
   elapsedStart: null,
   reportData: null,
+  normalizedReport: null,   // cached normalizeReportData result; invalidated on reportData change
   activePlatforms: new Set(),
   activePostTypeFilter: 'all', // all | paid | organic  (results page)
+  timeGrain: 'lifetime',    // lifetime | monthly | weekly | daily
   // Drill-down filter state
   dd: {
     view:        'all',   // all | mine | competitors | vs
     brand:       '',      // specific brand name (non-vs views), '' = all
-    platform:    'all',   // all | TikTok | Instagram | YouTube | Facebook
+    platform:    'all',   // all | tiktok | instagram | youtube | facebook
     postType:    'all',   // all | paid | organic
+    market:      'all',   // all | specific market name
     vsMyBrands:  [],      // selected "my brand" names for vs view
     vsCompBrands:[],      // selected competitor names for vs view
   },
   agentStates: { profile: 'idle', feed: 'idle', scraper: 'idle', analyst: 'idle', reporter: 'idle', gate: 'idle' },
   lastLogs: [],
   uploadedFiles: [],
-  partialShown: false,   // true once partial results have been rendered this run
+  partialShown: false,      // true once partial results have been rendered this run
+  pollFailCount: 0,         // consecutive poll failures for connection-lost detection
 };
 
-const Charts = { sovComposite: null, platformSov: null, signalBreakdown: null, confidence: null };
+const Charts = { sovComposite: null, platformSov: null, signalBreakdown: null, confidence: null, sovTrend: null };
 
 // ── Colour palette ───────────────────────────────────────────────────────────
 const C = {
@@ -298,14 +305,19 @@ function getFormParams() {
     dateTo   = document.getElementById('dateTo').value   || null;
   }
 
-  const country   = document.getElementById('country').value;
-  const industry  = document.getElementById('industry').value;
+  // Multi-select country (markets)
+  const countryEl = document.getElementById('country');
+  const markets = Array.from(countryEl.selectedOptions).map(o => o.value).filter(Boolean);
+  const country = markets[0] || '';   // backward compat — primary market
+
+  const industry = document.getElementById('industry').value;
 
   return {
     advertisers:  [...State.advertisers],
     advertiser:   State.advertisers[0] || '',          // backward compat
     competitors:  [...State.competitors],
     country,
+    markets,                                            // all selected markets
     industry,
     platforms,
     post_type:    State.postType,
@@ -467,7 +479,7 @@ async function pollStatus() {
         if (!s.partial_report.scan_params && State.reportData && State.reportData.scan_params) {
           s.partial_report.scan_params = State.reportData.scan_params;
         }
-        State.reportData = s.partial_report;
+        _setReportData(s.partial_report);
         showPage('results');
       }
       setPartialPill(true, s.partial_report._partial_phase || 'scraper');
@@ -493,7 +505,7 @@ async function pollStatus() {
         setTimeout(async () => {
           try {
             const rep = await fetch('/report').then(r => r.json());
-            State.reportData = rep;
+            _setReportData(rep);
             saveRun(rep);
             lockForm(false);
             showPage('results');
@@ -503,7 +515,17 @@ async function pollStatus() {
         setLogStatus('done', 'Finished.'); updateDots('idle');
       }
     }
-  } catch(e) {}
+    State.pollFailCount = 0; // reset on success
+  } catch(e) {
+    State.pollFailCount = (State.pollFailCount || 0) + 1;
+    const logOut = document.getElementById('logOutput');
+    if (logOut) logOut.textContent += `\n[POLL ERROR] ${e.message || e}`;
+    if (State.pollFailCount >= 3) {
+      setLogStatus('error', 'Connection lost — retrying…');
+      const lb = document.getElementById('liveText');
+      if (lb) lb.textContent = 'Reconnecting…';
+    }
+  }
 }
 
 // ── Agent Card Updates ───────────────────────────────────────────────────────
@@ -1020,9 +1042,11 @@ function renderResults(rawData) {
 
   const params = data.scan_params || {};
 
-  // Wire post-type filter toggle
+  // Wire post-type filter toggle (H4 fix: read from brands[], not flat comp)
   const ptWrap = document.getElementById('postTypeFilterWrap');
-  const hasPaidOrg = comp.some(c => c.post_type === 'paid' || c.post_type === 'organic');
+  const hasPaidOrg = brands.some(b => b.post_type === 'paid' || b.post_type === 'organic' ||
+    Object.values(b.platforms || {}).some(pd => pd.post_type === 'paid' || pd.post_type === 'organic' ||
+      (pd.posts || []).some(p => p.post_classification && p.post_classification !== 'Organic')));
   if (ptWrap) ptWrap.style.display = hasPaidOrg ? 'flex' : 'none';
   document.querySelectorAll('.post-type-btn').forEach(btn => {
     btn.addEventListener('click', () => {
@@ -1035,9 +1059,14 @@ function renderResults(rawData) {
 
   // Reset platform filter and drill-down state
   State.activePlatforms = new Set();
-  State.dd = { view: 'all', brand: '', platform: 'all', postType: 'all', vsMyBrands: [], vsCompBrands: [] };
+  State.dd = { view: 'all', brand: '', platform: 'all', postType: 'all', market: 'all', vsMyBrands: [], vsCompBrands: [] };
+  State.timeGrain = 'lifetime';
   buildContextBar(params, comp);
   buildDrilldownBar(params, comp);
+  // Render insight cards from report
+  renderInsightCards((rawData || {}).insights || []);
+  // Render TikTok suppression notice
+  renderTikTokNotice(rawData, 'all');
   renderResultsFiltered();
 
   document.getElementById('dot-results').className = 'status-dot done';
@@ -1191,19 +1220,42 @@ function buildDrilldownBar(params, comp) {
     };
   });
 
+  // ── Market filter (dynamic — built from report markets) ─────────────────
+  const marketWrap = document.getElementById('ddMarketWrap');
+  if (marketWrap) {
+    const data_     = normalizeReportData(State.reportData || {});
+    const markets   = [...new Set((data_.brands || []).flatMap(b => b.markets || []))];
+    if (markets.length > 1) {
+      marketWrap.style.display = '';
+      const marketEl = document.getElementById('ddMarketPick');
+      if (marketEl) {
+        marketEl.innerHTML = '<option value="all">All Markets</option>' +
+          markets.map(m => `<option value="${esc(m)}"${State.dd.market===m?' selected':''}>${esc(m)}</option>`).join('');
+        marketEl.onchange = () => { State.dd.market = marketEl.value; renderTikTokNotice(State.reportData, State.dd.market); renderResultsFiltered(); };
+      }
+    } else {
+      marketWrap.style.display = 'none';
+    }
+  }
+
   // ── Reset button ─────────────────────────────────────────────────────────
   const resetBtn = document.getElementById('ddReset');
   if (resetBtn) {
     resetBtn.onclick = () => {
-      State.dd = { view: 'all', brand: '', platform: 'all', postType: 'all', vsMyBrands: [], vsCompBrands: [] };
+      State.dd = { view: 'all', brand: '', platform: 'all', postType: 'all', market: 'all', vsMyBrands: [], vsCompBrands: [] };
+      State.timeGrain = 'lifetime';
       if (brandSel) brandSel.value = '';
-      // Re-select all options in vs multi-selects
       if (myBrandsSel)  Array.from(myBrandsSel.options).forEach(o => { o.selected = true; });
       if (compBrandsSel) Array.from(compBrandsSel.options).forEach(o => { o.selected = true; });
       bar.querySelectorAll('.dd-pill[data-view]').forEach(b => b.classList.toggle('active', b.dataset.view === 'all'));
       bar.querySelectorAll('.dd-pill[data-plat]').forEach(b => b.classList.toggle('active', b.dataset.plat === 'all'));
       bar.querySelectorAll('.dd-pill[data-pt]').forEach(b   => b.classList.toggle('active', b.dataset.pt   === 'all'));
+      const grainBtns = document.querySelectorAll('.grain-btn');
+      grainBtns.forEach(b => b.classList.toggle('active', b.dataset.grain === 'lifetime'));
+      const marketEl = document.getElementById('ddMarketPick');
+      if (marketEl) marketEl.value = 'all';
       _syncVsVisibility();
+      renderTikTokNotice(State.reportData, 'all');
       renderResultsFiltered();
     };
   }
@@ -1247,6 +1299,15 @@ function filteredBrands() {
     filtered = filtered.filter(b => (b.name||'').toLowerCase().trim() === pick);
   }
 
+  // ── Market dimension — filter brands by market ────────────────────
+  if (dd.market && dd.market !== 'all') {
+    const mkt = dd.market.toLowerCase().trim();
+    filtered = filtered.filter(b => {
+      const bMkts = (b.markets || []).map(m => m.toLowerCase().trim());
+      return !bMkts.length || bMkts.includes(mkt);
+    });
+  }
+
   // ── Platform dimension — filter platforms dict per brand ──────────
   if (dd.platform !== 'all') {
     const platKey = dd.platform.toLowerCase();
@@ -1273,11 +1334,22 @@ function _isMyBrand(comp) {
   return myBrands.has((comp.name||'').toLowerCase().trim());
 }
 
+// ── Report data setter — always use this; invalidates normalized cache ────────
+function _setReportData(data) {
+  State.reportData     = data;
+  State.normalizedReport = null;
+}
+
 // Backward-compat adapter: converts old competitors[] schema to new brands[].
 // Returns a new object — never mutates the input.
 function normalizeReportData(data) {
+  // Return cached result when called repeatedly for the same reportData
+  if (data && data === State.reportData && State.normalizedReport) return State.normalizedReport;
   if (!data) return { brands: [] };
-  if (data.brands && data.brands.length) return data;
+  if (data.brands && data.brands.length) {
+    if (data === State.reportData) State.normalizedReport = data;
+    return data;
+  }
   if (!data.competitors || !data.competitors.length) return data;
   const byBrand = {};
   data.competitors.forEach(c => {
@@ -1308,7 +1380,9 @@ function normalizeReportData(data) {
       },
     };
   });
-  return { ...data, brands: Object.values(byBrand) };
+  const result = { ...data, brands: Object.values(byBrand) };
+  if (data === State.reportData) State.normalizedReport = result;
+  return result;
 }
 
 function renderResultsFiltered() {
@@ -1326,9 +1400,9 @@ function renderResultsFiltered() {
     ? brands.reduce((best, b) => (b.composite_sov||0) > (best.composite_sov||0) ? b : best, brands[0])
     : null;
 
-  // Per-platform leader (highest sov_index on that platform)
+  // Per-platform leader (highest sov_index on that platform) — use ACTIVE_PLATFORMS
   const platLeader = {};
-  ['facebook','youtube','tiktok'].forEach(p => {
+  ACTIVE_PLATFORMS.forEach(p => {
     let best = null, bestVal = -1;
     brands.forEach(b => {
       const v = (b.platforms||{})[p]?.sov_index || 0;
@@ -1347,16 +1421,29 @@ function renderResultsFiltered() {
     : 1;
   const avgConfLabel = avgConfScore >= 2.5 ? 'High' : avgConfScore >= 1.5 ? 'Medium' : 'Low';
 
+  // % Paid Posts across all brands
+  let totalPosts = 0, totalPaid = 0;
+  brands.forEach(b => {
+    (b.top_posts || []).forEach(p => {
+      totalPosts++;
+      const cls = (typeof p === 'object' ? (p.post_classification || '') : '');
+      if (cls.startsWith('Paid')) totalPaid++;
+    });
+  });
+  const paidPct = totalPosts > 0 ? Math.round((totalPaid / totalPosts) * 100) : null;
+
   const kpiBrandCount  = document.getElementById('kpiBrandCount');
   const kpiTopSov      = document.getElementById('kpiTopSov');
   const kpiPlatLeader  = document.getElementById('kpiPlatformLeader');
   const kpiConfidence  = document.getElementById('kpiConfidence');
-  const kpiBrandSub = document.getElementById('kpiBrandSub');
+  const kpiBrandSub    = document.getElementById('kpiBrandSub');
+  const kpiPaidPct     = document.getElementById('kpiPaidPct');
   if (kpiBrandCount) kpiBrandCount.textContent = brandCount;
   if (kpiBrandSub)   kpiBrandSub.textContent   = `across ${Object.keys(platLeader).length || '—'} platform(s)`;
   if (kpiTopSov)     kpiTopSov.textContent = topSovEntry ? `${esc(topSovEntry.name)} · ${(topSovEntry.composite_sov||0).toFixed(1)} (Dir.)` : '—';
   if (kpiPlatLeader) kpiPlatLeader.textContent = platLeaderStr;
   if (kpiConfidence) kpiConfidence.textContent = avgConfLabel;
+  if (kpiPaidPct)    kpiPaidPct.textContent    = paidPct !== null ? `${paidPct}% of tracked posts` : 'No post data';
 
   // Table subtitle
   const params = data.scan_params || {};
@@ -1366,43 +1453,82 @@ function renderResultsFiltered() {
   // ── Charts ───────────────────────────────────────────────────────────────
   const brandNames = brands.map(b => b.name || '?');
 
-  destroyCharts();
+  // Determine which platforms are active (respect TikTok suppression)
+  const reportMeta   = (State.reportData || {});
+  const tiktokSuppressed = _isTikTokSuppressed(reportMeta, State.dd.market);
+  const activePlats  = ACTIVE_PLATFORMS.filter(p => !tiktokSuppressed || p !== 'tiktok');
+  const platColors   = { facebook: C.accent, instagram: C.purple, youtube: C.red, tiktok: '#e879f9' };
+  const platLabels   = { facebook: 'Facebook SOV (Dir.)', instagram: 'Instagram (modelled) SOV (Dir.)', youtube: 'YouTube SOV (Dir.)', tiktok: 'TikTok SOV (Dir.)' };
 
-  // Chart 1 — Composite SOV per brand
-  Charts.sovComposite = new Chart(document.getElementById('sovCompositeChart').getContext('2d'), {
-    type: 'bar',
-    data: {
-      labels: brandNames,
-      datasets: [{
-        label: 'Composite SOV (Directional)',
-        data: brands.map(b => b.composite_sov || 0),
-        backgroundColor: bgColors,
-        borderRadius: 5,
-        borderSkipped: false,
-      }],
-    },
-    options: {
-      ...CHART_OPTS,
-      plugins: {
-        legend: { display: false },
-        tooltip: { callbacks: { label: ctx => `SOV Index: ${ctx.parsed.y.toFixed(1)} (Directional / Indexed – Not Actual Spend)` } },
-      },
-      scales: { y: { ...CHART_OPTS.scales?.y, title: { display: true, text: 'SOV Index (Directional)', color: '#8b949e', font: { size: 10 } } } },
-    },
+  // Updated signal weights (new prompt: Vol 30 / Vel 10 / Long 15 / PlatPres 15 / Reach 15 / Eng 15)
+  const sigKeys = [
+    { key: 'creative_volume_share',    label: 'Creative Vol (30%)',    color: C.accent },
+    { key: 'creative_velocity_score',  label: 'Velocity (10%)',        color: C.cyan },
+    { key: 'longevity_score',          label: 'Longevity (15%)',       color: C.green },
+    { key: 'geo_presence_score',       label: 'Platform Presence (15%)', color: C.amber },
+    { key: 'reach_bucket_score',       label: 'Reach (15%)',           color: C.purple },
+    { key: 'engagement_corroboration', label: 'Engagement (15%)',      color: C.red },
+  ];
+
+  function _avgSig(brand, sigKey) {
+    const plats = Object.values(brand.platforms || {});
+    if (!plats.length) return 0;
+    const vals = plats.map(p => (p.signals||{})[sigKey] || 0);
+    return vals.reduce((s,v)=>s+v,0) / vals.length;
+  }
+
+  // Confidence counts keyed by active platforms only
+  const confCounts = {};
+  activePlats.forEach(p => { confCounts[p] = {High:0, Medium:0, Low:0}; });
+  brands.forEach(b => {
+    activePlats.forEach(p => {
+      const conf = (b.platforms||{})[p]?.confidence || 'Low';
+      confCounts[p][conf]++;
+    });
   });
 
-  // Chart 2 — Per-platform SOV grouped bar (FB · YT · TikTok)
-  const platColors = { facebook: C.accent, youtube: C.red, tiktok: '#e879f9' };
+  // Chart 1 — Composite SOV per brand (update-in-place; create only if needed)
+  if (Charts.sovComposite && Charts.sovComposite.data.labels.length === brandNames.length) {
+    Charts.sovComposite.data.labels = brandNames;
+    Charts.sovComposite.data.datasets[0].data = brands.map(b => b.composite_sov || 0);
+    Charts.sovComposite.data.datasets[0].backgroundColor = bgColors;
+    Charts.sovComposite.update();
+  } else {
+    if (Charts.sovComposite) { Charts.sovComposite.destroy(); Charts.sovComposite = null; }
+    Charts.sovComposite = new Chart(document.getElementById('sovCompositeChart').getContext('2d'), {
+      type: 'bar',
+      data: {
+        labels: brandNames,
+        datasets: [{
+          label: 'Composite SOV (Directional)',
+          data: brands.map(b => b.composite_sov || 0),
+          backgroundColor: bgColors,
+          borderRadius: 5,
+          borderSkipped: false,
+        }],
+      },
+      options: {
+        ...CHART_OPTS,
+        plugins: {
+          legend: { display: false },
+          tooltip: { callbacks: { label: ctx => `SOV Index: ${ctx.parsed.y.toFixed(1)} (Directional / Indexed – Not Actual Spend)` } },
+        },
+        scales: { y: { ...CHART_OPTS.scales?.y, title: { display: true, text: 'SOV Index (Directional)', color: '#8b949e', font: { size: 10 } } } },
+      },
+    });
+  }
+
+  // Chart 2 — Per-platform SOV grouped bar (active platforms only)
+  const platDatasets = activePlats.map(p => ({
+    label: platLabels[p] || (p + ' SOV (Dir.)'),
+    data: brands.map(b => (b.platforms||{})[p]?.sov_index || 0),
+    backgroundColor: platColors[p] || C.accent,
+    borderRadius: 4, borderSkipped: false,
+  }));
+  if (Charts.platformSov) { Charts.platformSov.destroy(); Charts.platformSov = null; }
   Charts.platformSov = new Chart(document.getElementById('platformSovChart').getContext('2d'), {
     type: 'bar',
-    data: {
-      labels: brandNames,
-      datasets: [
-        { label: 'Facebook SOV (Dir.)',  data: brands.map(b => (b.platforms||{}).facebook?.sov_index || 0), backgroundColor: platColors.facebook, borderRadius: 4, borderSkipped: false },
-        { label: 'YouTube SOV (Dir.)',   data: brands.map(b => (b.platforms||{}).youtube?.sov_index  || 0), backgroundColor: platColors.youtube,  borderRadius: 4, borderSkipped: false },
-        { label: 'TikTok SOV (Dir.)',    data: brands.map(b => (b.platforms||{}).tiktok?.sov_index   || 0), backgroundColor: platColors.tiktok,   borderRadius: 4, borderSkipped: false },
-      ],
-    },
+    data: { labels: brandNames, datasets: platDatasets },
     options: {
       ...CHART_OPTS,
       plugins: {
@@ -1412,94 +1538,87 @@ function renderResultsFiltered() {
     },
   });
 
-  // Chart 3 — 6-signal stacked bar per brand
-  const sigKeys = [
-    { key: 'creative_volume_share',    label: 'Creative Vol (35%)',  color: C.accent },
-    { key: 'creative_velocity_score',  label: 'Velocity (10%)',      color: C.cyan },
-    { key: 'longevity_score',          label: 'Longevity (15%)',     color: C.green },
-    { key: 'geo_presence_score',       label: 'Geo (15%)',           color: C.amber },
-    { key: 'reach_bucket_score',       label: 'Reach (15%)',         color: C.purple },
-    { key: 'engagement_corroboration', label: 'Engagement (10%)',    color: C.red },
-  ];
-  // Use composite platform signals: average across all platforms that have data
-  function _avgSig(brand, sigKey) {
-    const plats = Object.values(brand.platforms || {});
-    if (!plats.length) return 0;
-    const vals = plats.map(p => (p.signals||{})[sigKey] || 0);
-    return vals.reduce((s,v)=>s+v,0) / vals.length;
-  }
-  Charts.signalBreakdown = new Chart(document.getElementById('signalBreakdownChart').getContext('2d'), {
-    type: 'bar',
-    data: {
-      labels: brandNames,
-      datasets: sigKeys.map(s => ({
-        label: s.label,
-        data: brands.map(b => _avgSig(b, s.key)),
-        backgroundColor: s.color,
-        borderRadius: 3,
-        borderSkipped: false,
-      })),
-    },
-    options: {
-      ...CHART_OPTS,
-      plugins: {
-        legend: { display: true, position: 'top', labels: { color: '#8b949e', font: { size: 9 } } },
-        tooltip: { callbacks: { label: ctx => `${ctx.dataset.label}: ${ctx.parsed.y.toFixed(1)} (Directional – Not Actual Spend)` } },
-      },
-      scales: {
-        x: { stacked: true, grid: { color: C.chartGrid }, ticks: { color: C.chartTick, font: { size: 11 } } },
-        y: { stacked: true, grid: { color: C.chartGrid }, ticks: { color: C.chartTick, font: { size: 11 } } },
-      },
-    },
-  });
-
-  // Chart 4 — Confidence distribution per platform
-  const confCounts = { facebook: {High:0,Medium:0,Low:0}, youtube: {High:0,Medium:0,Low:0}, tiktok: {High:0,Medium:0,Low:0} };
-  brands.forEach(b => {
-    ['facebook','youtube','tiktok'].forEach(p => {
-      const conf = (b.platforms||{})[p]?.confidence || 'Low';
-      confCounts[p][conf]++;
+  // Chart 3 — 6-signal stacked bar per brand (update-in-place when label count matches)
+  if (Charts.signalBreakdown && Charts.signalBreakdown.data.labels.length === brandNames.length) {
+    Charts.signalBreakdown.data.labels = brandNames;
+    Charts.signalBreakdown.data.datasets.forEach((ds, i) => {
+      const sk = sigKeys[i];
+      if (sk) { ds.data = brands.map(b => _avgSig(b, sk.key)); ds.label = sk.label; }
     });
-  });
-  Charts.confidence = new Chart(document.getElementById('confidenceChart').getContext('2d'), {
-    type: 'bar',
-    data: {
-      labels: ['Facebook', 'YouTube', 'TikTok'],
-      datasets: [
-        { label: 'High',   data: ['facebook','youtube','tiktok'].map(p=>confCounts[p].High),   backgroundColor: C.green,  borderRadius: 4, borderSkipped: false },
-        { label: 'Medium', data: ['facebook','youtube','tiktok'].map(p=>confCounts[p].Medium), backgroundColor: C.amber,  borderRadius: 4, borderSkipped: false },
-        { label: 'Low',    data: ['facebook','youtube','tiktok'].map(p=>confCounts[p].Low),    backgroundColor: C.red,    borderRadius: 4, borderSkipped: false },
-      ],
-    },
-    options: {
-      ...CHART_OPTS,
-      plugins: {
-        legend: { display: true, position: 'top', labels: { color: '#8b949e', font: { size: 10 } } },
-        tooltip: { callbacks: { label: ctx => `${ctx.dataset.label}: ${ctx.parsed.y} brand${ctx.parsed.y!==1?'s':''}` } },
+    Charts.signalBreakdown.update();
+  } else {
+    if (Charts.signalBreakdown) { Charts.signalBreakdown.destroy(); Charts.signalBreakdown = null; }
+    Charts.signalBreakdown = new Chart(document.getElementById('signalBreakdownChart').getContext('2d'), {
+      type: 'bar',
+      data: {
+        labels: brandNames,
+        datasets: sigKeys.map(s => ({
+          label: s.label,
+          data: brands.map(b => _avgSig(b, s.key)),
+          backgroundColor: s.color,
+          borderRadius: 3,
+          borderSkipped: false,
+        })),
       },
-    },
-  });
+      options: {
+        ...CHART_OPTS,
+        plugins: {
+          legend: { display: true, position: 'top', labels: { color: '#8b949e', font: { size: 9 } } },
+          tooltip: { callbacks: { label: ctx => `${ctx.dataset.label}: ${ctx.parsed.y.toFixed(1)} (Directional – Not Actual Spend)` } },
+        },
+        scales: {
+          x: { stacked: true, grid: { color: C.chartGrid }, ticks: { color: C.chartTick, font: { size: 11 } } },
+          y: { stacked: true, grid: { color: C.chartGrid }, ticks: { color: C.chartTick, font: { size: 11 } } },
+        },
+      },
+    });
+  }
+
+  // Chart 4 — Confidence distribution per active platform
+  const confPlatLabels = activePlats.map(p => p.charAt(0).toUpperCase() + p.slice(1));
+  if (Charts.confidence && Charts.confidence.data.labels.join() === confPlatLabels.join()) {
+    Charts.confidence.data.datasets[0].data = activePlats.map(p => confCounts[p].High);
+    Charts.confidence.data.datasets[1].data = activePlats.map(p => confCounts[p].Medium);
+    Charts.confidence.data.datasets[2].data = activePlats.map(p => confCounts[p].Low);
+    Charts.confidence.update();
+  } else {
+    if (Charts.confidence) { Charts.confidence.destroy(); Charts.confidence = null; }
+    Charts.confidence = new Chart(document.getElementById('confidenceChart').getContext('2d'), {
+      type: 'bar',
+      data: {
+        labels: confPlatLabels,
+        datasets: [
+          { label: 'High',   data: activePlats.map(p => confCounts[p].High),   backgroundColor: C.green,  borderRadius: 4, borderSkipped: false },
+          { label: 'Medium', data: activePlats.map(p => confCounts[p].Medium), backgroundColor: C.amber,  borderRadius: 4, borderSkipped: false },
+          { label: 'Low',    data: activePlats.map(p => confCounts[p].Low),    backgroundColor: C.red,    borderRadius: 4, borderSkipped: false },
+        ],
+      },
+      options: {
+        ...CHART_OPTS,
+        plugins: {
+          legend: { display: true, position: 'top', labels: { color: '#8b949e', font: { size: 10 } } },
+          tooltip: { callbacks: { label: ctx => `${ctx.dataset.label}: ${ctx.parsed.y} brand${ctx.parsed.y!==1?'s':''}` } },
+        },
+      },
+    });
+  }
+
+  // Chart 5 — SOV Trend line (shown only when grain ≠ lifetime)
+  _renderSovTrendChart(brands, bgColors);
 
   // ── Content Intel ─────────────────────────────────────────────────────────
-  // Adapt brands[] to comp-like structure for renderContentIntel
-  const compAdapted = brands.map(b => ({
-    name: b.name,
-    top_posts: b.top_posts || [],
-    hashtags: b.hashtags || [],
-    content_themes: b.content_themes || [],
-    sentiment: b.sentiment || 'Neutral',
-  }));
-  renderContentIntel(compAdapted, bgColors);
+  // Pass full brands[] — renderContentIntel now handles multi-platform data (M1 fix)
+  renderContentIntel(brands, bgColors);
 
   // ── Table (one row per brand × platform) ──────────────────────────────────
-  const PLAT_ORDER = ['facebook','youtube','tiktok'];
   const confBadgeColor = { High: 'var(--green)', Medium: 'var(--amber)', Low: 'var(--red)' };
   const tbody = document.getElementById('resultsTableBody');
   const rows = [];
   brands.forEach((b, bi) => {
     const color = bgColors[bi % bgColors.length];
     const sentClass = (b.sentiment||'').toLowerCase();
-    PLAT_ORDER.forEach(p => {
+    // Use ACTIVE_PLATFORMS; skip tiktok if suppressed
+    ACTIVE_PLATFORMS.filter(p => !tiktokSuppressed || p !== 'tiktok').forEach(p => {
       const pd = (b.platforms||{})[p];
       if (!pd) return;
       const sigs  = pd.signals || {};
@@ -1508,17 +1627,28 @@ function renderResultsFiltered() {
       const flagBadge = pd.consistency_flag
         ? '<span style="font-size:0.65rem;color:var(--amber);margin-left:4px;" title="Cross-signal consistency flag">⚠</span>'
         : '';
-      const platLabel = p.charAt(0).toUpperCase() + p.slice(1);
+      const isModelled  = p === 'instagram';
+      const platLabel   = p.charAt(0).toUpperCase() + p.slice(1) + (isModelled ? ' (est.)' : '');
+      const platBadgeCls = isModelled ? 'platform-badge modelled' : 'platform-badge';
+      // Post classification summary
+      const posts = pd.posts || [];
+      const paidConf  = posts.filter(pp => (pp.post_classification||'').startsWith('Paid (Confirmed)')).length;
+      const paidEst   = posts.filter(pp => (pp.post_classification||'') === 'Paid (Est.)').length;
+      const organic   = posts.filter(pp => (pp.post_classification||'') === 'Organic').length;
+      const classStr  = posts.length
+        ? `<span class="post-class-badge confirmed" title="Paid Confirmed">${paidConf}✓</span> <span class="post-class-badge estimated" title="Paid Est.">~${paidEst}</span> <span class="post-class-badge organic" title="Organic">${organic}○</span>`
+        : '<span style="color:var(--text3);font-size:0.72rem;">—</span>';
       rows.push(`<tr>
         <td><span style="display:inline-flex;align-items:center;gap:7px;">
           <span style="width:8px;height:8px;border-radius:50%;background:${color};display:inline-block;flex-shrink:0;"></span>
           <strong>${esc(b.name||'—')}</strong>
         </span></td>
-        <td><span class="platform-badge">${esc(platLabel)}</span></td>
+        <td><span class="${platBadgeCls}"${isModelled?' title="Instagram data modelled from associated Facebook Page"':''}>${esc(platLabel)}</span></td>
         <td style="font-weight:700;color:var(--accent);" title="${esc(pd.sov_label||'')}">
           ${(pd.sov_index||0).toFixed(1)}
         </td>
         <td><span style="color:${confColor};font-size:0.78rem;font-weight:600;">${esc(conf)}</span>${flagBadge}</td>
+        <td>${classStr}</td>
         <td>${(sigs.creative_volume_share||0).toFixed(1)}</td>
         <td>${(sigs.creative_velocity_score||0).toFixed(1)}</td>
         <td>${(sigs.reach_bucket_score||0).toFixed(1)}</td>
@@ -1531,23 +1661,35 @@ function renderResultsFiltered() {
   });
   tbody.innerHTML = rows.join('');
 
-  // Top posts — adapt to expected format; pass first real platform key for icon/colour
+  // Refresh TikTok notice for current market selection
+  renderTikTokNotice(State.reportData, State.dd.market);
+
+  // Top posts — pass all platforms (M1 fix: not just first platform)
   renderTopPosts({ competitors: brands.map(b => ({
     name: b.name,
+    handle: b.handle,
     top_posts: b.top_posts || [],
     platform: Object.keys(b.platforms || {})[0] || 'Social Media',
   })) });
 }
 
-function renderContentIntel(comp, bgColors) {
+function _buildKeywordListHtml(kws) {
+  if (!kws || !kws.length) return '<span style="color:var(--text3);font-size:0.75rem;">No keyword data</span>';
+  return kws.slice(0,10).map((w,i) =>
+    `<span class="keyword-badge" style="opacity:${1 - i*0.07}">${esc(w)}</span>`
+  ).join('');
+}
+
+function renderContentIntel(brands, bgColors) {
   const container = document.getElementById('contentIntelBody');
   if (!container) return;
 
-  const hasContent = comp.some(c =>
-    (c.top_posts && c.top_posts.length) ||
-    (c.hashtags && c.hashtags.length) ||
-    (c.content_themes && c.content_themes.length) ||
-    (c.paid_campaigns && c.paid_campaigns.length)
+  const hasContent = brands.some(b =>
+    (b.top_posts && b.top_posts.length) ||
+    (b.hashtags && b.hashtags.length) ||
+    (b.content_themes && b.content_themes.length) ||
+    (b.paid_campaigns && b.paid_campaigns.length) ||
+    b.keywords_by_type
   );
   if (!hasContent) {
     container.innerHTML = '<div style="padding:20px 24px;color:var(--text3);font-size:0.82rem;">No post content data available — run a deeper analysis to populate this section.</div>';
@@ -1557,49 +1699,101 @@ function renderContentIntel(comp, bgColors) {
   const grid = document.createElement('div');
   grid.className = 'content-intel-grid';
 
-  comp.forEach((c, i) => {
-    const color  = bgColors[i % bgColors.length];
-    const posts  = c.top_posts      || [];
-    const tags   = c.hashtags       || [];
-    const themes = c.content_themes || [];
-    const campaigns = c.paid_campaigns || [];
-    const pt = c.post_type || 'both';
+  brands.forEach((b, i) => {
+    const color    = bgColors[i % bgColors.length];
+    const posts    = b.top_posts      || [];
+    const tags     = b.hashtags       || [];
+    const themes   = b.content_themes || [];
+    const campaigns = b.paid_campaigns || [];
+    const pt       = b.post_type || 'both';
+    const kwByType = b.keywords_by_type || {};
+
+    // Derive first platform label
+    const firstPlat   = Object.keys(b.platforms || {})[0] || 'Multi';
+    const isModelled  = firstPlat === 'instagram';
+    const platDisplay = firstPlat.charAt(0).toUpperCase() + firstPlat.slice(1) + (isModelled ? ' (est.)' : '');
+
+    // Content-type counts (brand_say / sma / others_say)
+    const ctCounts = { brand_say: 0, sma: 0, others_say: 0 };
+    posts.forEach(p => {
+      const ct = typeof p === 'object' ? (p.content_type || 'brand_say') : 'brand_say';
+      ctCounts[ct] = (ctCounts[ct] || 0) + 1;
+    });
 
     const card = document.createElement('div');
     card.className = 'content-intel-card fade-in';
+    const cardId = `ci-card-${i}`;
+    card.id = cardId;
 
     let html = `
       <div class="ci-brand-row">
         <span class="ci-color-dot" style="background:${color}"></span>
-        <span class="ci-brand-name">${esc(c.name||'—')}</span>
-        ${c.handle ? `<span class="ci-handle">${esc(c.handle)}</span>` : ''}
-        <span class="platform-badge${c.data_source==='modelled_from_facebook'?' modelled':''}" style="margin-left:auto;" ${c.data_source==='modelled_from_facebook'?`title="${esc(c.modelling_note||'Modelled from Facebook data')}"`:''}>
-          ${c.data_source==='modelled_from_facebook'?'~':''}${esc(c.platform||'Multi')}</span>
+        <span class="ci-brand-name">${esc(b.name||'—')}</span>
+        ${b.handle ? `<span class="ci-handle">${esc(b.handle)}</span>` : ''}
+        <span class="platform-badge${isModelled?' modelled':''}" style="margin-left:auto;"
+          ${isModelled?'title="Instagram data modelled from associated Facebook Page"':''}>${esc(platDisplay)}</span>
         <span class="post-type-badge ${pt}" style="margin-left:6px;">${esc(pt)}</span>
+      </div>
+
+      <!-- Content-type tabs: Brand Say / SMA / Others Say -->
+      <div class="ct-tabs" role="tablist">
+        <button class="ct-tab active" data-ct="brand_say" onclick="_switchCtTab(this,'${cardId}')">
+          Brand Say <span class="ct-count">${ctCounts.brand_say}</span>
+        </button>
+        <button class="ct-tab" data-ct="sma" onclick="_switchCtTab(this,'${cardId}')">
+          SMA <span class="ct-count">${ctCounts.sma}</span>
+        </button>
+        <button class="ct-tab" data-ct="others_say" onclick="_switchCtTab(this,'${cardId}')">
+          Others Say <span class="ct-count">${ctCounts.others_say}</span>
+        </button>
       </div>`;
+
+    // Render each content-type panel
+    ['brand_say','sma','others_say'].forEach(ct => {
+      const ctPosts  = posts.filter(p => (typeof p === 'object' ? (p.content_type || 'brand_say') : 'brand_say') === ct);
+      const ctLabel  = { brand_say: 'Brand Voice', sma: 'Collaborations (SMA)', others_say: 'Others Say' }[ct];
+      const kws      = kwByType[ct] || [];
+      const realUrls = ctPosts.filter(p => typeof p === 'object' && p.url && p.url !== 'null' && p.url !== '');
+
+      html += `<div class="ct-panel${ct==='brand_say'?' active':''}" data-ct-panel="${ct}">`;
+
+      if (ct === 'others_say' && !realUrls.length) {
+        html += `<div style="color:var(--text3);font-size:0.77rem;padding:8px 0;">
+          Source: Ad Library 3rd-party sponsored posts only.
+          ${ctPosts.length === 0 ? 'No third-party ad library posts detected for this brand.' : ''}
+        </div>`;
+      }
+
+      if (realUrls.length) {
+        html += `<div class="ci-section-label">${esc(ctLabel)} Posts</div><ul class="ci-posts">`;
+        realUrls.slice(0,5).forEach(p => {
+          const url      = p.url;
+          const cls      = p.post_classification || '';
+          const clsCss   = cls === 'Paid (Confirmed)' ? 'confirmed' : cls === 'Paid (Est.)' ? 'estimated' : 'organic';
+          const clsLabel = cls || 'Organic';
+          const likes    = p.likes  ? `${fmtShort(p.likes)} likes` : '';
+          const views    = p.views  ? `${fmtShort(p.views)} views` : '';
+          const statStr  = [likes, views].filter(Boolean).join(' · ');
+          let domain = ''; try { domain = new URL(url).hostname.replace('www.',''); } catch {}
+          html += `<li class="ci-post-item">
+            <span class="post-class-badge ${clsCss}" title="${esc(clsLabel)}" style="font-size:0.62rem;">${esc(clsLabel.replace('Paid (','').replace(')','') || 'Org')}</span>
+            <a href="${esc(url)}" target="_blank" rel="noopener noreferrer" class="ci-post-link">${esc(domain||url)}</a>
+            ${statStr ? `<span style="color:var(--text3);font-size:0.7rem;margin-left:4px;">${esc(statStr)}</span>` : ''}
+          </li>`;
+        });
+        html += `</ul>`;
+      }
+
+      if (kws.length) {
+        html += `<div class="ci-section-label">Top Keywords</div><div class="ci-keywords">${_buildKeywordListHtml(kws)}</div>`;
+      }
+
+      html += `</div>`; // end ct-panel
+    });
 
     if (campaigns.length) {
       html += `<div class="ci-section-label">Paid Campaigns</div><ul class="ci-posts">`;
-      campaigns.forEach(camp => { html += `<li class="ci-post-item"><span class="post-type-badge paid" style="font-size:0.62rem;">paid</span>${esc(camp)}</li>`; });
-      html += `</ul>`;
-    }
-
-    // Only show posts with a real URL — skip AI-generated descriptions
-    const realPosts = posts.filter(p => typeof p === 'object' && p.url && p.url !== 'null' && p.url !== '');
-    if (realPosts.length) {
-      html += `<div class="ci-section-label">Top Posts</div><ul class="ci-posts">`;
-      realPosts.forEach(p => {
-        const url      = p.url;
-        const postType = p.post_type || pt;
-        const likes    = p.likes  ? `${fmtShort(p.likes)} likes` : '';
-        const views    = p.views  ? `${fmtShort(p.views)} views` : '';
-        const statParts = [likes, views].filter(Boolean);
-        const statStr  = statParts.length
-          ? `<span style="color:var(--text3);font-size:0.72rem;margin-left:6px;">${statParts.join(' · ')}</span>` : '';
-        const typeBadge = `<span class="post-type-badge ${postType}" style="font-size:0.62rem;">${esc(postType)}</span>`;
-        let domain = ''; try { domain = new URL(url).hostname.replace('www.',''); } catch {}
-        html += `<li class="ci-post-item">${typeBadge}<a href="${esc(url)}" target="_blank" rel="noopener noreferrer" class="ci-post-link">${esc(domain||url)}</a>${statStr}</li>`;
-      });
+      campaigns.forEach(camp => { html += `<li class="ci-post-item"><span class="post-class-badge confirmed" style="font-size:0.62rem;">paid</span>${esc(camp)}</li>`; });
       html += `</ul>`;
     }
 
@@ -1745,24 +1939,37 @@ function buildRunCsv(report) {
 
   const cols = [
     'brand','platform','sov_index','confidence','consistency_flag',
-    'creative_volume','creative_velocity','reach_tier','geo_presence',
+    'post_classification_confirmed','post_classification_estimated','post_classification_organic',
+    'creative_volume','creative_velocity','reach_tier','platform_presence',
     'ad_longevity','engagement_corroboration',
     'composite_sov','composite_confidence','sentiment',
+    'content_type_brand_say','content_type_sma','content_type_others_say',
+    'tiktok_suppressed',
   ];
 
   const dataRows = [];
   brands.forEach(b => {
-    const plats = ['facebook','youtube','tiktok'];
-    plats.forEach(p => {
+    ACTIVE_PLATFORMS.forEach(p => {
       const pd   = (b.platforms||{})[p];
       if (!pd) return;
-      const sigs = pd.signals || {};
+      const sigs  = pd.signals || {};
+      const posts = pd.posts || [];
+      const paidConf = posts.filter(pp => (pp.post_classification||'') === 'Paid (Confirmed)').length;
+      const paidEst  = posts.filter(pp => (pp.post_classification||'') === 'Paid (Est.)').length;
+      const organic  = posts.filter(pp => (pp.post_classification||'') === 'Organic').length;
+      const allPosts = b.top_posts || [];
+      const bsCnt   = allPosts.filter(pp => (typeof pp==='object'?pp.content_type:'') === 'brand_say').length;
+      const smaCnt  = allPosts.filter(pp => (typeof pp==='object'?pp.content_type:'') === 'sma').length;
+      const otherCnt= allPosts.filter(pp => (typeof pp==='object'?pp.content_type:'') === 'others_say').length;
       dataRows.push([
         b.name, p, pd.sov_index, pd.confidence, pd.consistency_flag,
+        paidConf, paidEst, organic,
         sigs.creative_volume_share, sigs.creative_velocity_score,
         sigs.reach_bucket_score, sigs.geo_presence_score,
         sigs.longevity_score, sigs.engagement_corroboration,
         b.composite_sov, b.composite_confidence, b.sentiment,
+        bsCnt, smaCnt, otherCnt,
+        _isTikTokSuppressed(norm, 'all'),
       ].map(v => `"${String(v==null?'':v).replace(/"/g,'""')}"`).join(','));
     });
   });
@@ -1903,11 +2110,136 @@ function fmtShort(n) {
   return String(n);
 }
 function esc(s) {
+  // M2 fix: escape single quotes too
   return String(s)
-    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+    .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
 }
 function destroyCharts() {
   Object.keys(Charts).forEach(k=>{if(Charts[k]){Charts[k].destroy();Charts[k]=null;}});
+}
+
+// Content-type tab switcher (called from inline onclick)
+function _switchCtTab(btn, cardId) {
+  const card = document.getElementById(cardId);
+  if (!card) return;
+  const ct = btn.dataset.ct;
+  card.querySelectorAll('.ct-tab').forEach(b => b.classList.remove('active'));
+  card.querySelectorAll('.ct-panel').forEach(p => p.classList.remove('active'));
+  btn.classList.add('active');
+  const panel = card.querySelector(`.ct-panel[data-ct-panel="${ct}"]`);
+  if (panel) panel.classList.add('active');
+}
+
+// TikTok suppression check — per market
+function _isTikTokSuppressed(reportData, market) {
+  if (!reportData) return false;
+  const suppressed = reportData.tiktok_suppressed;
+  // Per-market object or flat boolean
+  if (typeof suppressed === 'boolean') return suppressed;
+  if (typeof suppressed === 'object' && suppressed !== null) {
+    if (market && market !== 'all') return !!(suppressed[market]);
+    return Object.values(suppressed).some(Boolean);
+  }
+  return false;
+}
+
+// SOV Trend chart — shown only when grain !== 'lifetime'
+function _renderSovTrendChart(brands, bgColors) {
+  const container = document.getElementById('sovTrendChartWrap');
+  if (!container) return;
+
+  if (State.timeGrain === 'lifetime') {
+    container.style.display = 'none';
+    if (Charts.sovTrend) { Charts.sovTrend.destroy(); Charts.sovTrend = null; }
+    return;
+  }
+
+  container.style.display = '';
+  const grainKey = { monthly: 'by_month', weekly: 'by_week', daily: 'by_day' }[State.timeGrain] || 'by_month';
+
+  // Collect labels from first brand that has grain data
+  let labels = [];
+  for (const b of brands) {
+    const grain = b[grainKey] || [];
+    if (grain.length) { labels = grain.map(g => g.period || g.date || g.week || g.month || '?'); break; }
+  }
+  if (!labels.length) {
+    container.innerHTML = `<div style="padding:16px;color:var(--text3);font-size:0.8rem;">No ${State.timeGrain} data available — run analysis with sufficient date range.</div>`;
+    return;
+  }
+
+  const datasets = brands.map((b, i) => ({
+    label: b.name || '?',
+    data: (b[grainKey] || []).map(g => g.composite_sov || g.sov || 0),
+    borderColor: bgColors[i % bgColors.length],
+    backgroundColor: bgColors[i % bgColors.length] + '22',
+    borderWidth: 2, pointRadius: 3, tension: 0.35, fill: false,
+  }));
+
+  if (Charts.sovTrend) { Charts.sovTrend.destroy(); Charts.sovTrend = null; }
+
+  // Ensure canvas exists in container
+  let canvas = container.querySelector('canvas');
+  if (!canvas) {
+    container.innerHTML = '<canvas id="sovTrendChart"></canvas>';
+    canvas = container.querySelector('canvas');
+  }
+
+  Charts.sovTrend = new Chart(canvas.getContext('2d'), {
+    type: 'line',
+    data: { labels, datasets },
+    options: {
+      ...CHART_OPTS,
+      plugins: {
+        legend: { display: true, position: 'top', labels: { color: '#8b949e', font: { size: 10 } } },
+        tooltip: { callbacks: { label: ctx => `${ctx.dataset.label}: ${ctx.parsed.y.toFixed(1)} SOV (Dir.)` } },
+      },
+      scales: {
+        y: { ...CHART_OPTS.scales?.y, title: { display: true, text: 'SOV Index (Dir.)', color: '#8b949e', font: { size: 10 } } },
+      },
+    },
+  });
+}
+
+// Render executive insight cards
+function renderInsightCards(insights) {
+  const wrap = document.getElementById('insightCardsWrap');
+  if (!wrap) return;
+  if (!insights || !insights.length) { wrap.style.display = 'none'; return; }
+  wrap.style.display = '';
+  wrap.innerHTML = insights.slice(0, 5).map(ins => `
+    <div class="insight-card fade-in">
+      <span class="insight-icon">${ins.icon || '💡'}</span>
+      <div class="insight-body">
+        <div class="insight-brand">${esc(ins.brand || '')}</div>
+        <div class="insight-text">${esc(ins.text || ins)}</div>
+      </div>
+    </div>
+  `).join('');
+}
+
+// Render TikTok suppression notice
+function renderTikTokNotice(reportData, market) {
+  const notice = document.getElementById('tiktokNotice');
+  if (!notice) return;
+  const suppressed = reportData && reportData.tiktok_suppressed;
+  if (!suppressed) { notice.style.display = 'none'; return; }
+  let msg = '';
+  if (typeof suppressed === 'boolean' && suppressed) {
+    msg = `TikTok omitted — fewer than 2 posts detected. Composite SOV re-weighted across remaining platforms.`;
+  } else if (typeof suppressed === 'object') {
+    const suppressedMarkets = Object.entries(suppressed).filter(([,v])=>v).map(([k])=>k);
+    if (!suppressedMarkets.length) { notice.style.display = 'none'; return; }
+    if (market && market !== 'all' && !suppressed[market]) { notice.style.display = 'none'; return; }
+    msg = `TikTok suppressed in: ${suppressedMarkets.join(', ')} — fewer than 2 posts detected. Composite SOV re-weighted.`;
+  }
+  if (msg) {
+    notice.style.display = 'flex';
+    notice.innerHTML = `<span class="notice-icon">ℹ</span> <span>${esc(msg)}</span>`;
+  } else {
+    notice.style.display = 'none';
+  }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -1915,6 +2247,16 @@ function destroyCharts() {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 (async function init() {
+  // Wire time-grain toggle buttons
+  document.querySelectorAll('.grain-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.grain-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      State.timeGrain = btn.dataset.grain || 'lifetime';
+      renderResultsFiltered();
+    });
+  });
+
   // Load saved runs index
   await _fetchSavedRuns();
   renderSavedRunsList();
@@ -1937,7 +2279,7 @@ function destroyCharts() {
   try {
     const rep = await fetch('/report').then(r => r.json());
     if (rep && (rep.brands?.length || rep.competitors?.length)) {
-      State.reportData = rep;
+      _setReportData(rep);
       document.getElementById('dot-results').className = 'status-dot done';
     }
   } catch(e) {}
