@@ -26,6 +26,8 @@ os.environ["OPENAI_BASE_URL"]         = _ollama_v1
 os.environ["CREWAI_TELEMETRY_OPT_OUT"] = "true"
 for _v in ("BASE_URL", "API_BASE", "HERMES_TUNNEL_TOKEN"):
     os.environ.pop(_v, None)
+for _v in ("http_proxy", "https_proxy", "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "all_proxy"):
+    os.environ.pop(_v, None)
 
 HOST = os.getenv("HOST", "0.0.0.0")
 PORT = int(os.getenv("PORT", "8000"))

@@ -13,6 +13,8 @@ load_dotenv()
 # Ensure OLLAMA_HOST is set before crewai is imported (native provider reads it)
 _ollama_host = os.getenv("OLLAMA_HOST", "http://127.0.0.1:11434").rstrip("/")
 os.environ["OLLAMA_HOST"] = _ollama_host
+for _proxy_var in ("http_proxy", "https_proxy", "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "all_proxy"):
+    os.environ.pop(_proxy_var, None)
 
 from crew import SocialListeningCrew, clear_checkpoints
 from approval_gate import ApprovalGate
