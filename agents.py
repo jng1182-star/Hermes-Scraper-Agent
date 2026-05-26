@@ -4,7 +4,6 @@ from crewai.llm import LLM
 from tools.social_search_tool import SocialSearchTool
 from tools.profile_scraper import ProfileScraperTool
 from tools.feed_scroller import FeedScrollerTool
-from tools.api_data_tool import APIDataTool
 from tools.paid_adlib_tool import PaidAdLibTool
 
 _OLLAMA_HOST     = os.getenv("OLLAMA_HOST", "http://127.0.0.1:11434").rstrip("/")
@@ -38,7 +37,6 @@ class SocialAgents:
         self.search_tool   = SocialSearchTool()
         self.profile_tool  = ProfileScraperTool()
         self.feed_tool     = FeedScrollerTool()
-        self.api_tool      = APIDataTool()
         self.adlib_tool    = PaidAdLibTool()
         # Scraper always uses e4b — structured data extraction, not deep reasoning.
         # e4b fits fully in GPU; 26b runs mixed CPU/GPU on this machine and stalls at 600s.
@@ -47,49 +45,58 @@ class SocialAgents:
         self.llm = _make_llm(analyst_model)
 
     def profile_agent(self) -> Agent:
-        """Agent 1 — fetches brand profile data via official APIs (YouTube Data API v3, Meta Ad Library)
-        with Playwright DOM scraping as fallback."""
+        """Agent 1 — scrapes public profile pages using the researcher's profile map.
+        Collects all posts in scope, computes organic baselines, and flags paid posts
+        via DOM labels + ER outlier detection. Geo-unconstrained."""
         return Agent(
-            role="Profile Baseline Scraper",
+            role="Profile Scraper",
             goal=(
-                "Collect real, structured social media metrics for each brand on Facebook and YouTube. "
-                "Use the Brand API Data Fetcher tool first — it calls official APIs (YouTube Data API v3, "
-                "Meta Ad Library) and returns exact subscriber counts, view counts, and likes. "
-                "If the API tool returns no data for a platform, fall back to the Profile Baseline Scraper tool. "
-                "Produce a clean organic baseline per brand per platform with real numbers."
+                "Using the verified profile map from the researcher, scrape every brand's public "
+                "social media profile pages within the user-specified date scope. "
+                "For each brand × platform: collect all posts in scope (url, caption, metrics, "
+                "publish_date), detect DOM-labelled paid posts (Sponsored / Paid partnership), "
+                "compute an organic ER baseline from the clean organic pool, then re-score all "
+                "remaining posts — flagging those exceeding 3× the organic baseline ER as "
+                "likely_paid (baseline_outlier). "
+                "Return organic_posts, paid_posts, and baseline metrics per brand per platform. "
+                "Coverage is geo-unconstrained: public profile pages are hit directly."
             ),
             backstory=(
-                "You are a specialist in social media data collection. Your primary method is official APIs — "
-                "YouTube Data API v3 for subscriber counts and video metrics, Meta Ad Library for declared "
-                "ad impressions. APIs give you exact, authoritative numbers that no scraper can match. "
-                "You fall back to Playwright DOM scraping only when APIs are unavailable. "
-                "You never fabricate numbers — you report exactly what the APIs return."
+                "You are a specialist in social media content collection and paid signal detection. "
+                "The researcher hands you verified URLs and handles — you use those as your exact "
+                "scraping targets. Your baseline metrics are the calibration source for the feed "
+                "scroller; without your ER thresholds the feed agent cannot distinguish paid from "
+                "organic in-feed. You never fabricate data."
             ),
-            tools=[self.api_tool, self.profile_tool],
+            tools=[self.profile_tool],
             llm=self.scraper_llm,
             verbose=True,
         )
 
     def feed_agent(self) -> Agent:
-        """Agent 2 — paid ad capture via Meta Ad Library API (primary) + Playwright scraper fallback."""
+        """Agent 2 — scrolls algorithmic feeds using baselines from the profile scraper.
+        Collects all visible posts; flags paid via DOM markers and baseline ER thresholds.
+        Also queries ad libraries (Meta, Google ATC, TikTok CCL) for declared inventory.
+        Coverage is geo-bounded by the scraper IP/geo."""
         return Agent(
-            role="Feed Ad Capture Agent",
+            role="Feed Scroller",
             goal=(
-                "Collect declared paid advertising data for each brand on Facebook and YouTube. "
-                "Use the Brand API Data Fetcher tool first — it calls the Meta Ad Library API "
-                "and returns structured ad counts, impression ranges, and spend ranges. "
-                "If the API tool returns empty data for Facebook (Meta API pending approval), "
-                "fall back to the Paid Ad Library Scraper tool which scrapes facebook.com/ads/library "
-                "directly via headless browser. "
-                "Return structured records: advertiser, ad copy, impressions, spend signals."
+                "Scroll the algorithmic feed for each target platform and collect all visible posts. "
+                "Use the baselines produced by the Profile Scraper to score posts as paid or organic: "
+                "DOM-labelled posts (Sponsored / ad-badge) are confirmed paid; posts whose per-post "
+                "ER exceeds the brand's organic baseline by 3× are flagged as likely_paid. "
+                "In parallel, query Meta Ad Library, Google Ads Transparency, and TikTok Commercial "
+                "Content Library via the Paid Ad Library tool for declared inventory. "
+                "Return brand_paid_posts, brand_organic_posts, category_paid_posts, and ad library results."
             ),
             backstory=(
-                "You are a paid media intelligence specialist. Your primary source is the Meta Ad "
-                "Library API — structured, authoritative, fast. When that API is unavailable or "
-                "returns no data, you fall back to headless browser scraping of the Ad Library website. "
-                "You never fabricate ad data — you report exactly what the tools return."
+                "You are a paid media feed intelligence specialist. Your scroll sessions capture "
+                "what the algorithm actually serves in a specific market. You rely on the Profile "
+                "Scraper's organic baselines as your paid detection threshold — they must be passed "
+                "to you before you begin. Ad library queries run in parallel and cover declared "
+                "inventory that may never appear in your geo's feed. You never fabricate data."
             ),
-            tools=[self.api_tool, self.adlib_tool, self.feed_tool],
+            tools=[self.feed_tool, self.adlib_tool],
             llm=self.scraper_llm,
             verbose=True,
         )

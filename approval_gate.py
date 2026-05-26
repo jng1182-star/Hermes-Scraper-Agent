@@ -20,6 +20,7 @@ import json
 import logging
 import os
 import re
+import threading
 from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
@@ -400,3 +401,31 @@ class ApprovalGate:
 
         result = json.dumps(data, indent=2, ensure_ascii=False)
         return scrub(result)
+
+
+# ── Sentinel override registry ────────────────────────────────────────────────
+# Populated by server.py /sentinel-override POST endpoint.
+# The Approval Gate has final authority — it can bypass any Sentinel directive.
+_PENDING_OVERRIDES: dict[str, str] = {}
+_OVERRIDE_LOCK = threading.Lock()
+
+
+def register_override(flag_id: str, reason: str) -> None:
+    """Called by server.py when a human sends a SENTINEL_OVERRIDE via the dashboard."""
+    with _OVERRIDE_LOCK:
+        _PENDING_OVERRIDES[flag_id] = reason
+    try:
+        from sentinel import get_sentinel
+        s = get_sentinel()
+        if s:
+            s.override(flag_id, reason)
+        else:
+            logger.warning("[ApprovalGate] override for flag %s: no active Sentinel.", flag_id)
+    except Exception as e:
+        logger.warning("[ApprovalGate] Sentinel override dispatch failed: %s", e)
+
+
+def pop_override(flag_id: str) -> str | None:
+    """Consume and return a pending override reason, or None if not found."""
+    with _OVERRIDE_LOCK:
+        return _PENDING_OVERRIDES.pop(flag_id, None)

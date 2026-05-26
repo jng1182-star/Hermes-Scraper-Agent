@@ -567,6 +567,10 @@ async function pollStatus() {
       updateAgentCards(s.agent_states, s.logs || []);
     }
 
+    if (s.active_flags) {
+      _updateSentinelFlags(s.active_flags);
+    }
+
     const banner = document.getElementById('timeoutBanner');
     if (banner) {
       if (s.timed_out && s.running) {
@@ -619,6 +623,9 @@ async function pollStatus() {
       resetRunBtn();
       State.partialShown = false;
       setPartialPill(false);
+      // Clear sentinel flags panel when run ends (error or complete)
+      const _flagsPanel = document.getElementById('sentinelFlags');
+      if (_flagsPanel) _flagsPanel.innerHTML = '';
 
       if (s.error) {
         setLogStatus('error', 'Analysis failed — see log above.');
@@ -676,7 +683,9 @@ const _LOG_ROUTE = {
              'identifying brand', 'official page', 'official profile'],
   analyst:  ['analyst', 'share-of-voice', 'sov', 'signal', '[analyst]'],
   reporter: ['reporter', 'intelligence report', '[reporter]'],
-  gate:     ['approval gate', 'gate', 'validation', 'confidence', '[gate]'],
+  gate:     ['approval gate', 'gate', 'validation', 'confidence', '[gate]',
+             '[sentinel', '[agent thinking:', '[agent response]',
+             '[sentinel flag]', '[sentinel directive]', '[gate override]'],
 };
 
 // Track last known log count per card to append only new lines
@@ -740,6 +749,104 @@ function resetAgentCards() {
     badge.textContent  = 'STANDBY';
     logEl.textContent  = CARD_LOG_HINTS[id]?.idle || 'Awaiting…';
   });
+  const flagPanel = document.getElementById('sentinelFlags');
+  if (flagPanel) { flagPanel.innerHTML = ''; flagPanel.style.display = 'none'; }
+  _localOverrides.clear();
+}
+
+// Track which flags have been locally overridden so poll re-renders don't reset the button
+const _localOverrides = new Set();
+
+function _updateSentinelFlags(activeFlags) {
+  const panel = document.getElementById('sentinelFlags');
+  if (!panel) return;
+
+  const entries = Object.entries(activeFlags || {});
+  const unresolved = entries.filter(([id, f]) =>
+    !f.resolved && !f.overridden && !_localOverrides.has(id)
+  );
+
+  if (!unresolved.length) {
+    panel.style.display = 'none';
+    panel.innerHTML = '';
+    return;
+  }
+  panel.style.display = '';
+
+  // Diff: add new flags, remove flags no longer present — don't rebuild the whole panel
+  const existingIds = new Set(
+    Array.from(panel.querySelectorAll('.sf-flag[data-flag-id]')).map(el => el.dataset.flagId)
+  );
+  const currentIds = new Set(unresolved.map(([id]) => id));
+
+  // Remove flags that resolved on the server
+  existingIds.forEach(id => {
+    if (!currentIds.has(id)) {
+      const el = panel.querySelector(`.sf-flag[data-flag-id="${CSS.escape(id)}"]`);
+      if (el) el.remove();
+    }
+  });
+
+  // Add new flags (don't touch existing ones — preserves button state)
+  unresolved.forEach(([id, f]) => {
+    if (existingIds.has(id)) return;  // already rendered
+    const sev   = (f.severity || 'INFO').toUpperCase();
+    const cls   = sev === 'CRITICAL' ? 'sf-critical' : sev === 'WARNING' ? 'sf-warning' : 'sf-info';
+    const brand = f.brand ? `<span class="sf-brand">${_esc(f.brand)}</span>` : '';
+    const plat  = f.platform ? `<span class="sf-plat">${_esc(f.platform)}</span>` : '';
+    const el = document.createElement('div');
+    el.className = `sf-flag ${cls}`;
+    el.dataset.flagId = id;
+    el.innerHTML =
+      `<div class="sf-header">` +
+        `<span class="sf-sev">${sev}</span>${brand}${plat}` +
+        `<span class="sf-issue">${_esc(f.issue || id)}</span>` +
+      `</div>` +
+      (f.methodological ? `<div class="sf-meta">${_esc(f.methodological)}</div>` : '') +
+      (f.recommendation  ? `<div class="sf-rec">${_esc(f.recommendation)}</div>`  : '') +
+      `<button class="sf-override-btn" data-flag-id="${_esc(id)}" ` +
+        `aria-label="Override flag: ${_esc(f.issue || id)}">Gate Override</button>`;
+    panel.appendChild(el);
+  });
+}
+
+// Delegated click handler — safe from XSS; flagId comes from data attribute, not inline JS
+document.addEventListener('click', async function(e) {
+  const btn = e.target.closest('.sf-override-btn[data-flag-id]');
+  if (!btn) return;
+  const flagId = btn.dataset.flagId;
+  if (!flagId || btn.disabled) return;
+  await _sentinelOverride(flagId, btn);
+});
+
+function _esc(s) {
+  return String(s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+async function _sentinelOverride(flagId, btn) {
+  btn.disabled = true;
+  btn.textContent = 'Overriding…';
+  try {
+    const res = await fetch('/sentinel-override', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ flag_id: flagId, reason: 'Approval Gate override via dashboard.' })
+    });
+    if (res.ok) {
+      _localOverrides.add(flagId);
+      btn.textContent = '✓ Overridden';
+      btn.closest('.sf-flag').classList.add('sf-resolved');
+    } else {
+      btn.disabled = false;
+      btn.textContent = 'Gate Override';
+    }
+  } catch (e) {
+    btn.disabled = false;
+    btn.textContent = 'Gate Override';
+  }
 }
 
 function resetRunBtn() {

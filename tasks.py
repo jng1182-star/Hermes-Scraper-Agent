@@ -1,6 +1,12 @@
 import json
+import re as _re
 from datetime import datetime, timezone
 from crewai import Task
+
+
+def _strip_fences(s: str) -> str:
+    """Strip markdown code fences from LLM output before JSON parsing."""
+    return _re.sub(r"```(?:json)?\s*|```", "", s).strip()
 
 # Single source of truth for active platforms (H2 fix)
 ACTIVE_PLATFORMS = ["facebook", "instagram", "youtube", "tiktok"]
@@ -95,134 +101,181 @@ class SocialTasks:
         )
 
     def profile_task(self, agent, params: dict = None, profile_map: str = None) -> Task:
-        """Agent 1 — baseline presence signals via official APIs, using researcher's profile map."""
+        """Agent 1 — scrapes public profile pages for all posts in scope; computes organic
+        baselines and flags paid posts. Uses researcher's verified profile map as targets."""
         params      = params or {}
         advertisers = params.get("advertisers", [])
         competitors = params.get("competitors", [])
-        platforms   = params.get("platforms", ["YouTube", "Facebook"])
+        my_brands   = params.get("my_brands",   [])
+        comp_brands = params.get("comp_brands",  [])
+        platforms   = params.get("platforms", ["Instagram", "Facebook", "TikTok", "YouTube"])
         country     = params.get("country", "")
+        date_from   = params.get("date_from", "")
+        date_to     = params.get("date_to", "")
 
-        all_brands = list(advertisers) + [c for c in competitors if c not in advertisers]
-        brands_str = ", ".join(all_brands) if all_brands else "all target brands"
+        all_brand_pairs = list(my_brands) + [
+            b for b in comp_brands
+            if not any(b.get("brand") == x.get("brand") for x in my_brands)
+        ]
+        if not all_brand_pairs:
+            all_brands = list(advertisers) + [c for c in competitors if c not in advertisers]
+            all_brand_pairs = [{"brand": b, "advertiser": ""} for b in all_brands]
 
-        api_input = json.dumps({
-            "brands": all_brands,
+        brands_str = ", ".join(
+            f"{p['advertiser']} {p['brand']}".strip() if p.get("advertiser") else p["brand"]
+            for p in all_brand_pairs
+        ) or "all target brands"
+
+        scraper_input = json.dumps({
+            "brands": [
+                {"name": p.get("brand", ""), "handles": {pl: p.get("handle", p.get("brand", "")) for pl in platforms}}
+                for p in all_brand_pairs
+            ],
             "platforms": platforms,
-            "country": country or "PH",
+            "date_from": date_from,
+            "date_to": date_to,
+            "country": country or "",
         })
 
         profile_map_section = (
-            f"\nRESEARCHER PROFILE MAP (use these verified URLs as your scraping targets):\n"
+            f"\nRESEARCHER PROFILE MAP (use these verified handles/URLs as your scraping targets):\n"
             f"{profile_map}\n"
-            "When calling the Brand API Data Fetcher tool, use the handle/page_id values "
-            "from the profile map above for each brand — do not guess page IDs.\n"
+            "Override the handles in the tool input with the verified handles from the profile map "
+            "for each brand × platform combination.\n"
         ) if profile_map else ""
 
         return Task(
             description=(
-                f"Collect social media presence signals for these brands: {brands_str}.\n\n"
+                f"Scrape public brand profile pages and collect all posts within the date scope "
+                f"for these brands: {brands_str}.\n\n"
                 f"PLATFORMS: {', '.join(platforms)}\n"
                 f"COUNTRY/MARKET: {country or 'Global'}\n"
+                f"DATE SCOPE: {date_from or 'start'} → {date_to or 'today'}\n"
                 f"{profile_map_section}\n"
-                "STEP 1 — Call the 'Brand API Data Fetcher' tool FIRST with this exact input:\n"
-                f"{api_input}\n\n"
-                "This tool uses the YouTube Data API v3 and Meta Ad Library API to return "
-                "real subscriber counts, video view counts, likes, and declared ad data.\n\n"
-                "For Meta Ad Library results, also extract:\n"
-                "  - geo_presence: list of countries/regions each brand's ads are targeted at\n"
-                "  - ad_start_dates: list of ISO date strings for all active ads "
-                "(used to compute Ad Longevity and Creative Velocity signals)\n"
-                "These are required fields alongside active_ads_found and impressions_min/max.\n\n"
-                "STEP 2 — Return the full JSON output from the Brand API Data Fetcher tool. "
-                "Do NOT call the Profile Baseline Scraper tool unless the API tool returns "
-                "empty platform_data for every brand. "
-                "If an API is unreachable or returns no data, log the issue and proceed "
-                "with available signals — do not halt."
+                "Call the 'Profile Scraper' tool with this input (update handles from profile map):\n"
+                f"{scraper_input}\n\n"
+                "The tool will:\n"
+                "  1. Scrape all posts in the date scope from each brand's public profile page.\n"
+                "  2. Flag DOM-labelled paid posts (Sponsored / Paid partnership).\n"
+                "  3. Compute an organic ER baseline from DOM-clean posts.\n"
+                "  4. Re-score all remaining posts — flag those exceeding 3× organic ER as likely_paid.\n\n"
+                "Return the full tool output. Do not summarise or truncate — the feed scroller "
+                "needs the baseline metrics to calibrate its own paid detection."
             ),
             expected_output=(
-                "JSON from the Brand API Data Fetcher tool: per-brand platform data with "
-                "presence signals from YouTube Data API v3 (subscribers, avg_views, avg_likes) "
-                "and Meta Ad Library API (active_ads_found, impressions_min, impressions_max, "
-                "geo_presence, ad_start_dates). "
-                "data_source field must show 'youtube_data_api_v3' or 'meta_ad_library_api'."
+                "JSON from the Profile Scraper tool: a 'profiles' list where each entry contains "
+                "brand, platform, handle, follower_count, organic_posts[], paid_posts[], "
+                "avg_er_pct, avg_likes, avg_views, avg_comments, er_threshold, baseline_available, "
+                "organic_post_count, paid_post_count, date_from, date_to, data_source. "
+                "paid_posts entries include paid_signal ('dom_label' or 'baseline_outlier'), "
+                "post_er_pct, and baseline_er_pct where applicable."
             ),
             agent=agent,
         )
 
-    def feed_task(self, agent, params: dict = None, profile_map: str = None) -> Task:
-        """Agent 2 — paid ad capture across Meta, YouTube, and TikTok, using researcher's profile map."""
+    def feed_task(self, agent, params: dict = None, profile_map: str = None,
+                  profile_baselines: str = None) -> Task:
+        """Agent 2 — scrolls algorithmic feeds using baselines from the profile scraper;
+        queries ad libraries filtered to the user's target country/markets."""
         params      = params or {}
         competitors = params.get("competitors", [])
         advertisers = params.get("advertisers", [])
-        platforms   = params.get("platforms", ["YouTube", "Facebook"])
+        my_brands   = params.get("my_brands",   [])
+        comp_brands = params.get("comp_brands",  [])
+        platforms   = params.get("platforms", ["Instagram", "Facebook", "TikTok", "YouTube"])
         country     = params.get("country", "PH")
+        markets     = params.get("markets", [country] if country else [])
 
-        all_brands = list(advertisers) + [c for c in competitors if c not in advertisers]
-        brands_str = ", ".join(all_brands) if all_brands else "all target brands"
+        all_brand_pairs = list(my_brands) + [
+            b for b in comp_brands
+            if not any(b.get("brand") == x.get("brand") for x in my_brands)
+        ]
+        if not all_brand_pairs:
+            all_brands = list(advertisers) + [c for c in competitors if c not in advertisers]
+            all_brand_pairs = [{"brand": b, "advertiser": ""} for b in all_brands]
 
-        api_input = json.dumps({
-            "brands": all_brands,
+        brands_str  = ", ".join(
+            f"{p['advertiser']} {p['brand']}".strip() if p.get("advertiser") else p["brand"]
+            for p in all_brand_pairs
+        ) or "all target brands"
+        brand_names = [p.get("brand", "") for p in all_brand_pairs]
+        markets_str = ", ".join(markets) if markets else country or "Global"
+
+        # Inject real baseline array — strip markdown fences before parsing
+        # (LLM agent may re-wrap the clean JSON output in ```json ... ``` fences)
+        try:
+            _cleaned = _strip_fences(profile_baselines) if profile_baselines else ""
+            baseline_list = json.loads(_cleaned) if _cleaned else []
+        except Exception:
+            baseline_list = []
+
+        scroller_input = json.dumps({
             "platforms": platforms,
-            "country": country or "PH",
+            "country":   country,
+            "brands":    brand_names,
+            "baselines": baseline_list,
         })
-        tiktok_input_example = json.dumps({"brand": "<brand_name>", "country": country or "PH"})
-        meta_platforms = [p for p in platforms if p.lower() in ("facebook", "instagram", "youtube")]
+        adlib_input_example = json.dumps({
+            "brand":     "<brand_name>",
+            "country":   country,
+            "markets":   markets,
+            "platforms": platforms,
+        })
+
+        baselines_note = (
+            f"\nPROFILE BASELINES: {len(baseline_list)} brand×platform baseline(s) pre-injected "
+            f"into the Feed Scroller input above (avg_er_pct + er_threshold per entry).\n"
+        ) if baseline_list else (
+            "\nNOTE: No profile baselines available — feed scoring will rely on DOM labels only.\n"
+        )
 
         profile_map_section = (
-            f"\nRESEARCHER PROFILE MAP (use these verified page IDs / handles as your targets):\n"
+            f"\nRESEARCHER PROFILE MAP (use verified page IDs / handles for ad library queries):\n"
             f"{profile_map}\n"
-            "Use the advertiser page IDs from the profile map when querying the Meta Ad Library — "
-            "do not search by brand name alone.\n"
         ) if profile_map else ""
 
         return Task(
             description=(
-                f"Collect declared paid advertising signals for these brands: {brands_str}.\n\n"
-                f"PLATFORMS: {', '.join(platforms)} + TikTok (always included)\n"
-                f"COUNTRY/MARKET: {country or 'Global'}\n"
-                f"{profile_map_section}\n"
-                "STEP 1 — Call the 'Brand API Data Fetcher' tool with this exact input:\n"
-                f"{api_input}\n\n"
-                "The Meta Ad Library API returns: active ad count, impression ranges "
-                "(min/max), and ad creative text per brand.\n"
-                "NOTE: The 'facebook' platform key covers both Facebook and Instagram — "
-                "Meta Ad Library returns ads running on either surface under the same "
-                "advertiser. Do not create a separate 'instagram' key; treat all Meta "
-                "ads as part of the 'facebook' SOV bucket.\n\n"
-                "STEP 2 — If the API tool returns empty Facebook data (active_ads_found "
-                "missing or platform_data has no Facebook entry), call the "
-                "'Paid Ad Library Scraper' tool once per brand:\n"
-                f"  {{\"brand\": \"<brand_name>\", \"country\": \"{country or 'PH'}\", "
-                f"\"platforms\": {json.dumps(meta_platforms)}}}\n\n"
-                "STEP 3 — Call the 'TikTok Ad Library Tool' (tiktok_api_tool) for EACH brand:\n"
-                f"  {tiktok_input_example}\n"
-                "Capture:\n"
-                "  - active_tiktok_ads: count of active ads\n"
-                "  - tiktok_ad_start_dates: list of ISO date strings for each active ad\n"
-                "  - tiktok_impressions_min, tiktok_impressions_max: from TikTok EU Ad Library "
-                "unique user reach fields where the brand runs EU campaigns — these are the "
-                "most reliable reach proxies TikTok exposes publicly. For non-EU markets "
-                "this field will be null; record as missing and assign Low confidence to "
-                "the reach bucket signal for TikTok on that brand.\n"
-                "  - tiktok_geo_countries: list of countries where ads are running\n"
-                "If TikTok API returns no data at all, record zero active ads with "
-                "source_quality='search_fallback' and flag confidence as Low for TikTok. "
-                "Do not halt — proceed with available signals.\n\n"
-                "For ALL platforms, also extract:\n"
-                "  - ad_start_dates: list of ISO date strings (for longevity + velocity)\n"
-                "  - geo_countries: list of countries where ads are running\n"
-                "  - new_ads_last_7d: count of ad IDs with start_date within the last 7 days "
-                "(the Creative Velocity signal)\n\n"
-                "Return all collected ad signals combined."
+                f"Scroll algorithmic feeds and query ad libraries for these brands: {brands_str}.\n\n"
+                f"PLATFORMS: {', '.join(platforms)}\n"
+                f"TARGET MARKET(S): {markets_str}\n"
+                f"{profile_map_section}"
+                f"{baselines_note}\n"
+                "STEP 1 — Call the 'Feed Scroller' tool with this exact input (baselines already "
+                "populated — do not modify):\n"
+                f"{scroller_input}\n\n"
+                "The tool scrolls the algorithmic feed and scores every visible post:\n"
+                "  - DOM-labelled (Sponsored / ad-badge) → confirmed paid (paid_signal='dom_label')\n"
+                "  - Post ER > brand baseline × 3 → likely paid (paid_signal='baseline_outlier')\n"
+                "  - All other posts → organic\n"
+                "Returns brand_paid_posts, brand_organic_posts, category_paid_posts.\n\n"
+                "STEP 2 — Call the 'Paid Ad Library Scraper' tool once per brand to query "
+                "Meta Ad Library (FB/IG), Google Ads Transparency (YouTube), and TikTok "
+                "Commercial Content Library — all filtered to the target market(s):\n"
+                f"{adlib_input_example}\n\n"
+                "IMPORTANT: Filter ad library results to the target market(s): {markets_str}. "
+                "Pass the 'markets' and 'country' fields exactly as shown — the tool uses these "
+                "to apply the correct country_code filter in each library query.\n\n"
+                "From ad library results, extract per brand:\n"
+                "  - active_ads_found, impressions_min, impressions_max\n"
+                "  - ad_start_dates (ISO strings), geo_countries, new_ads_last_7d\n"
+                "  - ad_captions (sample creative text)\n"
+                "NOTE: Meta Ad Library covers FB and IG under one advertiser — do not split.\n"
+                "TikTok EU Ad Library reach (unique user reach) is the most reliable TikTok reach "
+                "proxy. For non-EU markets this will be null — flag Low confidence for TikTok "
+                "reach bucket in those markets.\n\n"
+                "Return feed scroll results and ad library results combined."
             ),
             expected_output=(
-                "Per-brand paid ad presence signals from Meta Ad Library API, TikTok Ad Library, "
-                "or Playwright scraper fallback: active_ads_found, impressions_min/max, "
+                "Combined output: "
+                "(1) Feed Scroller — brand_paid_posts[], brand_organic_posts[], "
+                "category_paid_posts[], total_posts_scrolled, total_dom_ads, "
+                "total_baseline_outliers, baselines_applied, platforms_scrolled. "
+                "Each paid post includes paid_signal ('dom_label' or 'baseline_outlier'). "
+                "(2) Ad Library — per brand: active_ads_found, impressions_min/max, "
                 "ad_start_dates, geo_countries, new_ads_last_7d, ad_captions. "
-                "Include tiktok_ prefixed equivalents for TikTok platform. "
-                "Note which source was used: 'meta_ad_library_api', 'tiktok_api', or "
-                "'playwright_scraper'. Note whether TikTok reach data is from EU library "
-                "(reliable) or unavailable (null — Low confidence for reach bucket)."
+                "Source tagged: 'meta_ad_library', 'google_atc', or 'tiktok_ccl'. "
+                "TikTok reach flagged EU-sourced (reliable) or null (Low confidence)."
             ),
             agent=agent,
         )
@@ -463,17 +516,17 @@ class SocialTasks:
                 "+ (platform_presence×0.15) + (reach×0.15) + (engagement×0.15)\n"
                 "   Round to one decimal. Must be in [0, 100].\n\n"
                 "PAID/ORGANIC CLASSIFICATION (per post):\n"
-                "ROUTE 1 — Ad Library (primary): If a post_id or ad_id appears in the Meta Ad Library, "
-                "YouTube Ads Transparency, or TikTok Commercial Content Library result, classify as "
-                "post_classification='Paid (Confirmed)', classification_confidence='High'.\n"
-                "ROUTE 2 — Engagement baseline fallback: For posts NOT found in ad libraries:\n"
-                "  - Compute the brand's median engagement (likes+comments+shares+views) across "
-                "all posts on that platform.\n"
-                "  - If a post's engagement > 2× median OR in top 10% of brand posts: classify as "
-                "post_classification='Paid (Est.)', classification_confidence='Medium'.\n"
-                "  - Otherwise: post_classification='Organic', classification_confidence='High'.\n"
-                "Add these fields to each object in top_posts[]. "
-                "If no ad library data is available for a market (APAC), Route 2 is the live classifier.\n\n"
+                "ROUTE 1 — Upstream paid_signal (primary): Posts in brand_paid_posts[] or paid_posts[] "
+                "already carry a paid_signal field set by the scrapers:\n"
+                "  - paid_signal='dom_label' → post_classification='Paid (Confirmed)', confidence='High'\n"
+                "  - paid_signal='baseline_outlier' → post_classification='Paid (Est.)', confidence='Medium'\n"
+                "  Use these directly — do NOT re-derive classification from ad library cross-reference.\n"
+                "ROUTE 2 — Ad Library corroboration: If a post_url or ad_id also appears in the ad "
+                "library results (meta_ad_library / google_atc / tiktok_ccl), upgrade any 'Paid (Est.)' "
+                "to 'Paid (Confirmed)' and set confidence='High'.\n"
+                "ROUTE 3 — Organic default: Posts in brand_organic_posts[] with no paid_signal: "
+                "post_classification='Organic', confidence='High'.\n"
+                "Add post_classification and classification_confidence to each object in top_posts[].\n\n"
                 "CONTENT TYPE CLASSIFICATION (per post):\n"
                 "For each post in top_posts[], determine content_type:\n"
                 "  - 'brand_say': post from the brand's own account with no external person featured\n"

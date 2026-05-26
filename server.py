@@ -32,13 +32,15 @@ PORT = int(os.getenv("PORT", "8000"))
 
 # ── Shared run state ──────────────────────────────────────────────────────────
 _run_state = {
-    "running":      False,
-    "logs":         deque(maxlen=300),
-    "error":        None,
-    "agent_states": {},
-    "timed_out":    False,
-    "retry_count":  0,
-    "start_ts":     None,
+    "running":       False,
+    "logs":          deque(maxlen=300),
+    "sentinel_logs": deque(maxlen=500),   # Sentinel + gate terminal stream
+    "active_flags":  {},                   # flag_id → {phase, issue, severity, resolved}
+    "error":         None,
+    "agent_states":  {},
+    "timed_out":     False,
+    "retry_count":   0,
+    "start_ts":      None,
 }
 _state_lock  = threading.Lock()
 _stop_flag   = threading.Event()   # set to request graceful abort
@@ -102,7 +104,11 @@ def _patch_crewai_agent():
     """Monkey-patch Agent.execute_task to fire state hooks synchronously.
     C4 fix: guarded import; failure is logged but does not abort server start."""
     try:
-        from crewai.agent.core import Agent as _Agent
+        # crewai >= 1.x moved Agent; try all known paths in order
+        try:
+            from crewai import Agent as _Agent
+        except ImportError:
+            from crewai.agent.agent import Agent as _Agent
         _orig = _Agent.execute_task
 
         def _patched(self, task, context=None, tools=None):
@@ -324,6 +330,8 @@ def _run_worker(params: dict):
                           "reporter": "idle", "gate": "idle"},
         )
         _run_state["logs"].clear()
+        _run_state["sentinel_logs"] = deque(maxlen=500)
+        _run_state["active_flags"]  = {}
 
     class _Cap(io.TextIOBase):
         def write(self, s):
@@ -504,14 +512,16 @@ class Handler(BaseHTTPRequestHandler):
                 running = _run_state["running"]
                 elapsed = round(time.monotonic() - start) if start else 0
                 payload = {
-                    "running":      running,
-                    "report_ready": report_path.exists(),
-                    "error":        _run_state["error"],
-                    "logs":         list(_run_state["logs"])[-100:],
-                    "agent_states": dict(_run_state["agent_states"]),
-                    "timed_out":    _run_state["timed_out"],
-                    "retry_count":  _run_state["retry_count"],
-                    "elapsed_secs": elapsed,
+                    "running":        running,
+                    "report_ready":   report_path.exists(),
+                    "error":          _run_state["error"],
+                    "logs":           list(_run_state["logs"])[-100:],
+                    "sentinel_logs":  list(_run_state.get("sentinel_logs", []))[-200:],
+                    "active_flags":   dict(_run_state.get("active_flags", {})),
+                    "agent_states":   dict(_run_state["agent_states"]),
+                    "timed_out":      _run_state["timed_out"],
+                    "retry_count":    _run_state["retry_count"],
+                    "elapsed_secs":   elapsed,
                     "partial_report": _try_partial_report() if running else None,
                 }
             self._json(200, payload)
@@ -638,6 +648,22 @@ class Handler(BaseHTTPRequestHandler):
 
         elif p == "/stop-tunnel":
             self._json(200, _stop_tunnel())
+
+        elif p == "/sentinel-override":
+            flag_id = data.get("flag_id", "")
+            reason  = data.get("reason", "Approval Gate override via dashboard.")
+            if not flag_id:
+                self._json(400, {"error": "flag_id required"}); return
+            try:
+                from approval_gate import register_override
+                register_override(flag_id, reason)
+                with _state_lock:
+                    if flag_id in _run_state.get("active_flags", {}):
+                        _run_state["active_flags"][flag_id]["resolved"]  = True
+                        _run_state["active_flags"][flag_id]["overridden"] = True
+                self._json(200, {"status": "override_sent", "flag_id": flag_id})
+            except Exception as e:
+                self._json(500, {"error": str(e)})
 
         elif p == "/stop-analysis":
             import ctypes

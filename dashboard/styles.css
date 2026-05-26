@@ -880,6 +880,8 @@ select.form-input { cursor: pointer; }
   transition: background 0.4s;
   padding: 16px 18px 12px;
 }
+/* Gate card allows vertical scroll to accommodate sentinel flags panel */
+#acard-gate { overflow-y: auto; }
 
 /* Top accent stripe (newsletter pattern) */
 .agent-card::before {
@@ -1055,6 +1057,80 @@ select.form-input { cursor: pointer; }
 .agent-card[data-state=done]   .acard-feed { color: #3d6fa8; }
 .acard-feed::-webkit-scrollbar { width: 3px; }
 .acard-feed::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 2px; }
+
+/* ── Sentinel Flags Panel ── */
+.sentinel-flags-panel {
+  display: none;           /* hidden when empty; shown by JS when flags exist */
+  flex-direction: column;
+  gap: 6px;
+  flex-shrink: 0;          /* don't compete with acard-feed for height */
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(255,255,255,0.06);
+  max-height: 200px;
+  overflow-y: auto;
+}
+.sentinel-flags-panel::-webkit-scrollbar { width: 3px; }
+.sentinel-flags-panel::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 2px; }
+/* When flags exist the panel is shown inline-flex */
+.sentinel-flags-panel[style*="display: "]:not([style*="none"]) { display: flex; }
+.sf-flag {
+  border-radius: 6px;
+  padding: 8px 10px;
+  font-size: 11px;
+  line-height: 1.45;
+  border-left: 3px solid transparent;
+  background: rgba(255,255,255,0.04);
+}
+.sf-critical { border-left-color: #f87171; background: rgba(248,113,113,0.08); }
+.sf-warning  { border-left-color: #fbbf24; background: rgba(251,191,36,0.08); }
+.sf-info     { border-left-color: #38bdf8; background: rgba(56,189,248,0.08); }
+.sf-resolved {
+  border-left-color: #22c55e;
+  background: rgba(34,197,94,0.06);
+  opacity: 0.6;
+  pointer-events: none;
+}
+.sf-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-bottom: 4px;
+}
+.sf-sev {
+  font-weight: 700;
+  font-size: 10px;
+  letter-spacing: 0.05em;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: rgba(255,255,255,0.08);
+  color: #e2e8f0;
+}
+.sf-critical .sf-sev { background: rgba(248,113,113,0.3); color: #fca5a5; }
+.sf-warning  .sf-sev { background: rgba(251,191,36,0.3);  color: #fde68a; }
+.sf-info     .sf-sev { background: rgba(56,189,248,0.3);  color: #bae6fd; }
+.sf-brand, .sf-plat {
+  font-size: 11px;
+  color: #94a3b8;
+  font-style: italic;
+}
+.sf-issue  { color: #e2e8f0; font-weight: 600; flex: 1; font-size: 11px; }
+.sf-meta   { color: #94a3b8; margin-bottom: 3px; font-size: 11px; }
+.sf-rec    { color: #a7c4e0; margin-bottom: 5px; font-size: 11px; }
+.sf-override-btn {
+  font-size: 10px;
+  padding: 5px 10px;
+  min-height: 28px;
+  border-radius: 4px;
+  border: 1px solid #22c55e;
+  background: transparent;
+  color: #22c55e;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.sf-override-btn:hover:not(:disabled) { background: rgba(34,197,94,0.15); }
+.sf-override-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
 /* Legend dots */
 .legend-dot { width: 8px; height: 8px; border-radius: 50%; }

@@ -67,6 +67,8 @@ app.add_middleware(
 _run_state = {
     "running": False,
     "logs": deque(maxlen=200),
+    "sentinel_logs": deque(maxlen=500),
+    "active_flags": {},
     "error": None,
     "agent_states": {},  # e.g. {"scraper": "active", "analyst": "idle", ...}
     "timed_out": False,
@@ -157,12 +159,14 @@ def _run_with_logging(params: dict):
     import logging as _logging
 
     with _state_lock:
-        _run_state["running"]     = True
-        _run_state["error"]       = None
-        _run_state["timed_out"]   = False
-        _run_state["retry_count"] = 0
-        _run_state["start_ts"]    = _time.monotonic()
+        _run_state["running"]       = True
+        _run_state["error"]         = None
+        _run_state["timed_out"]     = False
+        _run_state["retry_count"]   = 0
+        _run_state["start_ts"]      = _time.monotonic()
         _run_state["logs"].clear()
+        _run_state["sentinel_logs"] = deque(maxlen=500)
+        _run_state["active_flags"]  = {}
         _run_state["agent_states"] = {
             "profile":  "idle",
             "feed":     "idle",
@@ -247,15 +251,39 @@ async def get_status():
         start = _run_state["start_ts"]
         elapsed = round(_time.monotonic() - start) if start is not None else 0
         return {
-            "running":      _run_state["running"],
-            "report_ready": report_path.exists(),
-            "error":        _run_state["error"],
-            "logs":         list(_run_state["logs"])[-80:],
-            "agent_states": dict(_run_state["agent_states"]),
-            "timed_out":    _run_state["timed_out"],
-            "retry_count":  _run_state["retry_count"],
-            "elapsed_secs": elapsed,
+            "running":       _run_state["running"],
+            "report_ready":  report_path.exists(),
+            "error":         _run_state["error"],
+            "logs":          list(_run_state["logs"])[-80:],
+            "sentinel_logs": list(_run_state.get("sentinel_logs", []))[-100:],
+            "active_flags":  dict(_run_state.get("active_flags", {})),
+            "agent_states":  dict(_run_state["agent_states"]),
+            "timed_out":     _run_state["timed_out"],
+            "retry_count":   _run_state["retry_count"],
+            "elapsed_secs":  elapsed,
         }
+
+
+class SentinelOverrideRequest(BaseModel):
+    flag_id: str
+    reason: str = "Approval Gate override via dashboard."
+
+
+@app.post("/sentinel-override")
+async def sentinel_override(req: SentinelOverrideRequest):
+    if not req.flag_id:
+        return JSONResponse(status_code=400, content={"error": "flag_id required"})
+    try:
+        from approval_gate import register_override
+        register_override(req.flag_id, req.reason)
+        with _state_lock:
+            flags = _run_state.get("active_flags", {})
+            if req.flag_id in flags:
+                flags[req.flag_id]["resolved"]   = True
+                flags[req.flag_id]["overridden"]  = True
+        return {"status": "override_sent", "flag_id": req.flag_id}
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
 
 
 @app.get("/report")
@@ -432,6 +460,36 @@ async def benchmarks_status():
         }
     except Exception as e:
         return {"updated_at": None, "age_days": None, "sources": [], "status": f"error: {e}"}
+
+
+# ── Railway-aware stubs for features only available in local server.py deploy ──
+
+_NOT_AVAILABLE = JSONResponse(
+    status_code=200,
+    content={"ok": False, "error": "Not available in Railway deploy."},
+)
+
+@app.post("/stop-analysis")
+async def stop_analysis():
+    """Stop is not available on Railway (no persistent worker thread)."""
+    return _NOT_AVAILABLE
+
+
+@app.get("/proxy-status")
+@app.post("/start-proxy")
+@app.post("/stop-proxy")
+@app.get("/tunnel-status")
+@app.post("/start-tunnel")
+@app.post("/stop-tunnel")
+async def proxy_tunnel_stub():
+    """Proxy/tunnel management is local-only. Not available on Railway."""
+    return _NOT_AVAILABLE
+
+
+@app.post("/upload-file")
+async def upload_file_stub():
+    """File upload not available on Railway deploy."""
+    return _NOT_AVAILABLE
 
 
 # Serve dashboard static files

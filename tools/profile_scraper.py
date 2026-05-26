@@ -1,15 +1,23 @@
 """
-Agent 1 — Profile Baseline Scraper.
+Agent 1 — Profile Scraper (Content + Baselines).
 
 Scrapes public brand profile pages on Instagram, Facebook, TikTok, and YouTube
-within the user-specified date scope (date_from / date_to). Produces a per-brand
-organic baseline: average likes, comments, views, and ER per post.
+within the user-specified date scope (date_from / date_to). Produces two outputs:
 
-Why this matters:
-  The 3× ER outlier detection in approval_gate.py is calibrated against category
-  benchmarks by default. With this module, it can also compare against the brand's
-  own observed organic floor — a stronger signal for detecting paid amplification
-  because it accounts for brand-specific audience quality and posting cadence.
+1. Organic post content — full post records (url, caption, metrics, publish_date)
+   for every post in scope. These are geo-unconstrained: scraped directly from the
+   public profile page, not from an algorithmic feed, so coverage is not affected
+   by the IP/geo of the scraper.
+
+2. Per-brand organic baseline — aggregated averages (avg_likes, avg_comments,
+   avg_views, avg_er_pct) derived from the same post set. Used by the approval gate's
+   3× ER outlier detection, which can compare against the brand's own observed organic
+   floor rather than only category benchmarks.
+
+Why the geo independence matters:
+  The feed scroller (Agent 2) captures what the algorithm actually serves to a
+  specific IP/geo. Profile scraping sidesteps that constraint — every post the
+  brand published is reachable via its public URL regardless of where the scraper runs.
 
 Platform access strategy:
   Instagram  — anti-detect browser (rate-limited without pre-warmed profile)
@@ -46,7 +54,14 @@ from urllib.parse import quote_plus
 logger = logging.getLogger(__name__)
 
 _SELECTORS_PATH = Path(__file__).parent / "selectors.json"
-_SELECTORS: dict = json.loads(_SELECTORS_PATH.read_text()) if _SELECTORS_PATH.exists() else {}
+if not _SELECTORS_PATH.exists():
+    raise FileNotFoundError(
+        f"[ProfileScraper] selectors.json not found at {_SELECTORS_PATH}. "
+        "Scraper cannot run — all DOM selectors would collapse to empty strings, "
+        "causing ER denominator=1 and every post to be flagged as paid. "
+        "Restore selectors.json before starting the pipeline."
+    )
+_SELECTORS: dict = json.loads(_SELECTORS_PATH.read_text())
 
 _HANDLE_SAFE    = re.compile(r"[^a-zA-Z0-9_.\-]")
 _DOMAIN_LAST_HIT: dict[str, float] = {}
@@ -143,15 +158,22 @@ def _in_scope(post_dt: Optional[datetime], date_from: Optional[str],
 
 
 def _parse_count(text: str) -> int:
-    """Parse '2.3M', '45K', '1,234' → integer."""
+    """Parse '2.3M', '45K', '1,234' → integer.
+    Normalises Unicode whitespace (thin-space, NBSP) common in SEA platform CDNs
+    before suffix matching — e.g. '2.3 M' from Thai/Indonesian TikTok renders.
+    """
     if not text:
         return 0
+    import unicodedata
+    text = unicodedata.normalize("NFKC", text)   # collapses thin-space, NBSP → ASCII
     text = text.strip().replace(",", "").upper()
     try:
         if text.endswith("M"):
             return int(float(text[:-1]) * 1_000_000)
         if text.endswith("K"):
             return int(float(text[:-1]) * 1_000)
+        if text.endswith("B"):
+            return int(float(text[:-1]) * 1_000_000_000)
         return int(float(text))
     except (ValueError, AttributeError):
         return 0
@@ -278,6 +300,18 @@ async def _scrape_instagram_profile(context, brand: str, handle: str,
                     except Exception:
                         pass
 
+                    # Paid partnership DOM label on post page
+                    paid_dom = False
+                    try:
+                        pp_el = await p.query_selector(
+                            post_sels.get("paid_partnership",
+                                          "span:has-text('Paid partnership'), span:has-text('Sponsored')")
+                        )
+                        if pp_el:
+                            paid_dom = True
+                    except Exception:
+                        pass
+
                     return {
                         "url":          post_url,
                         "publish_date": post_dt.isoformat() if post_dt else None,
@@ -285,6 +319,7 @@ async def _scrape_instagram_profile(context, brand: str, handle: str,
                         "comments":     comments,
                         "views":        views,
                         "caption":      caption[:300],
+                        "paid_dom":     paid_dom,
                     }
                 except Exception as exc:
                     logger.debug("[ProfileScraper] Instagram post fetch error %s: %s", post_url, exc)
@@ -424,6 +459,17 @@ async def _scrape_facebook_profile(context, brand: str, handle: str,
                     except Exception:
                         pass
 
+                    paid_dom = False
+                    try:
+                        sp_el = await p.query_selector(
+                            post_sels.get("sponsored_label",
+                                          "span:has-text('Sponsored'), a[aria-label='Sponsored']")
+                        )
+                        if sp_el:
+                            paid_dom = True
+                    except Exception:
+                        pass
+
                     return {
                         "url":          post_url,
                         "publish_date": post_dt.isoformat() if post_dt else None,
@@ -432,6 +478,7 @@ async def _scrape_facebook_profile(context, brand: str, handle: str,
                         "shares":       shares,
                         "views":        views,
                         "caption":      caption[:300],
+                        "paid_dom":     paid_dom,
                     }
                 except Exception as exc:
                     logger.debug("[ProfileScraper] Facebook post fetch error %s: %s", post_url, exc)
@@ -554,6 +601,7 @@ async def _scrape_tiktok_profile(context, brand: str, handle: str,
                     except Exception:
                         pass
 
+                    # TikTok profile post pages don't expose a Sponsored label — baseline scoring only
                     return {
                         "url":          post_url,
                         "publish_date": post_dt.isoformat() if post_dt else None,
@@ -563,6 +611,7 @@ async def _scrape_tiktok_profile(context, brand: str, handle: str,
                         "views":        views,
                         "saves":        saves,
                         "caption":      caption[:300],
+                        "paid_dom":     False,
                     }
                 except Exception as exc:
                     logger.debug("[ProfileScraper] TikTok post fetch error %s: %s", post_url, exc)
@@ -681,6 +730,7 @@ async def _scrape_youtube_channel(context, brand: str, handle: str,
                     "comments":     0,
                     "views":        grid_views,
                     "caption":      "",
+                    "paid_dom":     False,  # grid doesn't expose ad labels
                     "source":       "channel_grid",
                 }
 
@@ -724,6 +774,7 @@ async def _scrape_youtube_channel(context, brand: str, handle: str,
                         "comments":     comments,
                         "views":        views or grid_views,
                         "caption":      "",
+                        "paid_dom":     False,  # YouTube channel videos don't carry ad labels on page
                         "source":       "video_page",
                     }
                 except Exception as exc:
@@ -745,15 +796,26 @@ async def _scrape_youtube_channel(context, brand: str, handle: str,
 
 # ── Baseline builder ──────────────────────────────────────────────────────────
 
+_ER_PAID_MULTIPLIER = 3.0  # posts with ER > baseline × this are flagged as likely_paid
+
+
 def _build_baseline(brand: str, platform: str, handle: str, follower_count: int,
                     posts: list[dict], collection_note: str,
                     date_from: str, date_to: str) -> dict:
     """
-    Aggregate per-post data into the organic baseline profile used by the analyst
-    agent and the approval gate's outlier detection.
+    Two-phase paid detection + baseline computation:
+
+    Phase 1 — DOM filter: posts with paid_dom=True are removed from the baseline pool
+               and stored as paid_posts (paid_signal="dom_label").
+    Phase 2 — Baseline scoring: compute avg ER from the clean organic pool; re-score
+               all remaining posts. Posts exceeding baseline × _ER_PAID_MULTIPLIER are
+               moved to paid_posts (paid_signal="baseline_outlier"). What remains is
+               organic_posts.
+
+    Both organic_posts and paid_posts are returned in full — no cap.
     """
-    n = len(posts)
-    if n == 0:
+    n_total = len(posts)
+    if n_total == 0:
         return {
             "brand": brand, "platform": platform, "handle": handle,
             "follower_count": follower_count, "posts_in_scope": 0,
@@ -761,16 +823,94 @@ def _build_baseline(brand: str, platform: str, handle: str, follower_count: int,
             "avg_likes": 0, "avg_comments": 0, "avg_views": 0, "avg_shares": 0,
             "avg_er_pct": 0.0, "baseline_available": False,
             "collection_method": collection_note,
-            "posts": [],
+            "organic_posts": [], "paid_posts": [],
         }
 
-    avg_likes    = round(sum(p.get("likes", 0)    for p in posts) / n)
-    avg_comments = round(sum(p.get("comments", 0) for p in posts) / n)
-    avg_views    = round(sum(p.get("views", 0)    for p in posts) / n)
-    avg_shares   = round(sum(p.get("shares", 0)   for p in posts) / n)
-
-    # ER calculation: view-based for TikTok/YouTube, follower-based for IG/FB
     view_based = platform.lower() in ("tiktok", "youtube")
+
+    def _post_er(post: dict, denom: int) -> float:
+        interactions = post.get("likes", 0) + post.get("comments", 0) + post.get("shares", 0)
+        d = post.get("views", 0) if (view_based and post.get("views", 0) > 0) else denom
+        return round((interactions / max(d, 1)) * 100, 3)
+
+    # Phase 1: separate DOM-confirmed paid posts
+    dom_paid   = [p for p in posts if p.get("paid_dom")]
+    candidates = [p for p in posts if not p.get("paid_dom")]
+
+    # Compute baseline from DOM-clean organic pool
+    n_org = len(candidates)
+    if n_org == 0:
+        # All posts flagged by DOM — no baseline possible
+        paid_posts = [{**p, "paid_signal": "dom_label"} for p in dom_paid]
+        return {
+            "brand": brand, "platform": platform, "handle": handle,
+            "follower_count": follower_count, "posts_in_scope": n_total,
+            "date_from": date_from, "date_to": date_to,
+            "avg_likes": 0, "avg_comments": 0, "avg_views": 0, "avg_shares": 0,
+            "avg_er_pct": 0.0, "baseline_available": False,
+            "collection_method": collection_note,
+            "organic_posts": [], "paid_posts": paid_posts,
+        }
+
+    # Minimum N guard: below 12 posts the ER threshold is statistically unreliable.
+    # A single viral post dominates the trimmed mean at low N regardless of percentile.
+    _MIN_BASELINE_N = 12
+    if n_org < _MIN_BASELINE_N:
+        # Return all candidates as unclassified organic — do not attempt scoring
+        organic_posts = [{**p, "post_er_pct": None, "classification": "unclassified_low_n"}
+                         for p in candidates]
+        paid_posts    = [{**p, "paid_signal": "dom_label"} for p in dom_paid]
+        return {
+            "brand": brand, "platform": platform, "handle": handle,
+            "follower_count": follower_count, "posts_in_scope": n_total,
+            "organic_post_count": len(organic_posts), "paid_post_count": len(paid_posts),
+            "date_from": date_from, "date_to": date_to,
+            "avg_likes": 0, "avg_comments": 0, "avg_views": 0, "avg_shares": 0,
+            "avg_er_pct": 0.0, "er_denominator": "n/a",
+            "er_threshold": 0.0, "baseline_available": False,
+            "baseline_note": f"Insufficient posts ({n_org} < {_MIN_BASELINE_N}) for reliable ER baseline.",
+            "collection_method": collection_note,
+            "data_source": f"First-party DOM scrape — {platform} public profile page (geo-unconstrained)",
+            "organic_posts": organic_posts, "paid_posts": paid_posts,
+        }
+
+    def _percentile(vals: list[float], pct: float) -> float:
+        """Return the value at given percentile using linear interpolation."""
+        if not vals:
+            return 0.0
+        s = sorted(vals)
+        k = (len(s) - 1) * pct
+        lo, hi = int(k), min(int(k) + 1, len(s) - 1)
+        return s[lo] + (s[hi] - s[lo]) * (k - lo)
+
+    # Circular-baseline fix: compute baseline from the conservative organic core only
+    # (posts below the 75th percentile ER) so undeclared paid posts don't inflate
+    # the threshold that's supposed to catch them.
+    # Step 1: compute a preliminary ER denominator from all candidates
+    _raw_avg_views = sum(p.get("views", 0) for p in candidates) / n_org
+    if view_based and _raw_avg_views > 0:
+        er_denominator = round(_raw_avg_views)
+    elif follower_count > 0:
+        er_denominator = follower_count
+    else:
+        er_denominator = max(round(_raw_avg_views), 1)
+
+    # Step 2: compute per-post ER for all candidates using preliminary denominator
+    _candidate_ers = [(_post_er(p, er_denominator), p) for p in candidates]
+
+    # Step 3: use only posts below the 75th percentile ER as the baseline pool
+    # (conservative organic core — top 25% are likely viral or paid)
+    _er_p75 = _percentile([e for e, _ in _candidate_ers], 0.75)
+    _baseline_pool = [p for e, p in _candidate_ers if e <= _er_p75] or candidates
+
+    # Step 4: compute trimmed baseline metrics from the clean pool
+    _bp_n = len(_baseline_pool)
+    avg_likes    = round(sum(p.get("likes",    0) for p in _baseline_pool) / _bp_n)
+    avg_comments = round(sum(p.get("comments", 0) for p in _baseline_pool) / _bp_n)
+    avg_views    = round(sum(p.get("views",    0) for p in _baseline_pool) / _bp_n)
+    avg_shares   = round(sum(p.get("shares",   0) for p in _baseline_pool) / _bp_n)
+
+    # Recompute er_denominator from the clean pool
     if view_based and avg_views > 0:
         er_denominator = avg_views
     elif follower_count > 0:
@@ -780,13 +920,34 @@ def _build_baseline(brand: str, platform: str, handle: str, follower_count: int,
 
     avg_interactions = avg_likes + avg_comments + avg_shares
     avg_er_pct = round((avg_interactions / er_denominator) * 100, 3)
+    er_threshold = avg_er_pct * _ER_PAID_MULTIPLIER
+
+    # Phase 2: score ALL candidates against the clean-pool baseline
+    organic_posts: list[dict] = []
+    baseline_paid: list[dict] = []
+
+    for post_er, post in _candidate_ers:
+        if er_threshold > 0 and post_er >= er_threshold:
+            baseline_paid.append({**post, "paid_signal": "baseline_outlier",
+                                   "post_er_pct": post_er, "baseline_er_pct": avg_er_pct,
+                                   "threshold_multiplier": _ER_PAID_MULTIPLIER,
+                                   "detection_reason": (
+                                       f"ER {post_er:.2f}% exceeds brand organic baseline "
+                                       f"{avg_er_pct:.2f}% × {_ER_PAID_MULTIPLIER} = "
+                                       f"{er_threshold:.2f}%")})
+        else:
+            organic_posts.append({**post, "post_er_pct": post_er})
+
+    paid_posts = [{**p, "paid_signal": "dom_label"} for p in dom_paid] + baseline_paid
 
     return {
         "brand":               brand,
         "platform":            platform,
         "handle":              handle,
         "follower_count":      follower_count,
-        "posts_in_scope":      n,
+        "posts_in_scope":      n_total,
+        "organic_post_count":  len(organic_posts),
+        "paid_post_count":     len(paid_posts),
         "date_from":           date_from,
         "date_to":             date_to,
         "avg_likes":           avg_likes,
@@ -795,10 +956,12 @@ def _build_baseline(brand: str, platform: str, handle: str, follower_count: int,
         "avg_shares":          avg_shares,
         "avg_er_pct":          avg_er_pct,
         "er_denominator":      "views" if view_based else "followers",
-        "baseline_available":  True,
+        "er_threshold":        round(er_threshold, 3),
+        "baseline_available":  er_threshold > 0,
         "collection_method":   collection_note,
-        "data_source":         f"First-party DOM scrape — {platform} public profile page",
-        "posts":               posts[:20],  # include up to 20 sample posts in output
+        "data_source":         f"First-party DOM scrape — {platform} public profile page (geo-unconstrained)",
+        "organic_posts":       organic_posts,
+        "paid_posts":          paid_posts,
     }
 
 
@@ -906,12 +1069,18 @@ async def _run_profile_scrape(brands: list[dict], platforms: list[str],
 from crewai.tools import BaseTool
 
 class ProfileScraperTool(BaseTool):
-    name: str = "Profile Baseline Scraper"
+    name: str = "Profile Scraper"
     description: str = (
         "Scrapes public brand profile pages on Instagram, Facebook, TikTok, and YouTube "
-        "within the specified date scope. Returns per-brand organic baseline metrics: "
-        "average likes, comments, views, engagement rate, and follower count per post. "
-        "This baseline is used to calibrate paid signal detection. "
+        "within the specified date scope. For each brand × platform: "
+        "(1) Scrapes all posts in scope. "
+        "(2) Flags DOM-confirmed paid posts (Sponsored / Paid partnership labels). "
+        "(3) Computes organic baseline (avg_er_pct, avg_likes, avg_views) from DOM-clean posts. "
+        "(4) Re-scores remaining posts: those exceeding baseline ER × 3 are flagged as "
+        "likely_paid (baseline_outlier). "
+        "Returns organic_posts, paid_posts, and the baseline metrics per brand per platform. "
+        "Coverage is geo-unconstrained — hits public profile pages directly. "
+        "Baselines from this tool must be passed to the Feed Scroller for in-feed scoring. "
         "Input: JSON with brands (list of {name, handles{platform: handle}}), "
         "platforms, date_from, date_to, country."
     )
@@ -954,6 +1123,6 @@ class ProfileScraperTool(BaseTool):
             "date_from":     date_from,
             "date_to":       date_to,
             "country":       country,
-            "baselines":     results,
-            "total_brands":  len(results),
+            "profiles":      results,   # each entry has organic_posts, paid_posts, and baseline metrics
+            "total_profiles": len(results),
         })
