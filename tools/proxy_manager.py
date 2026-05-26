@@ -77,10 +77,9 @@ def get_proxy(market: str) -> dict | None:
 
     raw_url = os.getenv(env_var, "").strip()
     if not raw_url:
-        logger.warning(
+        logger.debug(
             "[ProxyManager] No geo proxy configured for market '%s' (%s not set). "
-            "Ad data may not reflect local inventory — scraper IP geolocation will differ "
-            "from target market. Set %s=<proxy_url> in .env to enable geo-accurate scraping.",
+            "Proceeding without proxy — set %s=<proxy_url> in .env for geo-accurate scraping.",
             code, env_var, env_var,
         )
         return None

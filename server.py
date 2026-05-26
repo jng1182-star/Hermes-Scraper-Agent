@@ -26,6 +26,12 @@ os.environ["OPENAI_BASE_URL"]         = _ollama_v1
 os.environ["CREWAI_TELEMETRY_OPT_OUT"] = "true"
 for _v in ("BASE_URL", "API_BASE", "HERMES_TUNNEL_TOKEN"):
     os.environ.pop(_v, None)
+# LiteLLM honours http_proxy/https_proxy and routes Ollama calls through them.
+# If a proxy was set by the system (VPN tools, brew services, etc.) and is not
+# running, every LLM call fails with "Connection refused". Nuke them here so
+# LiteLLM connects to Ollama directly.
+for _v in ("http_proxy", "https_proxy", "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "all_proxy"):
+    os.environ.pop(_v, None)
 
 HOST = os.getenv("HOST", "0.0.0.0")
 PORT = int(os.getenv("PORT", "8000"))

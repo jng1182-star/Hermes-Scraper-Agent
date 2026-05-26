@@ -39,9 +39,41 @@ _META_TOK = os.getenv("META_AD_LIBRARY_TOKEN", "")
 
 _HTTP_TIMEOUT = 12  # seconds
 
-# Set to True the first time Meta Ad Library returns HTTP 400 OAuthException code 10
-# (missing Ad Library permission). Avoids spamming identical failing requests.
+# Preflight: verify Meta token has ads_read permission before any agent call.
+# A single cheap /me request tells us whether the token is valid — avoids N×brands
+# HTTP 400 warnings when the token lacks ads_read.
 _META_TOK_INVALID = False
+
+def _preflight_meta_token() -> bool:
+    """Return True if token appears valid (has ads_read). Sets _META_TOK_INVALID on failure."""
+    global _META_TOK_INVALID
+    if not _META_TOK:
+        return False
+    url = f"https://graph.facebook.com/v19.0/ads_archive?access_token={_META_TOK}&search_terms=test&ad_reached_countries=US&ad_active_status=ALL&fields=id&limit=1"
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req, timeout=8, context=_SSL_CTX) as r:
+            return True
+    except urllib.error.HTTPError as e:
+        body = e.read().decode(errors="ignore")[:300]
+        try:
+            err = json.loads(body)
+            if e.code == 400 and err.get("error", {}).get("code") == 10:
+                _META_TOK_INVALID = True
+                logger.error(
+                    "[APIDataTool] Meta Ad Library token lacks 'ads_read' permission "
+                    "(OAuthException code 10). All Meta API calls disabled for this run. "
+                    "Fix: developers.facebook.com → your app → Permissions → request 'ads_read'."
+                )
+                return False
+        except Exception:
+            pass
+    except Exception:
+        pass
+    return True
+
+if _META_TOK:
+    _preflight_meta_token()
 
 
 def _get(url: str, headers: dict = None) -> dict | None:
@@ -61,7 +93,7 @@ def _get(url: str, headers: dict = None) -> dict | None:
         if e.code == 400 and "graph.facebook.com" in url:
             try:
                 err_body = json.loads(body)
-                if err_body.get("error", {}).get("code") == 10:
+                if err_body.get("error", {}).get("code") == 10 and not _META_TOK_INVALID:
                     global _META_TOK_INVALID
                     _META_TOK_INVALID = True
                     logger.error(
