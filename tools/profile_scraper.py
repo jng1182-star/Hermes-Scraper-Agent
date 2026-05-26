@@ -175,6 +175,13 @@ async def _attr(el, attr: str, fallback: str = "") -> str:
         return fallback
 
 
+async def _block_tiktok_heavy_resource(route) -> None:
+    if route.request.resource_type in {"image", "media", "font"}:
+        await route.abort()
+    else:
+        await route.continue_()
+
+
 # ── Platform scrapers ─────────────────────────────────────────────────────────
 
 async def _scrape_instagram_profile(context, brand: str, handle: str,
@@ -461,6 +468,7 @@ async def _scrape_tiktok_profile(context, brand: str, handle: str,
     post_sels    = sels.get("post_page", {})
 
     page = await context.new_page()
+    await page.route("**/*", _block_tiktok_heavy_resource)
     posts_data: list[dict] = []
     collection_note = "tiktok_profile_scrape"
     follower_count = 0
@@ -508,6 +516,7 @@ async def _scrape_tiktok_profile(context, brand: str, handle: str,
         async def _fetch_tiktok_post(post_url: str) -> Optional[dict]:
             async with sem:
                 p = await context.new_page()
+                await p.route("**/*", _block_tiktok_heavy_resource)
                 try:
                     await _rate_limit("www.tiktok.com")
                     await p.goto(post_url, timeout=_PAGE_TIMEOUT_MS, wait_until="domcontentloaded")
@@ -859,6 +868,14 @@ async def _run_profile_scrape(brands: list[dict], platforms: list[str],
 
         try:
             scrape_tasks = []
+            tiktok_sem = asyncio.Semaphore(1)
+
+            async def _scrape_tiktok_serial(brand: str, handle: str) -> dict:
+                async with tiktok_sem:
+                    return await _scrape_tiktok_profile(
+                        ctx_headless, brand, handle, date_from, date_to, scan_dt
+                    )
+
             for brand_info in brands:
                 brand   = brand_info.get("name", "")
                 handles = brand_info.get("handles", {})
@@ -875,7 +892,7 @@ async def _run_profile_scrape(brands: list[dict], platforms: list[str],
                         )
                     elif platform == "TikTok":
                         scrape_tasks.append(
-                            _scrape_tiktok_profile(ctx_headless, brand, handle, date_from, date_to, scan_dt)
+                            _scrape_tiktok_serial(brand, handle)
                         )
                     elif platform == "YouTube":
                         scrape_tasks.append(
