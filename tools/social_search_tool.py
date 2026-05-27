@@ -357,6 +357,30 @@ class SocialSearchTool(BaseTool):
 
                     platform_snippets = _filter_nsfw(_parallel_search(search_tasks), brand)
 
+                    # Iterative fallback: if full query returns nothing, retry with
+                    # progressively simpler queries before giving up on this brand×platform.
+                    if not platform_snippets:
+                        # Retry 1: brand name + platform only (drop advertiser + category label)
+                        simple_tasks: list[tuple[str, str]] = []
+                        if post_type in ("paid", "both"):
+                            simple_tasks.append((
+                                f"{brand} {platform} paid ad sponsored 2025{geo}", "paid"
+                            ))
+                        if post_type in ("organic", "both"):
+                            simple_tasks.append((
+                                f"{brand} {platform} official page followers engagement 2025{geo}", "organic"
+                            ))
+                        platform_snippets = _filter_nsfw(_parallel_search(simple_tasks), brand)
+                        if platform_snippets:
+                            print(f"[SocialSearch] Simple retry succeeded for '{brand}' on {platform}{geo}.", flush=True)
+
+                    if not platform_snippets:
+                        # Retry 2: brand name alone — widest possible net
+                        bare_tasks = [(f"{brand} {platform} social media 2025{geo}", "both")]
+                        platform_snippets = _filter_nsfw(_parallel_search(bare_tasks), brand)
+                        if platform_snippets:
+                            print(f"[SocialSearch] Bare retry succeeded for '{brand}' on {platform}{geo}.", flush=True)
+
                     for s in platform_snippets:
                         s.setdefault("market", market)
 
@@ -376,9 +400,9 @@ class SocialSearchTool(BaseTool):
                             })
                         brand_entry["posts_found"] += len(platform_snippets)
                     elif post_type in ("paid", "both"):
-                        # Category SoV fallback — fires when no brand-specific ads found
+                        # Category SoV fallback — only fires after all retries exhausted
                         print(
-                            f"[SocialSearch] No ads found for '{brand}' on {platform}{geo} — "
+                            f"[SocialSearch] No results for '{brand}' on {platform}{geo} after retries — "
                             "running category SoV fallback.",
                             flush=True,
                         )
@@ -396,7 +420,7 @@ class SocialSearchTool(BaseTool):
                                     "raw_results":       cat_snippets,
                                     "category_fallback": True,
                                     "fallback_note": (
-                                        f"No '{brand}' ads found on {platform}{geo}. "
+                                        f"No '{brand}' ads found on {platform}{geo} after retries. "
                                         f"Top-10 {industry_label} category ads returned instead."
                                     ),
                                 })
