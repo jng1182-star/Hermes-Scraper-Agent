@@ -39,7 +39,7 @@ PORT = int(os.getenv("PORT", "8000"))
 # ── Shared run state ──────────────────────────────────────────────────────────
 _run_state = {
     "running":       False,
-    "logs":          deque(maxlen=300),
+    "logs":          deque(maxlen=1000),
     "sentinel_logs": deque(maxlen=500),   # Sentinel + gate terminal stream
     "active_flags":  {},                   # flag_id → {phase, issue, severity, resolved}
     "error":         None,
@@ -339,12 +339,14 @@ def _run_worker(params: dict):
         _run_state["sentinel_logs"] = deque(maxlen=500)
         _run_state["active_flags"]  = {}
 
+    _ANSI_RE = __import__("re").compile(r"\x1b\[[0-9;]*m")
+
     class _Cap(io.TextIOBase):
         def write(self, s):
-            if s.strip():
+            clean = _ANSI_RE.sub("", s).rstrip()
+            if clean:
                 with _state_lock:
-                    _run_state["logs"].append(s.rstrip())
-                # Check stop flag on every write
+                    _run_state["logs"].append(clean)
                 if _stop_flag.is_set():
                     raise RuntimeError("Analysis stopped by user.")
             return len(s)

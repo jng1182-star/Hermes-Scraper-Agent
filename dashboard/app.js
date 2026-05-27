@@ -688,13 +688,23 @@ const _LOG_ROUTE = {
              '[sentinel flag]', '[sentinel directive]', '[gate override]'],
 };
 
+// CrewAI verbose prefixes — route to whichever agent is currently active
+const _CREWAI_PREFIXES = ['[low]', '[medium]', '[high]', '[observe]', '[plan]', '[action]',
+                          '[tool]', '[replan]', 'thought:', 'action:', 'observation:',
+                          'final answer:', '> entering', 'executing task', 'task output'];
+
 // Track last known log count per card to append only new lines
 const _cardLogState = { profile: 0, feed: 0, scraper: 0, analyst: 0, reporter: 0, gate: 0 };
 
-function _routeLogLine(line) {
+function _routeLogLine(line, agentStates) {
   const l = line.toLowerCase();
   for (const [id, keywords] of Object.entries(_LOG_ROUTE)) {
     if (keywords.some(k => l.includes(k))) return id;
+  }
+  // CrewAI verbose output — send to the currently active agent
+  if (_CREWAI_PREFIXES.some(p => l.startsWith(p) || l.includes(p))) {
+    const active = Object.entries(agentStates || {}).find(([, s]) => s === 'active');
+    if (active) return active[0];
   }
   return null;
 }
@@ -714,7 +724,7 @@ function updateAgentCards(agentStates, logs) {
     // Build per-agent line buckets from all logs
     const buckets = { profile: [], feed: [], scraper: [], analyst: [], reporter: [], gate: [] };
     logs.forEach(line => {
-      const id = _routeLogLine(line);
+      const id = _routeLogLine(line, agentStates);
       if (id) buckets[id].push(line.replace(/^\[.*?\]\s*/, '').trim());
     });
     Object.entries(buckets).forEach(([id, lines]) => {

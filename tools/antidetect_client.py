@@ -73,10 +73,8 @@ class AntidetectClient:
         self._active: dict[str, str] = {}   # market_code → profile_id
 
         if not self.provider:
-            logger.warning(
-                "[AntidetectClient] ANTIDETECT_PROVIDER not set. "
-                "Feed scraping will fall back to standard headless Playwright. "
-                "Set ANTIDETECT_PROVIDER + profile IDs in .env for full anti-detect protection."
+            logger.debug(
+                "[AntidetectClient] ANTIDETECT_PROVIDER not set — using standard headless Playwright."
             )
 
     def _profile_id(self, market: str) -> str | None:
