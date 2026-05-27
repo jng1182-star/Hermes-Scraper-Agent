@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python3 -m markitdown /Users/jefng3/Downloads/Hermes_CLevel_Briefing.pptx)",
+      "Bash(/usr/local/bin/python3 -m markitdown /Users/jefng3/Downloads/Hermes_CLevel_Briefing.pptx)",
+      "Bash(python3 -m markitdown /Users/jefng3/Desktop/Hermes_SOV_CSuite_Briefing_2026.pptx)",
+      "Bash(/opt/homebrew/bin/python3 -m markitdown /Users/jefng3/Desktop/Hermes_SOV_CSuite_Briefing_2026.pptx)",
+      "Bash(python3 -c \"import markitdown; print\\('found'\\)\")",
+      "Bash(env -i PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin python3 -m markitdown /Users/jefng3/Desktop/Hermes_SOV_CSuite_Briefing_2026.pptx)"
+    ]
+  }
+}

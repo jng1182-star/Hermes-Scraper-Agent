@@ -332,6 +332,7 @@ def run_pipeline(params: dict):
         f.write(final_json_str)
 
     print("Pipeline complete. Report saved.", flush=True)
+    _kill_ollama_runner()
     return True
 
 

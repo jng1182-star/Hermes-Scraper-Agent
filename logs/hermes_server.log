@@ -9604,3 +9604,915 @@ scope stack. Missing starting event?
 │  • Run: crewai traces enable                                                 │
 │                                                                              │
 ╰──────────────────────────────────────────────────────────────────────────────╯
+INFO:     Started server process [1929]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://127.0.0.1:8000 (Press CTRL+C to quit)
+INFO:     127.0.0.1:49492 - "GET / HTTP/1.1" 307 Temporary Redirect
+INFO:     127.0.0.1:49493 - "GET /dashboard/index.html HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49494 - "GET /dashboard/index.html HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49494 - "GET /dashboard/styles.css HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49495 - "GET /dashboard/app.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49494 - "GET /uploaded-files HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49495 - "GET /benchmarks-status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49498 - "GET /proxy-status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49499 - "GET /tunnel-status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49500 - "GET /saved-runs HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49499 - "GET /saved-runs HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49499 - "GET /status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49499 - "GET /report HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49500 - "GET /favicon.ico HTTP/1.1" 404 Not Found
+INFO:     127.0.0.1:49508 - "GET /proxy-status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49509 - "GET /tunnel-status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49510 - "POST /run-analysis HTTP/1.1" 200 OK
+Starting Analysis: Closeup vs Colgate in Philippines on YouTube, Facebook, TikTok (Last 30 days)
+[PHASE] Researcher — identifying brand social profiles.
+╭─────────────────────────── ✨ Update Available ✨ ───────────────────────────╮
+│                                                                              │
+│  A new version of CrewAI is available!                                       │
+│                                                                              │
+│  Current version: 1.14.4                                                     │
+│  Latest version:  1.14.5                                                     │
+│                                                                              │
+│  To update, run: uv sync --upgrade-package crewai                            │
+│                                                                              │
+╰──────────────────────────────────────────────────────────────────────────────╯
+
+╭───────────────────────── 🚀 Crew Execution Started ──────────────────────────╮
+│                                                                              │
+│  Crew Execution Started                                                      │
+│  Name: crew                                                                  │
+│  ID: 530de3e2-05ff-4e64-88f4-efc4ecd36dee                                    │
+│                                                                              │
+│                                                                              │
+╰──────────────────────────────────────────────────────────────────────────────╯
+
+╭────────────────────────────── 📋 Task Started ───────────────────────────────╮
+│                                                                              │
+│  Task Started                                                                │
+│  Name: You are the first agent in the pipeline. Your job is to identify the  │
+│  correct official social media profiles for each brand before any scraping   │
+│  begins.                                                                     │
+│                                                                              │
+│  TARGET BRANDS: Closeup, Colgate                                             │
+│  MARKETS: Philippines                                                        │
+│  PLATFORMS: YouTube, Facebook, TikTok                                        │
+│                                                                              │
+│  FOR EACH brand × platform × market combination:                             │
+│  1. Use the Social Media Intelligence Search tool to find the official       │
+│  page.                                                                       │
+│     Search query format: '[Advertiser] [Brand] [Platform] official page      │
+│  [Market]'                                                                   │
+│     Example: 'Unilever Axe Facebook official page Philippines'               │
+│  2. Extract the exact URL or handle from the search results.                 │
+│  3. Verify it is the brand-owned page (check bio, branding, follower         │
+│  scale).                                                                     │
+│  4. Record confidence: 'high' (exact match, verified), 'medium' (likely      │
+│  match), 'low' (uncertain — flag for scraper to validate).                   │
+│                                                                              │
+│  TOOL CALL FORMAT — pass this JSON block with your search query:             │
+│  {"my_brands": [], "comp_brands": [], "markets": ["Philippines"],            │
+│  "platforms": ["YouTube", "Facebook", "TikTok"], "industry": ""}             │
+│                                                                              │
+│  Output a structured profile map. Each entry must include:                   │
+│    brand, advertiser, market, platform, url (or handle), confidence, notes   │
+│                                                                              │
+│  This profile map will be passed directly to the Profile Scraper and Feed    │
+│  Scroller agents — they will use your URLs as their scraping targets. If     │
+│  you cannot find a profile for a combination, record url=null and explain    │
+│  why.                                                                        │
+│  ID: fd177a01-8cc5-4019-850a-43b5ab5019c3                                    │
+│                                                                              │
+│                                                                              │
+╰──────────────────────────────────────────────────────────────────────────────╯
+
+╭────────────────────────────── 🤖 Agent Started ──────────────────────────────╮
+│                                                                              │
+│  Agent: Social Data Researcher                                               │
+│                                                                              │
+│  Task: You are the first agent in the pipeline. Your job is to identify the  │
+│  correct official social media profiles for each brand before any scraping   │
+│  begins.                                                                     │
+│                                                                              │
+│  TARGET BRANDS: Closeup, Colgate                                             │
+│  MARKETS: Philippines                                                        │
+│  PLATFORMS: YouTube, Facebook, TikTok                                        │
+│                                                                              │
+│  FOR EACH brand × platform × market combination:                             │
+│  1. Use the Social Media Intelligence Search tool to find the official       │
+│  page.                                                                       │
+│     Search query format: '[Advertiser] [Brand] [Platform] official page      │
+│  [Market]'                                                                   │
+│     Example: 'Unilever Axe Facebook official page Philippines'               │
+│  2. Extract the exact URL or handle from the search results.                 │
+│  3. Verify it is the brand-owned page (check bio, branding, follower         │
+│  scale).                                                                     │
+│  4. Record confidence: 'high' (exact match, verified), 'medium' (likely      │
+│  match), 'low' (uncertain — flag for scraper to validate).                   │
+│                                                                              │
+│  TOOL CALL FORMAT — pass this JSON block with your search query:             │
+│  {"my_brands": [], "comp_brands": [], "markets": ["Philippines"],            │
+│  "platforms": ["YouTube", "Facebook", "TikTok"], "industry": ""}             │
+│                                                                              │
+│  Output a structured profile map. Each entry must include:                   │
+│    brand, advertiser, market, platform, url (or handle), confidence, notes   │
+│                                                                              │
+│  This profile map will be passed directly to the Profile Scraper and Feed    │
+│  Scroller agents — they will use your URLs as their scraping targets. If     │
+│  you cannot find a profile for a combination, record url=null and explain    │
+│  why.                                                                        │
+│                                                                              │
+╰──────────────────────────────────────────────────────────────────────────────╯
+
+INFO:     127.0.0.1:49510 - "GET /status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49510 - "GET /status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49510 - "GET /status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49510 - "GET /proxy-status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49524 - "GET /tunnel-status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49524 - "GET /status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49524 - "GET /status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49524 - "GET /status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49524 - "GET /status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49524 - "GET /status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49524 - "GET /status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49524 - "GET /status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49524 - "GET /status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49524 - "GET /proxy-status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49541 - "GET /tunnel-status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49541 - "GET /status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49541 - "GET /status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49541 - "GET /status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49543 - "GET /status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49543 - "GET /status HTTP/1.1" 200 OK
+╭─────────────────────── 🔧 Tool Execution Started (#1) ───────────────────────╮
+│                                                                              │
+│  Tool: social_media_intelligence_search                                      │
+│  Args: {'query': 'Closeup Colgate official social media profiles Facebook    │
+│  YouTube TikTok Philippines'}                                                │
+│                                                                              │
+│                                                                              │
+╰──────────────────────────────────────────────────────────────────────────────╯
+
+INFO:     127.0.0.1:49543 - "GET /status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49543 - "GET /status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49543 - "GET /proxy-status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49569 - "GET /tunnel-status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49569 - "GET /status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49569 - "GET /status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49569 - "GET /status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49569 - "GET /status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49569 - "GET /status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49569 - "GET /status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49569 - "GET /status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49569 - "GET /status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49569 - "GET /proxy-status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49579 - "GET /tunnel-status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49579 - "GET /status HTTP/1.1" 200 OK
+/Users/jefng3/.claude/projects/silicon-boardroom/builds/dashboards/i_want_to_create_a_beautiful_social_20260523_041316_677/tools/social_search_tool.py:105: RuntimeWarning: This package (`duckduckgo_search`) has been renamed to `ddgs`! Use `pip install ddgs` instead.
+  with DDGS() as ddgs:
+/Users/jefng3/.claude/projects/silicon-boardroom/builds/dashboards/i_want_to_create_a_beautiful_social_20260523_041316_677/tools/social_search_tool.py:105: RuntimeWarning: This package (`duckduckgo_search`) has been renamed to `ddgs`! Use `pip install ddgs` instead.
+  with DDGS() as ddgs:
+/Users/jefng3/.claude/projects/silicon-boardroom/builds/dashboards/i_want_to_create_a_beautiful_social_20260523_041316_677/tools/social_search_tool.py:105: RuntimeWarning: This package (`duckduckgo_search`) has been renamed to `ddgs`! Use `pip install ddgs` instead.
+  with DDGS() as ddgs:
+INFO:     127.0.0.1:49579 - "GET /status HTTP/1.1" 200 OK
+[SocialSearch] No ads found for 'Closeup Colgate official social media profiles Facebook YouTube TikTok Philippines' on YouTube — running category SoV fallback.
+/Users/jefng3/.claude/projects/silicon-boardroom/builds/dashboards/i_want_to_create_a_beautiful_social_20260523_041316_677/tools/social_search_tool.py:105: RuntimeWarning: This package (`duckduckgo_search`) has been renamed to `ddgs`! Use `pip install ddgs` instead.
+  with DDGS() as ddgs:
+/Users/jefng3/.claude/projects/silicon-boardroom/builds/dashboards/i_want_to_create_a_beautiful_social_20260523_041316_677/tools/social_search_tool.py:105: RuntimeWarning: This package (`duckduckgo_search`) has been renamed to `ddgs`! Use `pip install ddgs` instead.
+  with DDGS() as ddgs:
+/Users/jefng3/.claude/projects/silicon-boardroom/builds/dashboards/i_want_to_create_a_beautiful_social_20260523_041316_677/tools/social_search_tool.py:105: RuntimeWarning: This package (`duckduckgo_search`) has been renamed to `ddgs`! Use `pip install ddgs` instead.
+  with DDGS() as ddgs:
+/Users/jefng3/.claude/projects/silicon-boardroom/builds/dashboards/i_want_to_create_a_beautiful_social_20260523_041316_677/tools/social_search_tool.py:105: RuntimeWarning: This package (`duckduckgo_search`) has been renamed to `ddgs`! Use `pip install ddgs` instead.
+  with DDGS() as ddgs:
+/Users/jefng3/.claude/projects/silicon-boardroom/builds/dashboards/i_want_to_create_a_beautiful_social_20260523_041316_677/tools/social_search_tool.py:105: RuntimeWarning: This package (`duckduckgo_search`) has been renamed to `ddgs`! Use `pip install ddgs` instead.
+  with DDGS() as ddgs:
+[32mTool social_media_intelligence_search executed with result: {
+  "query_meta": {
+    "brands": [
+      "Closeup Colgate official social media profiles Facebook YouTube TikTok Philippines"
+    ],
+    "brand_pairs": [
+      {
+        "brand": "Closeup Colgate off...[0m
+╭────────────────────── ✅ Tool Execution Completed (#1) ──────────────────────╮
+│                                                                              │
+│  Tool Completed                                                              │
+│  Tool: social_media_intelligence_search                                      │
+│  Output: {                                                                   │
+│    "query_meta": {                                                           │
+│      "brands": [                                                             │
+│        "Closeup Colgate official social media profiles Facebook YouTube      │
+│  TikTok Philippines"                                                         │
+│      ],                                                                      │
+│      "brand_pairs": [                                                        │
+│        {                                                                     │
+│          "brand": "Closeup Colgate official social media profiles Facebook   │
+│  YouTube TikTok Philippines",                                                │
+│          "advertiser": ""                                                    │
+│        }                                                                     │
+│      ],                                                                      │
+│      "platforms": [                                                          │
+│        "YouTube",                                                            │
+│        "Facebook"                                                            │
+│      ],                                                                      │
+│      "post_type": "both",                                                    │
+│      "markets": [                                                            │
+│        ""                                                                    │
+│      ],                                                                      │
+│      "date_range": "2025",                                                   │
+│      "total_snippets_retrieved": 3                                           │
+│    },                                                                        │
+│    "brand_results": [                                                        │
+│      {                                                                       │
+│        "brand": "Closeup Colgate official social media profiles Facebook     │
+│  YouTube TikTok Philippines",                                                │
+│        "advertiser": "",                                                     │
+│        "platform_data": [                                                    │
+│          {                                                                   │
+│            "platform": "Facebook",                                           │
+│            "market": "",                                                     │
+│            "raw_results": [                                                  │
+│              {                                                               │
+│                "url": "https://en.wikipedia.org/wiki/Z",                     │
+│                "title": "Z - Wikipedia",                                     │
+│                "content": "Among non-European languages that have adopted    │
+│  the Latin alphabet, z usually stands for [z], such as in Azerbaijani,       │
+│  Igbo, \u2026",                                                              │
+│                "source_type": "organic",                                     │
+│                "market": ""                                                  │
+│              },                                                              │
+│              {                                                               │
+│                "url": "https://z.ai/",                                       │
+│                "title": "Z.ai - Free AI Chatbot & Agent powered by GLM-5.1   │
+│  & GLM-5",                                                                   │
+│                "content": "Meet Z.ai, your free AI-powered assistant. Build  │
+│  websites, create slides, analyze data, and get instant answers. Fast,       │
+│  smart, and \u2026",                                                         │
+│                "source_type": "organic",                                     │
+│                "market": ""                                                  │
+│              },                                                              │
+│              {                                                               │
+│                "url": "https://www.youtube.com/watch?v=iiXAbuuWFgk",         │
+│                "title": "The Letter Z | Alphabet A-Z | Jack Hartmann ABC     │
+│  Song",                                                                      │
+│                "content": "Aug 3, 2020 \u00b7 This Jack Hartmann's Alphabet  │
+│  A-Z series for the letter Z z. Learn about the Letter Z. Learn that Z is a  │
+│  \u2026",                                                                    │
+│                "source_type": "organic",                                     │
+│                "market": ""                                                  │
+│              }                                                               │
+│            ]                                                                 │
+│          }                                                                   │
+│        ],                                                                    │
+│        "posts_found": 3,                                                     │
+│        "industry_note": ""                                                   │
+│      }                                                                       │
+│    ]                                                                         │
+│  }                                                                           │
+│                                                                              │
+│                                                                              │
+╰──────────────────────────────────────────────────────────────────────────────╯
+
+INFO:     127.0.0.1:49579 - "GET /status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49579 - "GET /status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49579 - "GET /status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49579 - "GET /status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49579 - "GET /status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49579 - "GET /proxy-status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49593 - "GET /tunnel-status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49593 - "GET /status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49593 - "GET /status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49593 - "GET /status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49593 - "GET /status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49593 - "GET /status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49593 - "GET /status HTTP/1.1" 200 OK
+╭─────────────────────── 🔧 Tool Execution Started (#2) ───────────────────────╮
+│                                                                              │
+│  Tool: social_media_intelligence_search                                      │
+│  Args: {'query': 'Closeup Facebook official page Philippines'}               │
+│                                                                              │
+│                                                                              │
+╰──────────────────────────────────────────────────────────────────────────────╯
+
+INFO:     127.0.0.1:49593 - "GET /status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49593 - "GET /status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49593 - "GET /proxy-status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49620 - "GET /tunnel-status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49593 - "GET /status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49593 - "GET /status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49593 - "GET /status HTTP/1.1" 200 OK
+
+[WATCHDOG] No tokens for 90s — stalled. Aborting…
+
+INFO:     127.0.0.1:49593 - "GET /status HTTP/1.1" 200 OK
+[WATCHDOG] Sent SIGINT to Ollama runner PID 1962.
+INFO:     127.0.0.1:49593 - "GET /status HTTP/1.1" 200 OK
+[PaidAdLib] _run error: 
+/Users/jefng3/.claude/projects/silicon-boardroom/builds/dashboards/i_want_to_create_a_beautiful_social_20260523_041316_677/tools/social_search_tool.py:105: RuntimeWarning: This package (`duckduckgo_search`) has been renamed to `ddgs`! Use `pip install ddgs` instead.
+  with DDGS() as ddgs:
+/Users/jefng3/.claude/projects/silicon-boardroom/builds/dashboards/i_want_to_create_a_beautiful_social_20260523_041316_677/tools/social_search_tool.py:105: RuntimeWarning: This package (`duckduckgo_search`) has been renamed to `ddgs`! Use `pip install ddgs` instead.
+  with DDGS() as ddgs:
+/Users/jefng3/.claude/projects/silicon-boardroom/builds/dashboards/i_want_to_create_a_beautiful_social_20260523_041316_677/tools/social_search_tool.py:105: RuntimeWarning: This package (`duckduckgo_search`) has been renamed to `ddgs`! Use `pip install ddgs` instead.
+  with DDGS() as ddgs:
+INFO:     127.0.0.1:49593 - "GET /status HTTP/1.1" 200 OK
+[SocialSearch] No ads found for 'Closeup Facebook official page Philippines' on YouTube — running category SoV fallback.
+/Users/jefng3/.claude/projects/silicon-boardroom/builds/dashboards/i_want_to_create_a_beautiful_social_20260523_041316_677/tools/social_search_tool.py:105: RuntimeWarning: This package (`duckduckgo_search`) has been renamed to `ddgs`! Use `pip install ddgs` instead.
+  with DDGS() as ddgs:
+/Users/jefng3/.claude/projects/silicon-boardroom/builds/dashboards/i_want_to_create_a_beautiful_social_20260523_041316_677/tools/social_search_tool.py:105: RuntimeWarning: This package (`duckduckgo_search`) has been renamed to `ddgs`! Use `pip install ddgs` instead.
+  with DDGS() as ddgs:
+/Users/jefng3/.claude/projects/silicon-boardroom/builds/dashboards/i_want_to_create_a_beautiful_social_20260523_041316_677/tools/social_search_tool.py:105: RuntimeWarning: This package (`duckduckgo_search`) has been renamed to `ddgs`! Use `pip install ddgs` instead.
+  with DDGS() as ddgs:
+/Users/jefng3/.claude/projects/silicon-boardroom/builds/dashboards/i_want_to_create_a_beautiful_social_20260523_041316_677/tools/social_search_tool.py:105: RuntimeWarning: This package (`duckduckgo_search`) has been renamed to `ddgs`! Use `pip install ddgs` instead.
+  with DDGS() as ddgs:
+[SocialSearch] No ads found for 'Closeup Facebook official page Philippines' on Facebook — running category SoV fallback.
+/Users/jefng3/.claude/projects/silicon-boardroom/builds/dashboards/i_want_to_create_a_beautiful_social_20260523_041316_677/tools/social_search_tool.py:105: RuntimeWarning: This package (`duckduckgo_search`) has been renamed to `ddgs`! Use `pip install ddgs` instead.
+  with DDGS() as ddgs:
+/Users/jefng3/.claude/projects/silicon-boardroom/builds/dashboards/i_want_to_create_a_beautiful_social_20260523_041316_677/tools/social_search_tool.py:105: RuntimeWarning: This package (`duckduckgo_search`) has been renamed to `ddgs`! Use `pip install ddgs` instead.
+  with DDGS() as ddgs:
+INFO:     127.0.0.1:49593 - "GET /status HTTP/1.1" 200 OK
+[32mTool social_media_intelligence_search executed with result: {"fallback": true, "fallback_reason": "All live searches returned zero results \u2014 serving cached seed data.", "query_meta": {"brands": ["Closeup Facebook official page Philippines"], "platforms": ...[0m
+╭────────────────────── ✅ Tool Execution Completed (#2) ──────────────────────╮
+│                                                                              │
+│  Tool Completed                                                              │
+│  Tool: social_media_intelligence_search                                      │
+│  Output: {"fallback": true, "fallback_reason": "All live searches returned   │
+│  zero results \u2014 serving cached seed data.", "query_meta": {"brands":    │
+│  ["Closeup Facebook official page Philippines"], "platforms": ["YouTube",    │
+│  "Facebook"], "post_type": "both", "markets": [""]}, "results":              │
+│  {"competitors": [{"name": "Global Brand A", "handle": "@globalbrand_a",     │
+│  "platform": "TikTok", "metrics": {"likes": 124500, "comments": 4520,        │
+│  "shares": 8900, "views": 1500000}, "sentiment": "Positive", "top_posts":    │
+│  ["Summer athlete collab ft. sponsored runner \u2014 2.1M views, #SummerRun  │
+│  campaign", "Behind-the-scenes factory tour \u2014 890K views, strong        │
+│  audience Q&A engagement", "User-generated challenge #WearIt \u2014 45K UGC  │
+│  reposts in 7 days"], "hashtags": ["#SummerRun", "#WearIt",                  │
+│  "#GlobalBrandA", "#AthleteLife", "#NewDrop"], "content_themes": ["Athlete   │
+│  endorsement", "User-generated challenges", "Behind-the-scenes", "Product    │
+│  launches"]}, {"name": "Competitor B", "handle": "@competitor_b",            │
+│  "platform": "Instagram", "metrics": {"likes": 82000, "comments": 1200,      │
+│  "shares": 3400, "views": 950000}, "sentiment": "Neutral", "top_posts":      │
+│  ["Spring/Summer lookbook carousel \u2014 78K likes, mixed comments on       │
+│  pricing", "Collab announcement with influencer @style_x \u2014 strong       │
+│  initial buzz, engagement dropped off"], "hashtags": ["#CompetitorB",        │
+│  "#SpringStyle", "#OOTD", "#FashionWeek"], "content_themes": ["Seasonal      │
+│  lookbooks", "Influencer collaborations", "Fashion editorial"]}, {"name":    │
+│  "Challenger C", "handle": "@challenger_c", "platform": "TikTok",            │
+│  "metrics": {"likes": 54000, "comments": 880, "shares": 2100, "views":       │
+│  720000}, "sentiment": "Negative", "top_posts": ["Product recall response    │
+│  video \u2014 320K views, majority negative comments", "Discount campaign    │
+│  post \u2014 low engagement relative to follower count"], "hashtags":        │
+│  ["#ChallengerC", "#Sale", "#Discount"], "content_themes": ["Crisis          │
+│  response", "Price promotions", "Product announcements"]}, {"name": "Rising  │
+│  Brand D", "handle": "@rising_d", "platform": "YouTube", "metrics":          │
+│  {"likes": 189000, "comments": 7200, "shares": 13400, "views": 3100000},     │
+│  "sentiment": "Positive", "top_posts": ["30-day challenge documentary        │
+│  \u2014 3.1M views, 7.2K comments, overwhelmingly positive",                 │
+│  "Sustainability story: zero-waste manufacturing \u2014 1.4M views, viral    │
+│  on LinkedIn cross-post", "Limited drop announcement with countdown \u2014   │
+│  sold out in 4 hours, 890K views pre-launch"], "hashtags": ["#RisingD",      │
+│  "#30DayChallenge", "#SustainableFashion", "#LimitedDrop", "#ZeroWaste",     │
+│  "#NewEra"], "content_themes": ["Documentary storytelling",                  │
+│  "Sustainability", "Limited drops / scarcity", "Community challenges"]}]}}   │
+│                                                                              │
+│                                                                              │
+╰──────────────────────────────────────────────────────────────────────────────╯
+
+INFO:     127.0.0.1:49593 - "GET /proxy-status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49644 - "GET /tunnel-status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49644 - "GET /status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49644 - "GET /status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49644 - "GET /status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49644 - "GET /status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49644 - "GET /status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49644 - "GET /status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49644 - "GET /status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49644 - "GET /status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49644 - "GET /proxy-status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49652 - "GET /tunnel-status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49644 - "GET /status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49644 - "GET /status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49644 - "GET /status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49644 - "GET /status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49644 - "GET /status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49644 - "GET /status HTTP/1.1" 200 OK
+╭─────────────────────── 🔧 Tool Execution Started (#3) ───────────────────────╮
+│                                                                              │
+│  Tool: social_media_intelligence_search                                      │
+│  Args: {'query': 'Colgate Facebook official page Philippines'}               │
+│                                                                              │
+│                                                                              │
+╰──────────────────────────────────────────────────────────────────────────────╯
+
+INFO:     127.0.0.1:49644 - "GET /status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49644 - "GET /proxy-status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49676 - "GET /tunnel-status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49676 - "GET /status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49676 - "GET /status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49676 - "GET /status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49676 - "GET /status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49676 - "GET /status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49676 - "GET /status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49676 - "GET /status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49676 - "GET /status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49676 - "GET /proxy-status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49683 - "GET /tunnel-status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49683 - "GET /status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49683 - "GET /status HTTP/1.1" 200 OK
+/Users/jefng3/.claude/projects/silicon-boardroom/builds/dashboards/i_want_to_create_a_beautiful_social_20260523_041316_677/tools/social_search_tool.py:105: RuntimeWarning: This package (`duckduckgo_search`) has been renamed to `ddgs`! Use `pip install ddgs` instead.
+  with DDGS() as ddgs:
+/Users/jefng3/.claude/projects/silicon-boardroom/builds/dashboards/i_want_to_create_a_beautiful_social_20260523_041316_677/tools/social_search_tool.py:105: RuntimeWarning: This package (`duckduckgo_search`) has been renamed to `ddgs`! Use `pip install ddgs` instead.
+  with DDGS() as ddgs:
+/Users/jefng3/.claude/projects/silicon-boardroom/builds/dashboards/i_want_to_create_a_beautiful_social_20260523_041316_677/tools/social_search_tool.py:105: RuntimeWarning: This package (`duckduckgo_search`) has been renamed to `ddgs`! Use `pip install ddgs` instead.
+  with DDGS() as ddgs:
+[SocialSearch] No ads found for 'Colgate Facebook official page Philippines' on YouTube — running category SoV fallback.
+/Users/jefng3/.claude/projects/silicon-boardroom/builds/dashboards/i_want_to_create_a_beautiful_social_20260523_041316_677/tools/social_search_tool.py:105: RuntimeWarning: This package (`duckduckgo_search`) has been renamed to `ddgs`! Use `pip install ddgs` instead.
+  with DDGS() as ddgs:
+/Users/jefng3/.claude/projects/silicon-boardroom/builds/dashboards/i_want_to_create_a_beautiful_social_20260523_041316_677/tools/social_search_tool.py:105: RuntimeWarning: This package (`duckduckgo_search`) has been renamed to `ddgs`! Use `pip install ddgs` instead.
+  with DDGS() as ddgs:
+/Users/jefng3/.claude/projects/silicon-boardroom/builds/dashboards/i_want_to_create_a_beautiful_social_20260523_041316_677/tools/social_search_tool.py:105: RuntimeWarning: This package (`duckduckgo_search`) has been renamed to `ddgs`! Use `pip install ddgs` instead.
+  with DDGS() as ddgs:
+/Users/jefng3/.claude/projects/silicon-boardroom/builds/dashboards/i_want_to_create_a_beautiful_social_20260523_041316_677/tools/social_search_tool.py:105: RuntimeWarning: This package (`duckduckgo_search`) has been renamed to `ddgs`! Use `pip install ddgs` instead.
+  with DDGS() as ddgs:
+[SocialSearch] No ads found for 'Colgate Facebook official page Philippines' on Facebook — running category SoV fallback.
+/Users/jefng3/.claude/projects/silicon-boardroom/builds/dashboards/i_want_to_create_a_beautiful_social_20260523_041316_677/tools/social_search_tool.py:105: RuntimeWarning: This package (`duckduckgo_search`) has been renamed to `ddgs`! Use `pip install ddgs` instead.
+  with DDGS() as ddgs:
+/Users/jefng3/.claude/projects/silicon-boardroom/builds/dashboards/i_want_to_create_a_beautiful_social_20260523_041316_677/tools/social_search_tool.py:105: RuntimeWarning: This package (`duckduckgo_search`) has been renamed to `ddgs`! Use `pip install ddgs` instead.
+  with DDGS() as ddgs:
+[32mTool social_media_intelligence_search executed with result: {
+  "query_meta": {
+    "brands": [
+      "Colgate Facebook official page Philippines"
+    ],
+    "brand_pairs": [
+      {
+        "brand": "Colgate Facebook official page Philippines",
+        "adver...[0m
+╭────────────────────── ✅ Tool Execution Completed (#3) ──────────────────────╮
+│                                                                              │
+│  Tool Completed                                                              │
+│  Tool: social_media_intelligence_search                                      │
+│  Output: {                                                                   │
+│    "query_meta": {                                                           │
+│      "brands": [                                                             │
+│        "Colgate Facebook official page Philippines"                          │
+│      ],                                                                      │
+│      "brand_pairs": [                                                        │
+│        {                                                                     │
+│          "brand": "Colgate Facebook official page Philippines",              │
+│          "advertiser": ""                                                    │
+│        }                                                                     │
+│      ],                                                                      │
+│      "platforms": [                                                          │
+│        "YouTube",                                                            │
+│        "Facebook"                                                            │
+│      ],                                                                      │
+│      "post_type": "both",                                                    │
+│      "markets": [                                                            │
+│        ""                                                                    │
+│      ],                                                                      │
+│      "date_range": "2025",                                                   │
+│      "total_snippets_retrieved": 1                                           │
+│    },                                                                        │
+│    "brand_results": [                                                        │
+│      {                                                                       │
+│        "brand": "Colgate Facebook official page Philippines",                │
+│        "advertiser": "",                                                     │
+│        "platform_data": [                                                    │
+│          {                                                                   │
+│            "platform": "Facebook",                                           │
+│            "raw_results": [                                                  │
+│              {                                                               │
+│                "url":                                                        │
+│  "https://www.facebook.com/ads/library/?active_status=all&ad_type=all&count  │
+│  ry=ALL&q=Colgate+Facebook+official+page+Philippines&search_type=keyword_un  │
+│  ordered",                                                                   │
+│                "title": "Colgate Facebook official page Philippines \u2014   │
+│  Meta Ad Library",                                                           │
+│                "content": "Sorry, we're having trouble with playing this     │
+│  video. Learn more",                                                         │
+│                "source_type": "paid"                                         │
+│              }                                                               │
+│            ],                                                                │
+│            "market": ""                                                      │
+│          }                                                                   │
+│        ],                                                                    │
+│        "posts_found": 1,                                                     │
+│        "industry_note": ""                                                   │
+│      }                                                                       │
+│    ]                                                                         │
+│  }                                                                           │
+│                                                                              │
+│                                                                              │
+╰──────────────────────────────────────────────────────────────────────────────╯
+
+INFO:     127.0.0.1:49683 - "GET /status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49683 - "GET /status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49683 - "GET /status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49683 - "GET /status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49683 - "GET /status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49683 - "GET /proxy-status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49699 - "GET /tunnel-status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49699 - "GET /status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49699 - "GET /status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49699 - "GET /status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49699 - "GET /status HTTP/1.1" 200 OK
+╭─────────────────────── 🔧 Tool Execution Started (#4) ───────────────────────╮
+│                                                                              │
+│  Tool: social_media_intelligence_search                                      │
+│  Args: {'query': 'Closeup YouTube official page Philippines'}                │
+│                                                                              │
+│                                                                              │
+╰──────────────────────────────────────────────────────────────────────────────╯
+
+INFO:     127.0.0.1:49699 - "GET /status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49699 - "GET /status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49699 - "GET /status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49699 - "GET /status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49699 - "GET /proxy-status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49727 - "GET /tunnel-status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49727 - "GET /status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49727 - "GET /status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49727 - "GET /status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49727 - "GET /status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49727 - "GET /status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49727 - "GET /status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49727 - "GET /status HTTP/1.1" 200 OK
+/Users/jefng3/.claude/projects/silicon-boardroom/builds/dashboards/i_want_to_create_a_beautiful_social_20260523_041316_677/tools/social_search_tool.py:105: RuntimeWarning: This package (`duckduckgo_search`) has been renamed to `ddgs`! Use `pip install ddgs` instead.
+  with DDGS() as ddgs:
+/Users/jefng3/.claude/projects/silicon-boardroom/builds/dashboards/i_want_to_create_a_beautiful_social_20260523_041316_677/tools/social_search_tool.py:105: RuntimeWarning: This package (`duckduckgo_search`) has been renamed to `ddgs`! Use `pip install ddgs` instead.
+  with DDGS() as ddgs:
+/Users/jefng3/.claude/projects/silicon-boardroom/builds/dashboards/i_want_to_create_a_beautiful_social_20260523_041316_677/tools/social_search_tool.py:105: RuntimeWarning: This package (`duckduckgo_search`) has been renamed to `ddgs`! Use `pip install ddgs` instead.
+  with DDGS() as ddgs:
+[SocialSearch] No ads found for 'Closeup YouTube official page Philippines' on YouTube — running category SoV fallback.
+/Users/jefng3/.claude/projects/silicon-boardroom/builds/dashboards/i_want_to_create_a_beautiful_social_20260523_041316_677/tools/social_search_tool.py:105: RuntimeWarning: This package (`duckduckgo_search`) has been renamed to `ddgs`! Use `pip install ddgs` instead.
+  with DDGS() as ddgs:
+/Users/jefng3/.claude/projects/silicon-boardroom/builds/dashboards/i_want_to_create_a_beautiful_social_20260523_041316_677/tools/social_search_tool.py:105: RuntimeWarning: This package (`duckduckgo_search`) has been renamed to `ddgs`! Use `pip install ddgs` instead.
+  with DDGS() as ddgs:
+/Users/jefng3/.claude/projects/silicon-boardroom/builds/dashboards/i_want_to_create_a_beautiful_social_20260523_041316_677/tools/social_search_tool.py:105: RuntimeWarning: This package (`duckduckgo_search`) has been renamed to `ddgs`! Use `pip install ddgs` instead.
+  with DDGS() as ddgs:
+/Users/jefng3/.claude/projects/silicon-boardroom/builds/dashboards/i_want_to_create_a_beautiful_social_20260523_041316_677/tools/social_search_tool.py:105: RuntimeWarning: This package (`duckduckgo_search`) has been renamed to `ddgs`! Use `pip install ddgs` instead.
+  with DDGS() as ddgs:
+/Users/jefng3/.claude/projects/silicon-boardroom/builds/dashboards/i_want_to_create_a_beautiful_social_20260523_041316_677/tools/social_search_tool.py:105: RuntimeWarning: This package (`duckduckgo_search`) has been renamed to `ddgs`! Use `pip install ddgs` instead.
+  with DDGS() as ddgs:
+INFO:     127.0.0.1:49727 - "GET /proxy-status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49741 - "GET /tunnel-status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49741 - "GET /status HTTP/1.1" 200 OK
+[32mTool social_media_intelligence_search executed with result: {
+  "query_meta": {
+    "brands": [
+      "Closeup YouTube official page Philippines"
+    ],
+    "brand_pairs": [
+      {
+        "brand": "Closeup YouTube official page Philippines",
+        "adverti...[0m
+╭────────────────────── ✅ Tool Execution Completed (#4) ──────────────────────╮
+│                                                                              │
+│  Tool Completed                                                              │
+│  Tool: social_media_intelligence_search                                      │
+│  Output: {                                                                   │
+│    "query_meta": {                                                           │
+│      "brands": [                                                             │
+│        "Closeup YouTube official page Philippines"                           │
+│      ],                                                                      │
+│      "brand_pairs": [                                                        │
+│        {                                                                     │
+│          "brand": "Closeup YouTube official page Philippines",               │
+│          "advertiser": ""                                                    │
+│        }                                                                     │
+│      ],                                                                      │
+│      "platforms": [                                                          │
+│        "YouTube",                                                            │
+│        "Facebook"                                                            │
+│      ],                                                                      │
+│      "post_type": "both",                                                    │
+│      "markets": [                                                            │
+│        ""                                                                    │
+│      ],                                                                      │
+│      "date_range": "2025",                                                   │
+│      "total_snippets_retrieved": 13                                          │
+│    },                                                                        │
+│    "brand_results": [                                                        │
+│      {                                                                       │
+│        "brand": "Closeup YouTube official page Philippines",                 │
+│        "advertiser": "",                                                     │
+│        "platform_data": [                                                    │
+│          {                                                                   │
+│            "platform": "Facebook",                                           │
+│            "raw_results": [                                                  │
+│              {                                                               │
+│                "url":                                                        │
+│  "https://www.facebook.com/ads/library/?active_status=all&ad_type=all&count  │
+│  ry=ALL&q=Closeup+YouTube+official+page+Philippines&search_type=keyword_uno  │
+│  rdered",                                                                    │
+│                "title": "Closeup YouTube official page Philippines \u2014    │
+│  Meta Ad Library",                                                           │
+│                "content": "Sorry, we're having trouble with playing this     │
+│  video. Learn more",                                                         │
+│                "source_type": "paid"                                         │
+│              },                                                              │
+│              {                                                               │
+│                "url":                                                        │
+│  "https://www.facebook.com/ads/library/?active_status=all&ad_type=all&count  │
+│  ry=ALL&q=Closeup+YouTube+official+page+Philippines&search_type=keyword_uno  │
+│  rdered",                                                                    │
+│                "title": "Closeup YouTube official page Philippines \u2014    │
+│  Meta Ad Library",                                                           │
+│                "content": "Sorry, we're having trouble with playing this     │
+│  video. Learn more",                                                         │
+│                "source_type": "paid"                                         │
+│              },                                                              │
+│              {                                                               │
+│                "url":                                                        │
+│  "https://www.facebook.com/ads/library/?active_status=all&ad_type=all&count  │
+│  ry=ALL&q=Closeup+YouTube+official+page+Philippines&search_type=keyword_uno  │
+│  rdered",                                                                    │
+│                "title": "Closeup YouTube official page Philippines \u2014    │
+│  Meta Ad Library",                                                           │
+│                "content": "Sorry, we're having trouble with playing this     │
+│  video. Learn more",                                                         │
+│                "source_type": "paid"                                         │
+│              },                                                              │
+│              {                                                               │
+│                "url":                                                        │
+│  "https://www.facebook.com/ads/library/?active_status=all&ad_type=all&count  │
+│  ry=ALL&q=Closeup+YouTube+official+page+Philippines&search_type=keyword_uno  │
+│  rdered",                                                                    │
+│                "title": "Closeup YouTube official page Philippines \u2014    │
+│  Meta Ad Library",                                                           │
+│                "content": "Sorry, we're having trouble with playing this     │
+│  video. Learn more",                                                         │
+│                "source_type": "paid"                                         │
+│              },                                                              │
+│              {                                                               │
+│                "url":                                                        │
+│  "https://www.facebook.com/ads/library/?active_status=all&ad_type=all&count  │
+│  ry=ALL&q=Closeup+YouTube+official+page+Philippines&search_type=keyword_uno  │
+│  rdered",                                                                    │
+│                "title": "Closeup YouTube official page Philippines \u2014    │
+│  Meta Ad Library",                                                           │
+│                "content": "Sorry, we're having trouble with playing this     │
+│  video. Learn more",                                                         │
+│                "source_type": "paid"                                         │
+│              },                                                              │
+│              {                                                               │
+│                "url":                                                        │
+│  "https://www.facebook.com/ads/library/?active_status=all&ad_type=all&count  │
+│  ry=ALL&q=Closeup+YouTube+official+page+Philippines&search_type=keyword_uno  │
+│  rdered",                                                                    │
+│                "title": "Closeup YouTube official page Philippines \u2014    │
+│  Meta Ad Library",                                                           │
+│                "content": "Sorry, we're having trouble with playing this     │
+│  video. Learn more",                                                         │
+│                "source_type": "paid"                                         │
+│              },                                                              │
+│              {                                                               │
+│                "url":                                                        │
+│  "https://www.facebook.com/ads/library/?active_status=all&ad_type=all&count  │
+│  ry=ALL&q=Closeup+YouTube+official+page+Philippines&search_type=keyword_uno  │
+│  rdered",                                                                    │
+│                "title": "Closeup YouTube official page Philippines \u2014    │
+│  Meta Ad Library",                                                           │
+│                "content": "Sorry, we're having trouble with playing this     │
+│  video. Learn more",                                                         │
+│                "source_type": "paid"                                         │
+│              },                                                              │
+│              {                                                               │
+│                "url":                                                        │
+│  "https://www.facebook.com/ads/library/?active_status=all&ad_type=all&count  │
+│  ry=ALL&q=Closeup+YouTube+official+page+Philippines&search_type=keyword_uno  │
+│  rdered",                                                                    │
+│                "title": "Closeup YouTube official page Philippines \u2014    │
+│  Meta Ad Library",                                                           │
+│                "content": "Sorry, we're having trouble with playing this     │
+│  video. Learn more",                                                         │
+│                "source_type": "paid"                                         │
+│              },                                                              │
+│              {                                                               │
+│                "url":                                                        │
+│  "https://www.facebook.com/ads/library/?active_status=all&ad_type=all&count  │
+│  ry=ALL&q=Closeup+YouTube+official+page+Philippines&search_type=keyword_uno  │
+│  rdered",                                                                    │
+│                "title": "Closeup YouTube official page Philippines \u2014    │
+│  Meta Ad Library",                                                           │
+│                "content": "Sorry, we're having trouble with playing this     │
+│  video. Learn more",                                                         │
+│                "source_type": "paid"                                         │
+│              },                                                              │
+│              {                                                               │
+│                "url":                                                        │
+│  "https://www.facebook.com/ads/library/?active_status=all&ad_type=all&count  │
+│  ry=ALL&q=Closeup+YouTube+official+page+Philippines&search_type=keyword_uno  │
+│  rdered",                                                                    │
+│                "title": "Closeup YouTube official page Philippines \u2014    │
+│  Meta Ad Library",                                                           │
+│                "content": "Sorry, we're having trouble with playing this     │
+│  video. Learn more",                                                         │
+│                "source_type": "paid"                                         │
+│              },                                                              │
+│              {                                                               │
+│                "url": "https://www.youtube.com/watch?v=SE7M_gfgYpM",         │
+│                "title": "SHOLAWAT JIBRIL - SHOLAWAT NABI Sholawat Penarik    │
+│  Rezeki de\u2026",                                                           │
+│                "content": "SHOLAWAT JIBRIL - SHOLAWAT NABI Sholawat          │
+│  \u2026",                                                                    │
+│                "source_type": "paid",                                        │
+│                "market": ""                                                  │
+│              },                                                              │
+│              {                                                               │
+│                "url":                                                        │
+│  "https://www.belajarhijrah.com/sholawat-jibril-rahasia-pelunas-hutang-dan-  │
+│  mendapatkan-ampunan-dosa/",                                                 │
+│                "title": "Sholawat Jibril: Rahasia Pelunas Hutang dan         │
+│  Mendapatkan Ampu\u2026",                                                    │
+│                "content": "Apr 27, 2026 \u00b7 Sholawat Jibril adalah salah  │
+│  satu jenis \u2026",                                                         │
+│                "source_type": "paid",                                        │
+│                "market": ""                                                  │
+│              },                                                              │
+│              {                                                               │
+│                "url":                                                        │
+│  "https://www.kuwaluhan.com/2020/10/amalan-sholawat-jibril-untuk-pelunas-hu  │
+│  tang-dan-kaya-raya.html",                                                   │
+│                "title": "Amalan Sholawat Jibril Untuk Pelunas Hutang Dan     │
+│  Menjadi Kaya",                                                              │
+│                "content": "Oct 14, 2020 \u00b7 Islam sudah mengajarkan cara  │
+│  mudah \u2026",                                                              │
+│                "source_type": "paid",                                        │
+│                "market": ""                                                  │
+│              }                                                               │
+│            ],                                                                │
+│            "market": ""                                                      │
+│          }                                                                   │
+│        ],                                                                    │
+│        "posts_found": 13,                                                    │
+│        "industry_note": ""                                                   │
+│      }                                                                       │
+│    ]                                                                         │
+│  }                                                                           │
+│                                                                              │
+│                                                                              │
+╰──────────────────────────────────────────────────────────────────────────────╯
+
+INFO:     127.0.0.1:49741 - "GET /status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49741 - "GET /status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49741 - "GET /status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49741 - "GET /status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49741 - "GET /status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49741 - "GET /status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49741 - "GET /status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49741 - "GET /proxy-status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49750 - "GET /tunnel-status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49750 - "GET /status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49750 - "GET /status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49750 - "GET /status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49750 - "GET /status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49750 - "GET /status HTTP/1.1" 200 OK
+╭─────────────────────── 🔧 Tool Execution Started (#5) ───────────────────────╮
+│                                                                              │
+│  Tool: social_media_intelligence_search                                      │
+│  Args: {'query': 'Closeup TikTok official page Philippines'}                 │
+│                                                                              │
+│                                                                              │
+╰──────────────────────────────────────────────────────────────────────────────╯
+
+INFO:     127.0.0.1:49750 - "GET /status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49750 - "GET /status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49750 - "GET /proxy-status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49773 - "GET /tunnel-status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49773 - "GET /status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49773 - "GET /status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49773 - "GET /status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49773 - "GET /status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49773 - "GET /status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49773 - "GET /status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49773 - "GET /status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49773 - "GET /status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49773 - "GET /proxy-status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49783 - "GET /tunnel-status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49783 - "GET /status HTTP/1.1" 200 OK
+/Users/jefng3/.claude/projects/silicon-boardroom/builds/dashboards/i_want_to_create_a_beautiful_social_20260523_041316_677/tools/social_search_tool.py:105: RuntimeWarning: This package (`duckduckgo_search`) has been renamed to `ddgs`! Use `pip install ddgs` instead.
+  with DDGS() as ddgs:
+/Users/jefng3/.claude/projects/silicon-boardroom/builds/dashboards/i_want_to_create_a_beautiful_social_20260523_041316_677/tools/social_search_tool.py:105: RuntimeWarning: This package (`duckduckgo_search`) has been renamed to `ddgs`! Use `pip install ddgs` instead.
+  with DDGS() as ddgs:
+/Users/jefng3/.claude/projects/silicon-boardroom/builds/dashboards/i_want_to_create_a_beautiful_social_20260523_041316_677/tools/social_search_tool.py:105: RuntimeWarning: This package (`duckduckgo_search`) has been renamed to `ddgs`! Use `pip install ddgs` instead.
+  with DDGS() as ddgs:
+[SocialSearch] No ads found for 'Closeup TikTok official page Philippines' on YouTube — running category SoV fallback.
+/Users/jefng3/.claude/projects/silicon-boardroom/builds/dashboards/i_want_to_create_a_beautiful_social_20260523_041316_677/tools/social_search_tool.py:105: RuntimeWarning: This package (`duckduckgo_search`) has been renamed to `ddgs`! Use `pip install ddgs` instead.
+  with DDGS() as ddgs:
+/Users/jefng3/.claude/projects/silicon-boardroom/builds/dashboards/i_want_to_create_a_beautiful_social_20260523_041316_677/tools/social_search_tool.py:105: RuntimeWarning: This package (`duckduckgo_search`) has been renamed to `ddgs`! Use `pip install ddgs` instead.
+  with DDGS() as ddgs:
+/Users/jefng3/.claude/projects/silicon-boardroom/builds/dashboards/i_want_to_create_a_beautiful_social_20260523_041316_677/tools/social_search_tool.py:105: RuntimeWarning: This package (`duckduckgo_search`) has been renamed to `ddgs`! Use `pip install ddgs` instead.
+  with DDGS() as ddgs:
+/Users/jefng3/.claude/projects/silicon-boardroom/builds/dashboards/i_want_to_create_a_beautiful_social_20260523_041316_677/tools/social_search_tool.py:105: RuntimeWarning: This package (`duckduckgo_search`) has been renamed to `ddgs`! Use `pip install ddgs` instead.
+  with DDGS() as ddgs:
+/Users/jefng3/.claude/projects/silicon-boardroom/builds/dashboards/i_want_to_create_a_beautiful_social_20260523_041316_677/tools/social_search_tool.py:105: RuntimeWarning: This package (`duckduckgo_search`) has been renamed to `ddgs`! Use `pip install ddgs` instead.
+  with DDGS() as ddgs:
+INFO:     127.0.0.1:49783 - "GET /status HTTP/1.1" 200 OK
+[32mTool social_media_intelligence_search executed with result: {
+  "query_meta": {
+    "brands": [
+      "Closeup TikTok official page Philippines"
+    ],
+    "brand_pairs": [
+      {
+        "brand": "Closeup TikTok official page Philippines",
+        "advertise...[0m
+╭────────────────────── ✅ Tool Execution Completed (#5) ──────────────────────╮
+│                                                                              │
+│  Tool Completed                                                              │
+│  Tool: social_media_intelligence_search                                      │
+│  Output: {                                                                   │
+│    "query_meta": {                                                           │
+│      "brands": [                                                             │
+│        "Closeup TikTok official page Philippines"                            │
+│      ],                                                                      │
+│      "brand_pairs": [                                                        │
+│        {                                                                     │
+│          "brand": "Closeup TikTok official page Philippines",                │
+│          "advertiser": ""                                                    │
+│        }                                                                     │
+│      ],                                                                      │
+│      "platforms": [                                                          │
+│        "YouTube",                                                            │
+│        "Facebook"                                                            │
+│      ],                                                                      │
+│      "post_type": "both",                                                    │
+│      "markets": [                                                            │
+│        ""                                                                    │
+│      ],                                                                      │
+│      "date_range": "2025",                                                   │
+│      "total_snippets_retrieved": 3                                           │
+│    },                                                                        │
+│    "brand_results": [                                                        │
+│      {                                                                       │
+│        "brand": "Closeup TikTok official page Philippines",                  │
+│        "advertiser": "",                                                     │
+│        "platform_data": [                                                    │
+│          {                                                                   │
+│            "platform": "Facebook",                                           │
+│            "market": "",                                                     │
+│            "raw_results": [                                                  │
+│              {                                                               │
+│                "url": "https://maps.google.com.au/help/legalnotices_maps/",  │
+│                "title": "Legal Notices for Google Maps/Google Earth and      │
+│  Google Map\u2026",                                                          │
+│                "content": "The mapping data is protected by international    │
+│  copyright laws and international copyright conventions. Your use of         │
+│  mapping data is \u2026",                                                    │
+│                "source_type": "both",                                        │
+│                "market": ""                                                  │
+│              },                                                              │
+│              {                                                               │
+│                "url":                                                        │
+│  "https://maps.google.com.au/intl/en_au/earth/outreach/learn/visualize-your  │
+│  -data-on-a-custom-map-using-google-my-maps/",                               │
+│                "title": "Visualise your data on a custom map using Google    │
+│  My Maps",                                                                   │
+│                "content": "How to quickly map data from a spreadsheet,       │
+│  style points and shapes, and give your map a beautiful base map. Then       │
+│  share your map with \u2026",                                                │
+│                "source_type": "both",                                        │
+│                "market": ""                                                  │
+│              },                                                              │
+│              {                                                               │
+│                "url":                                                        │
+│  "https://maps.google.com.au/intl/en-AU/streetview/explore/",                │
+│                "title": "Street View photos come from two sources, Google    │
+│  and our contributors.",                                                     │
+│                "content": "Learn about what Street View is, where we've      │
+│  been, and where we're going. To share Street View imagery, our engineering  │
+│  team is hard at \u2026",                                                    │
+│                "source_type": "both",                                        │
+│                "market": ""                                                  │
+│              }                                                               │
+│            ]                                                                 │
+│          }                                                                   │
+│        ],                                                                    │
+│        "posts_found": 3,                                                     │
+│        "industry_note": ""                                                   │
+│      }                                                                       │
+│    ]                                                                         │
+│  }                                                                           │
+│                                                                              │
+│                                                                              │
+╰──────────────────────────────────────────────────────────────────────────────╯
+
+INFO:     127.0.0.1:49783 - "GET /status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49783 - "GET /status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49783 - "GET /status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49783 - "GET /status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49783 - "GET /status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49783 - "GET /proxy-status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49797 - "GET /tunnel-status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49797 - "GET /status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49797 - "GET /status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49797 - "GET /status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49797 - "GET /status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49797 - "GET /status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49797 - "GET /status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49797 - "GET /status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49797 - "GET /status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49797 - "GET /proxy-status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49804 - "GET /tunnel-status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49804 - "GET /status HTTP/1.1" 200 OK
