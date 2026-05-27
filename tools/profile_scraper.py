@@ -65,10 +65,12 @@ _SELECTORS: dict = json.loads(_SELECTORS_PATH.read_text())
 
 _HANDLE_SAFE    = re.compile(r"[^a-zA-Z0-9_.\-]")
 _DOMAIN_LAST_HIT: dict[str, float] = {}
-_MAX_CONCURRENT_POSTS = 4     # parallel post-page visits within a profile
-_SCROLL_PAUSE_MIN     = 1.8
-_SCROLL_PAUSE_MAX     = 3.2
-_PAGE_TIMEOUT_MS      = 20_000
+_MAX_CONCURRENT_POSTS = 3     # parallel post-page visits — reduced for Railway memory constraints
+_SCROLL_PAUSE_MIN     = 1.0   # tighter on Railway (no VPN jitter needed)
+_SCROLL_PAUSE_MAX     = 2.0
+_PAGE_TIMEOUT_MS      = 15_000  # 15s — faster fail on Railway where bot blocks are immediate
+_MAX_POST_URLS        = 40    # cap profile scroll at 40 posts — sufficient for ER baseline (need ≥12)
+_MAX_SCROLL_ATTEMPTS  = 15    # cap scroll attempts per profile
 
 
 # ── Security helpers ──────────────────────────────────────────────────────────
@@ -231,9 +233,8 @@ async def _scrape_instagram_profile(context, brand: str, handle: str,
         post_urls: list[str] = []
         prev_count = -1
         scroll_attempts = 0
-        max_scrolls = 30  # safety cap
 
-        while len(post_urls) < 200 and scroll_attempts < max_scrolls:
+        while len(post_urls) < _MAX_POST_URLS and scroll_attempts < _MAX_SCROLL_ATTEMPTS:
             anchors = await page.query_selector_all(
                 profile_sels.get("post_grid", "article a[href*='/p/']")
             )
@@ -327,7 +328,7 @@ async def _scrape_instagram_profile(context, brand: str, handle: str,
                 finally:
                     await p.close()
 
-        tasks = [_fetch_post(u) for u in post_urls[:100]]  # hard cap at 100 posts
+        tasks = [_fetch_post(u) for u in post_urls[:_MAX_POST_URLS]]
         results = await asyncio.gather(*tasks, return_exceptions=True)
         posts_data = [r for r in results if isinstance(r, dict)]
 
@@ -371,7 +372,7 @@ async def _scrape_facebook_profile(context, brand: str, handle: str,
         prev_count = -1
         scroll_attempts = 0
 
-        while len(post_urls) < 150 and scroll_attempts < 25:
+        while len(post_urls) < _MAX_POST_URLS and scroll_attempts < _MAX_SCROLL_ATTEMPTS:
             for link_sel in (
                 profile_sels.get("post_link", ""),
                 "a[href*='/posts/']", "a[href*='/videos/']", "a[href*='/photos/']"
@@ -486,7 +487,7 @@ async def _scrape_facebook_profile(context, brand: str, handle: str,
                 finally:
                     await p.close()
 
-        tasks = [_fetch_fb_post(u) for u in post_urls[:100]]
+        tasks = [_fetch_fb_post(u) for u in post_urls[:_MAX_POST_URLS]]
         results = await asyncio.gather(*tasks, return_exceptions=True)
         posts_data = [r for r in results if isinstance(r, dict)]
 
@@ -529,7 +530,7 @@ async def _scrape_tiktok_profile(context, brand: str, handle: str,
         prev_count = -1
         scroll_attempts = 0
 
-        while len(post_urls) < 200 and scroll_attempts < 30:
+        while len(post_urls) < _MAX_POST_URLS and scroll_attempts < _MAX_SCROLL_ATTEMPTS:
             anchors = await page.query_selector_all(
                 profile_sels.get("post_grid", "div[class*='DivItemContainerV2'] a[href*='/video/']")
             )
@@ -619,7 +620,7 @@ async def _scrape_tiktok_profile(context, brand: str, handle: str,
                 finally:
                     await p.close()
 
-        tasks = [_fetch_tiktok_post(u) for u in post_urls[:100]]
+        tasks = [_fetch_tiktok_post(u) for u in post_urls[:_MAX_POST_URLS]]
         results = await asyncio.gather(*tasks, return_exceptions=True)
         posts_data = [r for r in results if isinstance(r, dict)]
 
@@ -662,7 +663,7 @@ async def _scrape_youtube_channel(context, brand: str, handle: str,
         prev_count = -1
         scroll_attempts = 0
 
-        while len(video_urls) < 200 and scroll_attempts < 30:
+        while len(video_urls) < _MAX_POST_URLS and scroll_attempts < _MAX_SCROLL_ATTEMPTS:
             anchors = await page.query_selector_all(
                 channel_sels.get("video_link", "a#video-title-link, a#thumbnail")
             )
@@ -783,7 +784,7 @@ async def _scrape_youtube_channel(context, brand: str, handle: str,
                 finally:
                     await p.close()
 
-        tasks = [_fetch_yt_video(u) for u in video_urls[:100]]
+        tasks = [_fetch_yt_video(u) for u in video_urls[:_MAX_POST_URLS]]
         results = await asyncio.gather(*tasks, return_exceptions=True)
         posts_data = [r for r in results if isinstance(r, dict)]
 
@@ -1046,9 +1047,13 @@ async def _run_profile_scrape(brands: list[dict], platforms: list[str],
                         )
 
             try:
+                # 180s: leaves headroom within the 600s crew phase cap for LLM overhead.
+                # With _MAX_POST_URLS=40 and _MAX_CONCURRENT_POSTS=3, worst case is
+                # ~40 post-page visits × 15s timeout / 3 concurrency = ~200s per platform,
+                # but platforms run in parallel so total is bounded by the slowest platform.
                 raw = await asyncio.wait_for(
                     asyncio.gather(*scrape_tasks, return_exceptions=True),
-                    timeout=300.0,
+                    timeout=180.0,
                 )
             except asyncio.TimeoutError:
                 logger.warning("[ProfileScraper] Overall timeout — returning partial results.")

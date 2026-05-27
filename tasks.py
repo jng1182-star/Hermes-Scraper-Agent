@@ -86,8 +86,8 @@ class SocialTasks:
                 f'"industry": "{industry}"}}\n\n'
                 "Output a structured profile map. Each entry must include:\n"
                 "  brand, advertiser, market, platform, url (or handle), confidence, notes\n\n"
-                "This profile map will be passed directly to the Profile Scraper and Feed Scroller "
-                "agents — they will use your URLs as their scraping targets. "
+                "This profile map will be passed directly to the Profile Scraper and Ad Library "
+                "Collector agents — they will use your URLs as their scraping targets. "
                 "If you cannot find a profile for a combination, record url=null and explain why."
             ),
             expected_output=(
@@ -159,8 +159,8 @@ class SocialTasks:
                 "  2. Flag DOM-labelled paid posts (Sponsored / Paid partnership).\n"
                 "  3. Compute an organic ER baseline from DOM-clean posts.\n"
                 "  4. Re-score all remaining posts — flag those exceeding 3× organic ER as likely_paid.\n\n"
-                "Return the full tool output. Do not summarise or truncate — the feed scroller "
-                "needs the baseline metrics to calibrate its own paid detection."
+                "Return the full tool output. Do not summarise or truncate — the analyst "
+                "uses the baseline metrics and post-level data to compute SOV signals."
             ),
             expected_output=(
                 "JSON from the Profile Scraper tool: a 'profiles' list where each entry contains "
@@ -175,8 +175,9 @@ class SocialTasks:
 
     def feed_task(self, agent, params: dict = None, profile_map: str = None,
                   profile_baselines: str = None) -> Task:
-        """Agent 2 — scrolls algorithmic feeds using baselines from the profile scraper;
-        queries ad libraries filtered to the user's target country/markets."""
+        """Agent 2 — queries Meta Ad Library, Google ATC, and TikTok CCL for declared
+        paid inventory. Feed scrolling was retired (OOM on Railway containers).
+        profile_baselines param is accepted for API compatibility but unused."""
         params      = params or {}
         competitors = params.get("competitors", [])
         advertisers = params.get("advertisers", [])
@@ -198,36 +199,14 @@ class SocialTasks:
             f"{p['advertiser']} {p['brand']}".strip() if p.get("advertiser") else p["brand"]
             for p in all_brand_pairs
         ) or "all target brands"
-        brand_names = [p.get("brand", "") for p in all_brand_pairs]
         markets_str = ", ".join(markets) if markets else country or "Global"
 
-        # Inject real baseline array — strip markdown fences before parsing
-        # (LLM agent may re-wrap the clean JSON output in ```json ... ``` fences)
-        try:
-            _cleaned = _strip_fences(profile_baselines) if profile_baselines else ""
-            baseline_list = json.loads(_cleaned) if _cleaned else []
-        except Exception:
-            baseline_list = []
-
-        scroller_input = json.dumps({
-            "platforms": platforms,
-            "country":   country,
-            "brands":    brand_names,
-            "baselines": baseline_list,
-        })
         adlib_input_example = json.dumps({
             "brand":     "<brand_name>",
             "country":   country,
             "markets":   markets,
             "platforms": platforms,
         })
-
-        baselines_note = (
-            f"\nPROFILE BASELINES: {len(baseline_list)} brand×platform baseline(s) pre-injected "
-            f"into the Feed Scroller input above (avg_er_pct + er_threshold per entry).\n"
-        ) if baseline_list else (
-            "\nNOTE: No profile baselines available — feed scoring will rely on DOM labels only.\n"
-        )
 
         profile_map_section = (
             f"\nRESEARCHER PROFILE MAP (use verified page IDs / handles for ad library queries):\n"
@@ -236,46 +215,44 @@ class SocialTasks:
 
         return Task(
             description=(
-                f"Scroll algorithmic feeds and query ad libraries for these brands: {brands_str}.\n\n"
+                f"Query public ad libraries for declared paid inventory for these brands: {brands_str}.\n\n"
                 f"PLATFORMS: {', '.join(platforms)}\n"
                 f"TARGET MARKET(S): {markets_str}\n"
-                f"{profile_map_section}"
-                f"{baselines_note}\n"
-                "STEP 1 — Call the 'Feed Scroller' tool with this exact input (baselines already "
-                "populated — do not modify):\n"
-                f"{scroller_input}\n\n"
-                "The tool scrolls the algorithmic feed and scores every visible post:\n"
-                "  - DOM-labelled (Sponsored / ad-badge) → confirmed paid (paid_signal='dom_label')\n"
-                "  - Post ER > brand baseline × 3 → likely paid (paid_signal='baseline_outlier')\n"
-                "  - All other posts → organic\n"
-                "Returns brand_paid_posts, brand_organic_posts, category_paid_posts.\n\n"
-                "STEP 2 — Call the 'Paid Ad Library Scraper' tool once per brand to query "
-                "Meta Ad Library (FB/IG), Google Ads Transparency (YouTube), and TikTok "
-                "Commercial Content Library — all filtered to the target market(s):\n"
+                f"{profile_map_section}\n"
+                "Call the 'Paid Ad Library Scraper' tool once per brand to query:\n"
+                "  - Meta Ad Library (covers Facebook + Instagram)\n"
+                "  - Google Ads Transparency Center (covers YouTube)\n"
+                "  - TikTok Commercial Content Library\n"
+                "All queries filtered to the target market(s).\n\n"
+                "Tool call format:\n"
                 f"{adlib_input_example}\n\n"
-                "IMPORTANT: Filter ad library results to the target market(s): {markets_str}. "
-                "Pass the 'markets' and 'country' fields exactly as shown — the tool uses these "
-                "to apply the correct country_code filter in each library query.\n\n"
-                "From ad library results, extract per brand:\n"
-                "  - active_ads_found, impressions_min, impressions_max\n"
-                "  - ad_start_dates (ISO strings), geo_countries, new_ads_last_7d\n"
-                "  - ad_captions (sample creative text)\n"
-                "NOTE: Meta Ad Library covers FB and IG under one advertiser — do not split.\n"
-                "TikTok EU Ad Library reach (unique user reach) is the most reliable TikTok reach "
-                "proxy. For non-EU markets this will be null — flag Low confidence for TikTok "
-                "reach bucket in those markets.\n\n"
-                "Return feed scroll results and ad library results combined."
+                "IMPORTANT: Pass the 'markets' and 'country' fields exactly — the tool uses "
+                "these to apply the correct country_code filter in each library query.\n\n"
+                "From each ad library, extract per brand:\n"
+                "  - active_ads_found: total count of active ads\n"
+                "  - impressions_min, impressions_max: impression range from the library\n"
+                "  - ad_start_dates: list of ISO date strings for active ads\n"
+                "  - new_ads_last_7d: count of ads with start_date in the last 7 days\n"
+                "  - geo_countries: list of countries where ads are running\n"
+                "  - ad_captions: sample creative text (up to 3 examples)\n\n"
+                "NOTE: Meta Ad Library covers both Facebook and Instagram under one advertiser — "
+                "do not split into separate entries.\n"
+                "TikTok EU Ad Library provides unique user reach data. For non-EU markets "
+                "(e.g. Philippines, Singapore, Thailand), reach data will be null — "
+                "flag Low confidence for TikTok reach bucket in those markets.\n\n"
+                "Return ad library results as a JSON object keyed by brand name under "
+                "'ad_library_results', with sub-keys 'meta_ad_library', 'google_atc', "
+                "'tiktok_ccl' per brand."
             ),
             expected_output=(
-                "Combined output: "
-                "(1) Feed Scroller — brand_paid_posts[], brand_organic_posts[], "
-                "category_paid_posts[], total_posts_scrolled, total_dom_ads, "
-                "total_baseline_outliers, baselines_applied, platforms_scrolled. "
-                "Each paid post includes paid_signal ('dom_label' or 'baseline_outlier'). "
-                "(2) Ad Library — per brand: active_ads_found, impressions_min/max, "
-                "ad_start_dates, geo_countries, new_ads_last_7d, ad_captions. "
-                "Source tagged: 'meta_ad_library', 'google_atc', or 'tiktok_ccl'. "
-                "TikTok reach flagged EU-sourced (reliable) or null (Low confidence)."
+                "JSON with 'ad_library_results' keyed by brand name. Per brand: "
+                "active_ads_found, impressions_min/max, ad_start_dates[], new_ads_last_7d, "
+                "geo_countries[], ad_captions[]. "
+                "Sub-sources tagged: 'meta_ad_library' (FB+IG), 'google_atc' (YouTube), "
+                "'tiktok_ccl' (TikTok). "
+                "TikTok reach: null for non-EU markets with note 'EU Ad Library only'. "
+                "Also include total_posts_scrolled=0, baselines_applied=false "
+                "to maintain schema compatibility with analyst context builder."
             ),
             agent=agent,
         )

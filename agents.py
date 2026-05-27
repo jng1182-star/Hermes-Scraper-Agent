@@ -3,7 +3,6 @@ from crewai import Agent
 from crewai.llm import LLM
 from tools.social_search_tool import SocialSearchTool
 from tools.profile_scraper import ProfileScraperTool
-from tools.feed_scroller import FeedScrollerTool
 from tools.paid_adlib_tool import PaidAdLibTool
 
 _OLLAMA_HOST     = os.getenv("OLLAMA_HOST", "http://127.0.0.1:11434").rstrip("/")
@@ -36,7 +35,6 @@ class SocialAgents:
     def __init__(self, depth: str = "deep"):
         self.search_tool   = SocialSearchTool()
         self.profile_tool  = ProfileScraperTool()
-        self.feed_tool     = FeedScrollerTool()
         self.adlib_tool    = PaidAdLibTool()
         # Scraper always uses e4b — structured data extraction, not deep reasoning.
         # e4b fits fully in GPU; 26b runs mixed CPU/GPU on this machine and stalls at 600s.
@@ -64,9 +62,8 @@ class SocialAgents:
             backstory=(
                 "You are a specialist in social media content collection and paid signal detection. "
                 "The researcher hands you verified URLs and handles — you use those as your exact "
-                "scraping targets. Your baseline metrics are the calibration source for the feed "
-                "scroller; without your ER thresholds the feed agent cannot distinguish paid from "
-                "organic in-feed. You never fabricate data."
+                "scraping targets. Your organic ER baselines and paid post flags are the primary "
+                "data source for the analyst's SOV signals. You never fabricate data."
             ),
             tools=[self.profile_tool],
             llm=self.scraper_llm,
@@ -74,29 +71,27 @@ class SocialAgents:
         )
 
     def feed_agent(self) -> Agent:
-        """Agent 2 — scrolls algorithmic feeds using baselines from the profile scraper.
-        Collects all visible posts; flags paid via DOM markers and baseline ER thresholds.
-        Also queries ad libraries (Meta, Google ATC, TikTok CCL) for declared inventory.
-        Coverage is geo-bounded by the scraper IP/geo."""
+        """Agent 2 — queries Meta Ad Library, Google Ads Transparency, and TikTok CCL
+        for declared paid inventory. No feed scrolling (retired: OOM on Railway).
+        Profile scraper covers organic + ER-based paid detection from profile pages."""
         return Agent(
-            role="Feed Scroller",
+            role="Ad Library Collector",
             goal=(
-                "Scroll the algorithmic feed for each target platform and collect all visible posts. "
-                "Use the baselines produced by the Profile Scraper to score posts as paid or organic: "
-                "DOM-labelled posts (Sponsored / ad-badge) are confirmed paid; posts whose per-post "
-                "ER exceeds the brand's organic baseline by 3× are flagged as likely_paid. "
-                "In parallel, query Meta Ad Library, Google Ads Transparency, and TikTok Commercial "
-                "Content Library via the Paid Ad Library tool for declared inventory. "
-                "Return brand_paid_posts, brand_organic_posts, category_paid_posts, and ad library results."
+                "For each brand in the competitive set, query the declared paid ad inventory "
+                "across all three ad libraries: Meta Ad Library (covers Facebook + Instagram), "
+                "Google Ads Transparency Center (covers YouTube), and TikTok Commercial Content "
+                "Library. For each brand × platform: capture active_ads_found, "
+                "impressions_min/max, new_ads_last_7d, ad_start_dates, and geo_countries. "
+                "Return a structured JSON with ad_library_results keyed by brand name."
             ),
             backstory=(
-                "You are a paid media feed intelligence specialist. Your scroll sessions capture "
-                "what the algorithm actually serves in a specific market. You rely on the Profile "
-                "Scraper's organic baselines as your paid detection threshold — they must be passed "
-                "to you before you begin. Ad library queries run in parallel and cover declared "
-                "inventory that may never appear in your geo's feed. You never fabricate data."
+                "You are a paid media intelligence specialist at a global media consultancy. "
+                "You extract declared advertising inventory from public ad transparency libraries — "
+                "Meta, Google, and TikTok — without relying on authenticated feeds or algorithmic "
+                "surfaces. Your data covers declared paid creative volume and velocity across "
+                "Facebook, Instagram, YouTube, and TikTok. You never fabricate ad counts or reach data."
             ),
-            tools=[self.feed_tool, self.adlib_tool],
+            tools=[self.adlib_tool],
             llm=self.scraper_llm,
             verbose=True,
         )

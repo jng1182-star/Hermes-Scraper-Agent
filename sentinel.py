@@ -120,6 +120,7 @@ _ROLE_TO_PHASE = {
     "feed scroller":              "feed",
     "in-feed ad collector":       "feed",
     "feed ad capture agent":      "feed",
+    "ad library collector":       "feed",   # current role name after feed scroller retirement
     "social data researcher":     "researcher",
     "social data scraper":        "researcher",
     "share-of-voice analyst":     "analyst",

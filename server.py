@@ -76,14 +76,18 @@ def _kill_ollama_now():
 
 # Map CrewAI Agent.role → dashboard node IDs (C5 fix: all 6 roles mapped)
 _ROLE_TO_NODE = {
-    "profile baseline scraper": "profile",
-    "feed ad capture agent":    "feed",
-    "social data researcher":   "scraper",   # researcher maps to the 'scraper' card
+    # Current roles (agents.py)
+    "profile scraper":          "profile",
+    "ad library collector":     "feed",
+    "social data researcher":   "scraper",
     "share-of-voice analyst":   "analyst",
     "sov intelligence reporter":"reporter",
     "approval gate":            "gate",
-    # legacy aliases
+    # Legacy / alias names
+    "profile baseline scraper": "profile",
     "brand profile collector":  "profile",
+    "feed ad capture agent":    "feed",
+    "feed scroller":            "feed",
     "in-feed ad collector":     "feed",
     "social data scraper":      "scraper",
     "engagement analyst":       "analyst",
@@ -319,6 +323,21 @@ def _run_worker(params: dict):
     import io
     import ctypes
     import main as _main
+
+    # Re-assert Ollama routing inside the worker thread.
+    # Railway injects OPENAI_BASE_URL / OPENAI_API_BASE from its environment variables panel
+    # after the server process has started; those values survive into worker threads even
+    # though we cleared them at module load. litellm reads these at call-time, not import-time,
+    # so we must re-clear them here, immediately before the crew is built.
+    _wk_ollama = os.getenv("OLLAMA_HOST", "http://127.0.0.1:11434").rstrip("/")
+    _wk_v1     = _wk_ollama + "/v1"
+    for _stale in ("OPENAI_BASE_URL", "OPENAI_API_BASE", "BASE_URL", "API_BASE",
+                   "http_proxy", "https_proxy", "HTTP_PROXY", "HTTPS_PROXY",
+                   "ALL_PROXY", "all_proxy"):
+        os.environ.pop(_stale, None)
+    os.environ["OPENAI_API_KEY"]  = "ollama"
+    os.environ["OPENAI_BASE_URL"] = _wk_v1
+    os.environ["OPENAI_API_BASE"] = _wk_v1
 
     global _worker_thread_id, _worker_thread, _run_gen
     _stop_flag.clear()

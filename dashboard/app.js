@@ -667,7 +667,7 @@ async function pollStatus() {
 
 const CARD_LOG_HINTS = {
   profile:  { idle: 'Awaiting activation…', active: 'Scraping brand profile pages…',   done: 'Profile baselines collected' },
-  feed:     { idle: 'Awaiting activation…', active: 'Scrolling in-feed ads…',          done: 'Feed ads captured' },
+  feed:     { idle: 'Awaiting activation…', active: 'Querying Meta / Google / TikTok ad libraries…', done: 'Ad library data captured' },
   scraper:  { idle: 'Awaiting activation…', active: 'Identifying brand social profiles & channels…', done: 'Profile map complete' },
   analyst:  { idle: 'Awaiting data…',       active: 'Computing 6-signal SOV index…',   done: 'Analysis complete' },
   reporter: { idle: 'Awaiting analysis…',   active: 'Composing intelligence report…',  done: 'Report compiled' },
@@ -677,15 +677,32 @@ const CARD_LOG_HINTS = {
 // keyword → agent-id mapping for routing log lines to individual cards
 const _LOG_ROUTE = {
   profile:  ['profile scraper', 'profile baseline', 'brand profile', '[profile]', 'brand api data'],
-  feed:     ['feed scroller', 'in-feed', 'feed ad', '[feed]', 'ad capture', 'paid adlib'],
+  feed:     ['feed scroller', 'in-feed', 'feed ad', '[feed]', 'ad capture', 'paid adlib',
+             'ad library collector', 'ad library', 'meta ad library', 'google atc', 'tiktok ccl'],
   scraper:  ['social data researcher', 'researcher', 'profile discovery', 'profile map',
              'social data scraper', 'social data', '[scraper]', 'duckduckgo', 'search tool',
              'identifying brand', 'official page', 'official profile'],
   analyst:  ['analyst', 'share-of-voice', 'sov', 'signal', '[analyst]'],
   reporter: ['reporter', 'intelligence report', '[reporter]'],
-  gate:     ['approval gate', 'gate', 'validation', 'confidence', '[gate]',
-             '[sentinel', '[agent thinking:', '[agent response]',
-             '[sentinel flag]', '[sentinel directive]', '[gate override]'],
+  gate:     ['approval gate', '[gate]', '[sentinel flag]', '[sentinel directive]',
+             '[gate override]', '[sentinel]', 'sentinel observer'],
+};
+
+// [AGENT THINKING: <role>] → role keyword → card-id
+const _THINKING_ROLE_MAP = {
+  'profile scraper':          'profile',
+  'profile baseline scraper': 'profile',
+  'brand profile collector':  'profile',
+  'feed scroller':            'feed',
+  'in-feed ad collector':     'feed',
+  'feed ad capture agent':    'feed',
+  'ad library collector':     'feed',
+  'social data researcher':   'scraper',
+  'social data scraper':      'scraper',
+  'share-of-voice analyst':   'analyst',
+  'engagement analyst':       'analyst',
+  'sov intelligence reporter':'reporter',
+  'intelligence reporter':    'reporter',
 };
 
 // CrewAI verbose prefixes — route to whichever agent is currently active
@@ -698,6 +715,22 @@ const _cardLogState = { profile: 0, feed: 0, scraper: 0, analyst: 0, reporter: 0
 
 function _routeLogLine(line, agentStates) {
   const l = line.toLowerCase();
+
+  // [AGENT THINKING: <role>] — route to the named agent's card
+  const thinkMatch = l.match(/\[agent thinking:\s*([^\]]+)\]/);
+  if (thinkMatch) {
+    const role = thinkMatch[1].trim();
+    for (const [keyword, cardId] of Object.entries(_THINKING_ROLE_MAP)) {
+      if (role.includes(keyword)) return cardId;
+    }
+    // fallback: route to currently active card
+    const active = Object.entries(agentStates || {}).find(([, s]) => s === 'active');
+    if (active) return active[0];
+  }
+
+  // [SENTINEL THINKING] stays on gate card
+  if (l.includes('[sentinel thinking]')) return 'gate';
+
   for (const [id, keywords] of Object.entries(_LOG_ROUTE)) {
     if (keywords.some(k => l.includes(k))) return id;
   }

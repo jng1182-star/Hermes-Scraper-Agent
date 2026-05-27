@@ -246,14 +246,20 @@ class SocialListeningCrew:
                 finally:
                     _fire_hook("profile", "done")
 
-            # Extract baselines from profile output to pass to feed scroller
+            # Extract baselines from profile output (passed to feed task for schema compat)
             _profile_baselines = _extract_baselines(profile_output)
 
-            # ── Phase 2: Feed scroll ──────────────────────────────────────────
+            # ── Phase 2: Ad Library queries (replaces feed scroll) ────────────
+            # Feed scroll (Playwright authenticated sessions for Instagram/Facebook/TikTok/YouTube)
+            # was retired: it crashed Railway containers (OOM on concurrent Chromium instances)
+            # and required anti-detect browser infra not available in the deployed environment.
+            # The primary SOV signal — ad creative volume, velocity, reach, geo — comes from
+            # the ad libraries (Meta, Google ATC, TikTok CCL) which require no auth or feed context.
+            # Profile scraper already captures organic paid detection via DOM labels + ER baselines.
             feed_output = cp_feed
             if not feed_output:
                 _fire_hook("feed", "active")
-                print("[PHASE] Feed Scroller — scrolling feeds with baseline scoring.", flush=True)
+                print("[PHASE] Ad Library — querying Meta, Google ATC, TikTok CCL.", flush=True)
                 try:
                     task_feed = self.tasks.feed_task(feed_agent, self.params,
                                                      profile_map=profile_map,
@@ -263,11 +269,11 @@ class SocialListeningCrew:
                     _run_with_timeout(crew_feed.kickoff, _FEED_TIMEOUT, "feed")
                     feed_output = str(task_feed.output)
                     _save_checkpoint("feed", feed_output)
-                    print("[PHASE] Feed Scroller complete.", flush=True)
+                    print("[PHASE] Ad Library complete.", flush=True)
                 except Exception as exc:
                     if _sentinel:
                         _sentinel.receive_agent_response("feed", f"Phase exception: {str(exc)[:200]}")
-                    print(f"[PHASE] Feed Scroller failed: {exc}", flush=True)
+                    print(f"[PHASE] Ad Library failed: {exc}", flush=True)
                     feed_output = "{}"
                 finally:
                     _fire_hook("feed", "done")
