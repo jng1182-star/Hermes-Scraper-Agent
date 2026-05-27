@@ -49,7 +49,8 @@ def _run_with_timeout(fn, timeout_secs: int, phase_name: str):
     t = threading.Thread(target=_target, daemon=True, name=f"phase-{phase_name}")
     t.start()
 
-    # Notify Sentinel that phase has started
+    # Notify Sentinel that phase has started; also stamp active_phase in _run_state
+    # so the live log tap thread knows which phase new log lines belong to.
     _s = get_sentinel()
     if _s:
         _s.post(SentinelEvent(
@@ -57,6 +58,15 @@ def _run_with_timeout(fn, timeout_secs: int, phase_name: str):
             timestamp=time.monotonic(),
             payload={"timeout_secs": timeout_secs},
         ))
+    try:
+        try:
+            from server import _run_state, _state_lock
+        except ImportError:
+            from api import _run_state, _state_lock
+        with _state_lock:
+            _run_state["active_phase"] = phase_name
+    except Exception:
+        pass
 
     # Poll with heartbeats instead of a single long wait
     _hb_interval = 30

@@ -132,12 +132,65 @@ _ROLE_TO_PHASE = {
 
 # ── Main observer class ──────────────────────────────────────────────────────
 
+
+# ── Error taxonomy: (pattern, severity, fix_key, description) ────────────────
+# Sentinel checks every live log line against this table and dispatches the
+# named fix immediately. fix_key maps to _SENTINEL_FIXES below.
+
+_ERROR_TAXONOMY: list[tuple] = [
+    # JSON / parse failures
+    ("json.decodeerror",            "CRITICAL", "strip_json",     "JSON decode error in LLM output"),
+    ("expecting value",             "CRITICAL", "strip_json",     "JSON parse: unexpected token"),
+    ("unterminated string",         "CRITICAL", "strip_json",     "JSON parse: unterminated string"),
+    ("invalid \\escape",            "CRITICAL", "strip_json",     "JSON parse: bad escape sequence"),
+    ("valueerror: invalid",         "WARNING",  "strip_json",     "ValueError in LLM output"),
+    # Scraper / Playwright errors
+    ("target crashed",              "CRITICAL", "oom_gap",        "Chromium target crashed (OOM)"),
+    ("out of memory",               "CRITICAL", "oom_gap",        "OOM in scraper"),
+    ("page.query_selector_all:",    "WARNING",  "selector_gap",   "Playwright selector error"),
+    ("timeouterror",                "WARNING",  "phase_timeout",  "Playwright page timeout"),
+    ("net::err_",                   "WARNING",  "net_error",      "Network error in Playwright"),
+    # Ollama / LLM errors
+    ("connection refused",          "CRITICAL", "ollama_down",    "Ollama connection refused"),
+    ("err_ngrok",                   "CRITICAL", "ngrok_drop",     "ngrok tunnel dropped"),
+    ("incomplete http response",    "CRITICAL", "ngrok_drop",     "Incomplete HTTP (ngrok timeout)"),
+    ("invalid response from llm",   "CRITICAL", "compact_analyst","LLM returned invalid response"),
+    ("none or empty",               "CRITICAL", "compact_analyst","LLM returned None/empty"),
+    ("connection reset by peer",    "WARNING",  "ollama_retry",   "LLM connection reset"),
+    ("read timeout",                "WARNING",  "ollama_retry",   "LLM read timeout"),
+    ("context length exceeded",     "CRITICAL", "compact_analyst","LLM context overflow"),
+    ("prompt is too long",          "CRITICAL", "compact_analyst","LLM prompt too long"),
+    # Ad library / tool errors
+    ("meta api",                    "WARNING",  "adlib_fallback", "Meta API error"),
+    ("400 bad request",             "WARNING",  "adlib_fallback", "HTTP 400 in tool call"),
+    ("403 forbidden",               "WARNING",  "adlib_fallback", "HTTP 403 in tool call"),
+    ("rate limit",                  "WARNING",  "adlib_fallback", "Rate limit hit"),
+    ("no ads found",                "INFO",     "adlib_log",      "No ads found for brand"),
+    # Auth / anti-detect
+    ("login_required",              "WARNING",  "scraper_gap",    "Platform requires login"),
+    ("checkpoint required",         "WARNING",  "scraper_gap",    "Instagram checkpoint wall"),
+    ("sorry, something went wrong", "WARNING",  "scraper_gap",    "Platform error page"),
+    # Reporter / output errors
+    ("syntaxerror",                 "WARNING",  "strip_json",     "SyntaxError in output"),
+    ("attributeerror",              "WARNING",  "log_error",      "AttributeError in agent"),
+    ("typeerror",                   "WARNING",  "log_error",      "TypeError in agent"),
+    ("keyerror",                    "WARNING",  "log_error",      "KeyError in agent"),
+    ("recursionerror",              "WARNING",  "log_error",      "RecursionError in agent"),
+]
+
+
 class SentinelObserver:
     """
-    Background thread observer. Subscribes to CrewAI event bus for LLM stream
-    chunks and tool usage events. Receives structured SentinelEvents from
-    crew.py phase runners via the observation queue. Emits thinking, flags, and
-    directives to the Approval Gate terminal.
+    Background thread observer with LIVE LOG TAP.
+
+    Two monitoring loops run concurrently:
+      1. _run_loop: processes SentinelEvents from crew.py (phase timing, data quality checks)
+      2. _log_tap_loop: polls _run_state["logs"] every 1s, classifies every new line against
+         the error taxonomy, and fires autonomous fix actions immediately — before the phase
+         fails, not after.
+
+    This gives Sentinel real-time eyes on everything the LLM, tools, and Playwright print.
+    Autonomous fixes are dispatched immediately via the _SENTINEL_FIXES dispatch table.
     """
 
     def __init__(
@@ -146,14 +199,15 @@ class SentinelObserver:
         flag_fn: Optional[Callable[[dict], None]] = None,
     ):
         self._gate_log  = gate_log_fn
-        self._flag_fn   = flag_fn   # called with serialised flag dict on every _raise_flag
+        self._flag_fn   = flag_fn
         self._obs_queue: queue.Queue = queue.Queue()
         self._stop_evt  = threading.Event()
         self._thread: Optional[threading.Thread] = None
+        self._tap_thread: Optional[threading.Thread] = None   # live log tap thread
 
-        # Per-phase pause gates — phase runners call gate.wait() before passing output
+        # Per-phase pause gates
         self._pause_gates: dict[str, threading.Event] = {}
-        self._pause_gates_lock = threading.Lock()  # guards _pause_gates mutations
+        self._pause_gates_lock = threading.Lock()
 
         # Active unresolved flags
         self._flags: dict[str, SentinelFlag] = {}
@@ -162,17 +216,24 @@ class SentinelObserver:
         # Consecutive empty batch counters per (phase, brand, platform)
         self._empty_counts: dict[tuple, int] = {}
 
-        # Accumulated stream buffer per phase (for partial output scanning)
+        # Accumulated stream buffer per phase
         self._stream_bufs: dict[str, list] = {}
 
-        # Phase timing tracker
+        # Phase timing
         self._phase_start: dict[str, float] = {}
 
-        # CrewAI event bus handles for deregistration
+        # CrewAI event bus handles
         self._eb_handles: list = []
 
-        # Run params (injected at start)
+        # Run params
         self._run_params: dict = {}
+
+        # Live log tap state — tracks how many lines we've already processed
+        self._tap_cursor: int = 0
+        # Dedup set: don't fire the same fix for the same error pattern twice per run
+        self._fired_fixes: set = set()
+        # Current active phase (updated from phase_start events)
+        self._active_phase: str = ""
 
     # ── Lifecycle ──────────────────────────────────────────────────────────
 
@@ -185,6 +246,9 @@ class SentinelObserver:
         self._empty_counts.clear()
         self._stream_bufs.clear()
         self._phase_start.clear()
+        self._tap_cursor = 0
+        self._fired_fixes.clear()
+        self._active_phase = ""
 
         # Register CrewAI event bus listeners
         self._register_event_listeners()
@@ -194,10 +258,17 @@ class SentinelObserver:
         )
         self._thread.start()
 
+        # Live log tap — reads _run_state["logs"] every 1s for real-time error detection
+        self._tap_thread = threading.Thread(
+            target=self._log_tap_loop, daemon=True, name="sentinel-log-tap"
+        )
+        self._tap_thread.start()
+
         self._gate_write(
             "\n" + "═" * 60 + "\n"
             "[SENTINEL] Nielsen Media Research Director + Code Reviewer\n"
             "[SENTINEL] Observer active — monitoring all pipeline phases.\n"
+            "[SENTINEL] Live log tap active — real-time error interception enabled.\n"
             "[SENTINEL] Authority: flags are binding per phase.\n"
             "[SENTINEL] Approval Gate retains override authority.\n"
             + "═" * 60
@@ -228,6 +299,9 @@ class SentinelObserver:
 
         if self._thread and self._thread.is_alive():
             self._thread.join(timeout=5)
+
+        if self._tap_thread and self._tap_thread.is_alive():
+            self._tap_thread.join(timeout=3)
 
         # Release all pending pause gates so phases don't hang
         with self._pause_gates_lock:
@@ -323,6 +397,7 @@ class SentinelObserver:
 
     def _on_phase_start(self, event: SentinelEvent) -> None:
         self._phase_start[event.phase_name] = event.timestamp
+        self._active_phase = event.phase_name   # keep tap thread in sync
         timeout = event.payload.get("timeout_secs", "?")
         self._think(
             f"Phase '{event.phase_name}' started. "
@@ -802,6 +877,76 @@ class SentinelObserver:
         except Exception as exc:
             self._gate_write(f"[SENTINEL] coverage gap log failed: {exc!s:.80}")
 
+    # ── Live log tap ───────────────────────────────────────────────────────
+
+    def _log_tap_loop(self) -> None:
+        """Poll _run_state['logs'] every 1s, classify new lines, fire fixes immediately."""
+        while not self._stop_evt.is_set():
+            try:
+                self._tap_new_lines()
+            except Exception as exc:
+                # Never crash the tap thread — just log and continue
+                try:
+                    self._gate_write(f"[SENTINEL TAP ERROR] {exc!s:.120}")
+                except Exception:
+                    pass
+            self._stop_evt.wait(timeout=1.0)
+
+    def _tap_new_lines(self) -> None:
+        """Read newly appended lines from _run_state['logs'] and process each."""
+        try:
+            try:
+                from server import _run_state, _state_lock
+            except ImportError:
+                from api import _run_state, _state_lock
+        except Exception:
+            return
+
+        with _state_lock:
+            logs: list = _run_state.get("logs", [])
+            new_lines = logs[self._tap_cursor:]
+            self._tap_cursor = len(logs)
+
+            # Sync active phase from run_state if available
+            active = _run_state.get("active_phase", "")
+            if active:
+                self._active_phase = active
+
+        for line in new_lines:
+            if not isinstance(line, str):
+                line = str(line)
+            self._classify_and_fix(line, self._active_phase)
+
+    def _classify_and_fix(self, line: str, phase: str) -> None:
+        """Match a log line against _ERROR_TAXONOMY and dispatch fix actions with dedup guard."""
+        lower = line.lower()
+        for pattern, severity, fix_key, description in _ERROR_TAXONOMY:
+            if pattern not in lower:
+                continue
+            dedup_key = f"{fix_key}:{phase}"
+            if dedup_key in self._fired_fixes:
+                continue
+            self._fired_fixes.add(dedup_key)
+            self._gate_write(
+                f"[SENTINEL TAP] {severity} — {description} detected in phase '{phase}'. "
+                f"Dispatching autonomous fix: {fix_key}"
+            )
+            fix_fn = _SENTINEL_FIXES.get(fix_key)
+            if fix_fn:
+                _self = self
+                _phase = phase
+                _fn = fix_fn
+
+                def _dispatch(_s=_self, _p=_phase, _f=_fn):
+                    try:
+                        _f(_s, _p)
+                    except Exception as exc:
+                        _s._gate_write(f"[SENTINEL] Fix '{fix_key}' failed: {exc!s:.120}")
+
+                threading.Thread(target=_dispatch, daemon=True,
+                                 name=f"sentinel-fix-{fix_key}").start()
+            break   # one fix per line (highest-priority pattern wins)
+
     # ── CrewAI event bus integration ───────────────────────────────────────
 
     def _register_event_listeners(self) -> None:
@@ -997,6 +1142,96 @@ class SentinelObserver:
     @staticmethod
     def _new_id() -> str:
         return "f-" + uuid.uuid4().hex[:6]
+
+
+# ── Sentinel fix dispatch table ──────────────────────────────────────────────
+# Maps fix_key (from _ERROR_TAXONOMY) → callable(sentinel_instance, phase_name).
+# Each callable is responsible for a single autonomous recovery action.
+# Called from _classify_and_fix() in a daemon thread — must not block.
+
+def _fix_strip_json(s: "SentinelObserver", phase: str) -> None:
+    s._action_strip_json_fence(phase, "")
+
+def _fix_oom_gap(s: "SentinelObserver", phase: str) -> None:
+    s._action_set_directive("scraper_oom_detected", True)
+    s._action_log_coverage_gap("", phase, "OOM/target_crashed — partial scraper results")
+
+def _fix_compact_analyst(s: "SentinelObserver", phase: str) -> None:
+    s._action_switch_analyst_to_compact()
+
+def _fix_ngrok_drop(s: "SentinelObserver", phase: str) -> None:
+    s._action_switch_analyst_to_compact()
+    s._action_clear_phase_checkpoint(phase)
+
+def _fix_ollama_down(s: "SentinelObserver", phase: str) -> None:
+    s._gate_write(
+        "[SENTINEL] AUTO-FIX: Ollama connection refused. "
+        "Verify ngrok tunnel is alive and OLLAMA_BASE_URL is reachable. "
+        "Setting ollama_down directive — analyst will use Sentinel fallback if phase fails."
+    )
+    s._action_set_directive("ollama_down", True)
+    s._action_switch_analyst_to_compact()
+
+def _fix_ollama_retry(s: "SentinelObserver", phase: str) -> None:
+    s._gate_write(
+        f"[SENTINEL] AUTO-FIX: LLM connection reset in '{phase}'. "
+        "Sentinel logged retry directive — CrewAI will retry the tool call."
+    )
+    s._action_set_directive(f"ollama_retry_{phase}", True)
+
+def _fix_selector_gap(s: "SentinelObserver", phase: str) -> None:
+    s._action_set_directive(f"selector_stale_{phase}", True)
+    s._action_log_coverage_gap("", phase, "DOM selector stale — confidence capped at Low")
+
+def _fix_phase_timeout(s: "SentinelObserver", phase: str) -> None:
+    s._gate_write(
+        f"[SENTINEL] AUTO-FIX: Playwright page timeout in '{phase}'. "
+        "Logging coverage gap. Partial results only for this phase."
+    )
+    s._action_log_coverage_gap("", phase, "playwright_timeout — partial scraper results")
+
+def _fix_net_error(s: "SentinelObserver", phase: str) -> None:
+    s._gate_write(
+        f"[SENTINEL] AUTO-FIX: Network error in '{phase}' — logged for coverage table."
+    )
+    s._action_log_coverage_gap("", phase, "net_error — page failed to load")
+
+def _fix_adlib_fallback(s: "SentinelObserver", phase: str) -> None:
+    s._gate_write(
+        "[SENTINEL] AUTO-FIX: Meta Ad Library API error. "
+        "Directive set — analyst will rely on DOM-based signals only."
+    )
+    s._action_set_directive("adlib_api_error", True)
+
+def _fix_adlib_log(s: "SentinelObserver", phase: str) -> None:
+    s._action_log_coverage_gap("", phase, "no_ads_found — brand may have zero paid activity in window")
+
+def _fix_scraper_gap(s: "SentinelObserver", phase: str) -> None:
+    s._action_log_coverage_gap("", phase, "auth_wall — platform requires login; results unavailable")
+    s._action_set_directive(f"auth_wall_{phase}", True)
+
+def _fix_log_error(s: "SentinelObserver", phase: str) -> None:
+    s._gate_write(
+        f"[SENTINEL] Python exception detected in '{phase}' — logged. "
+        "If phase output is empty, Sentinel fallback synthesis will be triggered."
+    )
+
+
+_SENTINEL_FIXES: dict[str, callable] = {
+    "strip_json":      _fix_strip_json,
+    "oom_gap":         _fix_oom_gap,
+    "compact_analyst": _fix_compact_analyst,
+    "ngrok_drop":      _fix_ngrok_drop,
+    "ollama_down":     _fix_ollama_down,
+    "ollama_retry":    _fix_ollama_retry,
+    "selector_gap":    _fix_selector_gap,
+    "phase_timeout":   _fix_phase_timeout,
+    "net_error":       _fix_net_error,
+    "adlib_fallback":  _fix_adlib_fallback,
+    "adlib_log":       _fix_adlib_log,
+    "scraper_gap":     _fix_scraper_gap,
+    "log_error":       _fix_log_error,
+}
 
 
 # ── SOV post-processing utilities (called by crew.py after reporter) ─────────
