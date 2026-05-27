@@ -4,7 +4,7 @@ crewai>=1.0
 playwright>=1.44.0
 requests>=2.32.0
 crewai-tools>=0.14.0
-duckduckgo-search>=6.0
+ddgs>=0.1
 pydantic>=2.0
 python-dotenv
 openpyxl>=3.1

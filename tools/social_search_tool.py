@@ -3,7 +3,10 @@ import os
 import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from crewai.tools import BaseTool
-from duckduckgo_search import DDGS
+try:
+    from ddgs import DDGS
+except ImportError:
+    from duckduckgo_search import DDGS
 
 # ── Supported platforms ───────────────────────────────────────────────────────
 SUPPORTED_PLATFORMS = ["YouTube", "Facebook"]
