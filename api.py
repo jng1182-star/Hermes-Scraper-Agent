@@ -267,6 +267,8 @@ def _run_with_logging(params: dict):
             with _state_lock:
                 _run_state["error"] = str(e)
                 _run_state["logs"].append(f"ERROR: {e}")
+                for aid in _run_state["agent_states"]:
+                    _run_state["agent_states"][aid] = "idle"
     finally:
         _sys.stdout = _old_out
         _sys.stderr = _old_err
