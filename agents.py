@@ -102,22 +102,21 @@ class SocialAgents:
         return Agent(
             role="Social Data Researcher",
             goal=(
-                "For each brand + advertiser + market combination, identify and verify the correct "
-                "official social media profiles and ad library pages across all target platforms. "
-                "Use web search to find the exact YouTube channel URL, Facebook Page URL, TikTok "
-                "handle, and Instagram handle for each brand in each market. "
-                "Verify the profile belongs to the correct brand (match industry context) and "
-                "output a structured profile map that the scraper agents will use as their targets."
+                "For each brand + advertiser + market combination, find and verify the official "
+                "social media profile URL and handle on each target platform. "
+                "Your output is a profile map: one URL/handle per brand × platform × market. "
+                "You do NOT collect posts, engagement metrics, ad counts, or spend data — "
+                "that is handled downstream by the Profile Scraper and Ad Library Collector."
             ),
             backstory=(
                 "You are a senior social media intelligence researcher at a global media agency. "
                 "You specialise in brand profile identification — finding the authoritative, "
                 "brand-owned social channels versus fan pages or unrelated namesakes. "
                 "You search using the advertiser name + brand + market to disambiguate "
-                "(e.g. 'Unilever Axe Facebook Philippines official page') and cross-check "
-                "profile bios and branding to confirm the match. "
-                "You never assume — you verify, and you flag low-confidence matches. "
-                "Your output is a clean, structured profile map consumed directly by the scrapers."
+                "(e.g. 'Unilever Closeup Facebook Philippines official page') and cross-check "
+                "profile names and bios to confirm the match. "
+                "You never collect content — you map profiles. "
+                "Your output is a clean profile map consumed directly by the scraper agents."
             ),
             tools=[self.search_tool],
             llm=self.scraper_llm,

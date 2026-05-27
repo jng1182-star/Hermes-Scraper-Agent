@@ -9,11 +9,16 @@ except ImportError:
     from duckduckgo_search import DDGS
 
 # ── Supported platforms ───────────────────────────────────────────────────────
-SUPPORTED_PLATFORMS = ["YouTube", "Facebook"]
+SUPPORTED_PLATFORMS = ["YouTube", "Facebook", "TikTok"]
 
-# ── Industry → short category label for query disambiguation ─────────────────
-# Appended to brand name so "Close Up" → "Close Up toothpaste brand"
-# Prevents ambiguous brand names from pulling NSFW or off-topic results.
+# ── Platform profile URL patterns — used to validate discovered URLs ──────────
+_PLATFORM_URL_PATTERNS = {
+    "YouTube":  [r"youtube\.com/@", r"youtube\.com/channel/", r"youtube\.com/c/", r"youtube\.com/user/"],
+    "Facebook": [r"facebook\.com/", r"fb\.com/"],
+    "TikTok":   [r"tiktok\.com/@"],
+}
+
+# ── Industry → short category label for query disambiguation ──────────────────
 _INDUSTRY_CATEGORY_LABEL = {
     "fmcg":         "consumer goods brand",
     "food_bev":     "food beverage brand",
@@ -33,9 +38,27 @@ _INDUSTRY_CATEGORY_LABEL = {
     "real_estate":  "real estate brand",
 }
 
+# ── Profile discovery query templates per platform ────────────────────────────
+# Goal: find the official brand page/channel URL and handle — nothing more.
+_PROFILE_QUERIES = {
+    "YouTube":  [
+        'site:youtube.com "{brand}" official channel',
+        '"{brand}" official YouTube channel {geo}',
+        '{adv_brand} YouTube channel official {geo}',
+    ],
+    "Facebook": [
+        'site:facebook.com "{brand}" official page',
+        '"{brand}" official Facebook page {geo}',
+        '{adv_brand} Facebook official page {geo}',
+    ],
+    "TikTok":   [
+        'site:tiktok.com "@" "{brand}"',
+        '"{brand}" official TikTok account {geo}',
+        '{adv_brand} TikTok official {geo}',
+    ],
+}
+
 # ── NSFW content filter ───────────────────────────────────────────────────────
-# Block snippets that contain NSFW signals unrelated to brand advertising.
-# Conservative list — only clear NSFW terms, not ambiguous marketing language.
 _NSFW_TERMS = frozenset([
     "pornographic", "pornography", "porn", "xxx", "onlyfans", "adult content",
     "nude", "nudity", "naked", "nsfw", "erotic", "erotica", "sex tape",
@@ -44,7 +67,6 @@ _NSFW_TERMS = frozenset([
 ])
 
 def _is_nsfw(snippet: dict) -> bool:
-    """Return True if snippet content contains NSFW signals."""
     text = (
         (snippet.get("content") or "") + " " +
         (snippet.get("title")   or "")
@@ -62,100 +84,59 @@ def _filter_nsfw(snippets: list[dict], brand: str) -> list[dict]:
         print(f"[BrandSafety] Filtered {blocked} NSFW snippet(s) for '{brand}'.", flush=True)
     return clean
 
-# ── Localized "Sponsored" / ad label equivalents by market ───────────────────
-# Used to detect geo-targeted paid content labels that platforms render in local languages.
-# Sources: TikTok UI localization docs; Meta Ads Manager locale reference; Google ATC.
-LOCALIZED_PAID_LABELS = {
-    "TH": "โฆษณา",           # Thai: advertisement / ad
-    "VN": "Được tài trợ",   # Vietnamese: sponsored
-    "ID": "Bersponsor",     # Indonesian: sponsored
-    "MY": "Ditaja",         # Malay: sponsored
-    "PH": "Sponsored",      # Filipino: English dominant
-    "SG": "Sponsored",      # Singapore: English dominant
-}
 
-# Market code lookup by full country name
-_COUNTRY_TO_MARKET_CODE = {
-    "Thailand": "TH", "Vietnam": "VN", "Indonesia": "ID",
-    "Malaysia": "MY", "Philippines": "PH", "Singapore": "SG",
-}
+# ── DuckDuckGo search ─────────────────────────────────────────────────────────
 
-# ── Single best-signal paid query per platform ───────────────────────────────
-_PAID_QUERIES = {
-    "YouTube":  "{brand} YouTube paid ad TrueView bumper pre-roll advertising spend 2025{geo}",
-    "Facebook": "{brand} Facebook paid ad boosted post {paid_label} sponsored Meta Ads Library campaign 2025{geo}",
-}
-
-# ── Single best-signal organic query per platform ────────────────────────────
-_ORGANIC_QUERIES = {
-    "YouTube":  "{brand} YouTube organic views subscribers watch-time engagement 2025{geo}",
-    "Facebook": "{brand} Facebook organic page reach likes shares reactions followers 2025{geo}",
-}
-
-# ── Category SoV fallback query templates ────────────────────────────────────
-# Fired when primary competitor search returns 0 results for a brand-platform pair.
-# Returns top-10 category ads to build a regional category SoV matrix.
-_CATEGORY_SOV_QUERIES = {
-    "YouTube":  "top 10 {industry} brand YouTube ads TrueView pre-roll 2025{geo}",
-    "Facebook": "top 10 {industry} brand Facebook ads boosted sponsored 2025{geo}",
-}
-
-
-# ── DuckDuckGo fallback ───────────────────────────────────────────────────────
-
-def _ddg_search(query: str, max_results: int = 3) -> list[dict]:
+def _ddg_search(query: str, max_results: int = 5) -> list[dict]:
     try:
         with DDGS() as ddgs:
             raw = list(ddgs.text(query, max_results=max_results))
             return [
                 {"url": r.get("href", ""), "title": r.get("title", ""), "content": r.get("body", "")}
-                for r in raw if r.get("body")
+                for r in raw if r.get("href")
             ]
     except Exception:
         return []
 
-
-# ── Unified search (DuckDuckGo only) ────────────────────────────────────────
-
-def _search(query: str, max_results: int = 3) -> list[dict]:
+def _search(query: str, max_results: int = 5) -> list[dict]:
     return _ddg_search(query, max_results=max_results)
 
 
-# ── Query builder helpers ──────────────────────────────────────────────────────
+# ── URL validator — checks result URL matches expected platform domain ─────────
 
-def _extract_brands_and_platforms(query: str, params: dict = None) -> tuple[list[dict], list[str], str]:
-    """
-    Returns (brand_pairs, platforms, post_type).
-    brand_pairs: list of {"brand": str, "advertiser": str} dicts.
-    Advertiser is included in search queries (e.g. "Unilever Axe Philippines Facebook")
-    to avoid ambiguous brand names being confused with unrelated entities.
-    Industry context is NOT added to search queries — it is passed separately for
-    profile validation (agents use it to confirm the correct brand profile was found).
-    """
-    params = params or {}
-    post_type = params.get("post_type", "both") or "both"
+def _is_platform_url(url: str, platform: str) -> bool:
+    patterns = _PLATFORM_URL_PATTERNS.get(platform, [])
+    return any(re.search(p, url, re.IGNORECASE) for p in patterns)
 
+
+# ── Parallel search ───────────────────────────────────────────────────────────
+
+def _parallel_search(tasks: list[tuple[str, str]], max_workers: int = 4) -> list[dict]:
+    snippets: list[dict] = []
+    with ThreadPoolExecutor(max_workers=min(max_workers, max(1, len(tasks)))) as pool:
+        futures = {pool.submit(_search, q, 5): src for q, src in tasks}
+        for fut in as_completed(futures):
+            src = futures[fut]
+            try:
+                for r in fut.result():
+                    snippets.append({**r, "source_type": src})
+            except Exception:
+                pass
+    return snippets
+
+
+# ── Brand/platform extractor ──────────────────────────────────────────────────
+
+def _extract_brands_and_platforms(query: str, params: dict) -> tuple[list[dict], list[str]]:
     raw_platforms = params.get("platforms") or []
     platforms = [p for p in raw_platforms if p in SUPPORTED_PLATFORMS]
-
-    if not platforms:
-        plat_match = re.search(r'\bon\s+([\w/,\s]+?)(?:\s*\(|$)', query, re.IGNORECASE)
-        if plat_match:
-            for tok in re.split(r'[,\s/]+', plat_match.group(1)):
-                tok = tok.strip().lower()
-                for sp in SUPPORTED_PLATFORMS:
-                    if tok in sp.lower():
-                        platforms.append(sp)
-
-    platforms = [p for p in platforms if p in SUPPORTED_PLATFORMS]
     if not platforms:
         platforms = list(SUPPORTED_PLATFORMS)
 
     brand_pairs: list[dict] = []
 
-    # Prefer structured brand+advertiser pairs from new row-based form
-    my_brands  = params.get("my_brands")   or []   # [{"brand":..,"advertiser":..}]
-    comp_brands = params.get("comp_brands") or []   # [{"brand":..,"advertiser":..}]
+    my_brands   = params.get("my_brands")   or []
+    comp_brands = params.get("comp_brands") or []
     for entry in list(my_brands) + list(comp_brands):
         if isinstance(entry, dict) and entry.get("brand"):
             brand_pairs.append({
@@ -163,7 +144,6 @@ def _extract_brands_and_platforms(query: str, params: dict = None) -> tuple[list
                 "advertiser": (entry.get("advertiser") or "").strip(),
             })
 
-    # Fallback: flat advertisers + competitors lists (backward compat)
     if not brand_pairs:
         advertisers = params.get("advertisers") or []
         competitors = params.get("competitors") or []
@@ -177,7 +157,6 @@ def _extract_brands_and_platforms(query: str, params: dict = None) -> tuple[list
                 seen.add(b)
                 brand_pairs.append({"brand": b, "advertiser": ""})
 
-    # Last resort: parse from query string
     if not brand_pairs:
         brand_part = re.split(r'\s+in\s+|\s+on\s+', query, flags=re.IGNORECASE)[0]
         brand_part = re.sub(r'\bvs\.?\b', ',', brand_part, flags=re.IGNORECASE)
@@ -190,50 +169,20 @@ def _extract_brands_and_platforms(query: str, params: dict = None) -> tuple[list
         first = query.split()[0] if query.split() else "brand"
         brand_pairs = [{"brand": first, "advertiser": ""}]
 
-    return brand_pairs, platforms, post_type
-
-
-# ── Snippet enrichment ────────────────────────────────────────────────────────
-
-def _enrich_snippets(results: list[dict], source_type: str) -> list[dict]:
-    return [
-        {**r, "source_type": source_type}
-        for r in results
-        if r.get("content")
-    ]
-
-
-# ── Parallel search helper ────────────────────────────────────────────────────
-
-def _parallel_search(tasks: list[tuple[str, str]], max_workers: int = 5) -> list[dict]:
-    """
-    tasks: list of (query, source_type) tuples.
-    Returns flat list of enriched snippets, order not guaranteed.
-    max_workers capped at 5 to keep search concurrency modest.
-    """
-    snippets: list[dict] = []
-    with ThreadPoolExecutor(max_workers=min(max_workers, len(tasks))) as pool:
-        futures = {pool.submit(_search, q, 3): src for q, src in tasks}
-        for fut in as_completed(futures):
-            src = futures[fut]
-            try:
-                snippets.extend(_enrich_snippets(fut.result(), src))
-            except Exception:
-                pass
-    return snippets
+    return brand_pairs, platforms
 
 
 # ── Main tool ─────────────────────────────────────────────────────────────────
 
 class SocialSearchTool(BaseTool):
-    name: str = "Social Media Intelligence Search"
+    name: str = "Social Media Profile Discovery"
     description: str = (
-        "Searches for PAID and ORGANIC social media intelligence for one or more brands "
-        "across YouTube and Facebook. "
-        "Input: a query string describing the brand(s), platform(s), country, date range, "
-        "and post_type (paid|organic|both). "
-        "Returns structured JSON with raw snippets tagged paid/organic per brand and platform, "
-        "including post content, hashtags, engagement numbers, and ad library references."
+        "Discovers the official social media profile pages and channel handles for one or more "
+        "brands across YouTube, Facebook, and TikTok. "
+        "Returns profile URLs, handles, and page metadata so the Profile Scraper can collect "
+        "posts within the user-specified date scope. Does NOT collect posts, ads, or engagement "
+        "data — that is the Profile Scraper's job. "
+        "Input: JSON with brands (advertisers + competitors), platforms, country, date_from, date_to."
     )
 
     def _run(self, query: str) -> str:
@@ -246,252 +195,103 @@ class SocialSearchTool(BaseTool):
         except Exception:
             pass
 
-        brand_pairs, platforms, post_type = _extract_brands_and_platforms(query, params)
+        brand_pairs, platforms = _extract_brands_and_platforms(query, params)
         country   = params.get("country", "")
         industry  = params.get("industry", "")
-        date_hint = params.get("date_range", "2025")
+        date_from = params.get("date_from", "")
+        date_to   = params.get("date_to", "")
 
-        # Multi-market: each market multiplies the brand×platform search matrix.
-        # e.g. brands=[Axe/Unilever], platforms=[Facebook, YouTube, TikTok], markets=[PH, SG]
-        # → "Unilever Axe Facebook Philippines", "Unilever Axe YouTube Philippines", ...
         markets: list[str] = params.get("markets") or ([country] if country else [""])
-
-        _cat_label = _INDUSTRY_CATEGORY_LABEL.get(industry or "", "brand")
-
-        # Industry is NOT added to search queries — used only as profile validation context
-        _industry_guard = (
-            f" INDUSTRY VALIDATION: Confirm the brand profile belongs to the '{industry}' "
-            f"industry before accepting any data. Discard profiles that are clearly unrelated "
-            f"(e.g. if industry is 'beauty', reject a profile for a hardware or food brand "
-            f"with the same name)."
-        ) if industry else ""
-
-        _paid_tool = None
-        if post_type in ("paid", "both"):
-            try:
-                from tools.paid_adlib_tool import PaidAdLibTool
-                _paid_tool = PaidAdLibTool()
-            except Exception:
-                pass
+        _cat_label = _INDUSTRY_CATEGORY_LABEL.get(industry or "", "")
 
         results: list[dict] = []
 
         for pair in brand_pairs:
             brand      = pair["brand"]
             advertiser = pair.get("advertiser", "")
-
-            # Search query: "Unilever Axe consumer goods brand" (advertiser + brand + category)
-            # Advertiser disambiguates the brand; category further narrows search intent.
-            # Industry is intentionally excluded from query — only used for profile validation.
-            brand_tag = " ".join(filter(None, [advertiser, brand, _cat_label]))
+            adv_brand  = f"{advertiser} {brand}".strip() if advertiser else brand
 
             brand_entry: dict = {
-                "brand":         brand,
-                "advertiser":    advertiser,
-                "platform_data": [],
-                "posts_found":   0,
-                "industry_note": _industry_guard,
+                "brand":      brand,
+                "advertiser": advertiser,
+                "profiles":   [],   # discovered profile records per platform
             }
 
-            # ── Outer loop: market — each market is a separate geo context ──
             for market in markets:
-                geo = f" {market}" if market else ""
+                geo = market if market else ""
 
-                # Localized paid label resolved per-market
-                market_code = _COUNTRY_TO_MARKET_CODE.get(market, "")
-                paid_label  = LOCALIZED_PAID_LABELS.get(market_code, "Sponsored")
-
-                # ── PAID: ad library scraper — once per brand × market ────────
-                if post_type in ("paid", "both") and _paid_tool is not None:
-                    try:
-                        paid_raw  = _paid_tool._run(json.dumps({
-                            "brand":     brand,
-                            "country":   market,
-                            "platforms": platforms,
-                            "markets":   [market],
-                        }))
-                        paid_data = json.loads(paid_raw)
-                        for paid_plat in paid_data.get("platform_data", []):
-                            paid_plat.setdefault("market", market)
-                            matched = next(
-                                (p for p in brand_entry["platform_data"]
-                                 if p["platform"] == paid_plat["platform"]
-                                 and p.get("market") == market),
-                                None,
-                            )
-                            if matched:
-                                matched["raw_results"].extend(paid_plat.get("raw_results", []))
-                            else:
-                                brand_entry["platform_data"].append(paid_plat)
-                            brand_entry["posts_found"] += len(paid_plat.get("raw_results", []))
-                    except Exception as e:
-                        print(f"[SocialSearch] PaidAdLibTool failed for '{brand}' in {market}: {e}", flush=True)
-
-                # ── Inner loop: platform — each platform has its own query template ──
-                # Platform is embedded in the template (not a {platform} var) because
-                # each platform needs a distinct query structure.
                 for platform in platforms:
-                    search_tasks: list[tuple[str, str]] = []
+                    templates = _PROFILE_QUERIES.get(platform, [])
 
-                    if post_type in ("paid", "both"):
-                        tmpl = _PAID_QUERIES.get(platform)
-                        if tmpl:
-                            search_tasks.append((
-                                tmpl.format(brand=brand_tag, geo=geo, paid_label=paid_label),
-                                "paid",
-                            ))
+                    # Build search tasks from all templates for this platform
+                    tasks = [
+                        (t.format(brand=brand, adv_brand=adv_brand, geo=geo), "profile_discovery")
+                        for t in templates
+                    ]
 
-                    if post_type in ("organic", "both"):
-                        tmpl = _ORGANIC_QUERIES.get(platform)
-                        if tmpl:
-                            search_tasks.append((
-                                tmpl.format(brand=brand_tag, geo=geo),
-                                "organic",
-                            ))
+                    raw = _filter_nsfw(_parallel_search(tasks), brand)
 
-                    # Competitive benchmark query — always fired
-                    search_tasks.append((
-                        f"{brand_tag} vs competitors {platform} engagement share of voice{geo} {date_hint}",
-                        "both",
-                    ))
+                    # Prefer results whose URL is actually on the platform domain
+                    on_platform = [r for r in raw if _is_platform_url(r.get("url", ""), platform)]
+                    snippets    = on_platform if on_platform else raw
 
-                    platform_snippets = _filter_nsfw(_parallel_search(search_tasks), brand)
+                    if not snippets:
+                        # Retry: even simpler — just brand name + platform + official
+                        retry_q = f"{adv_brand} official {platform} {geo}".strip()
+                        snippets = _filter_nsfw(_search(retry_q, max_results=5), brand)
+                        on_platform = [r for r in snippets if _is_platform_url(r.get("url", ""), platform)]
+                        snippets = on_platform if on_platform else snippets
 
-                    # Iterative fallback: if full query returns nothing, retry with
-                    # progressively simpler queries before giving up on this brand×platform.
-                    # advertiser (parent company) is kept in early retries — it disambiguates
-                    # brand names (e.g. "Unilever Closeup" vs unrelated "Closeup" entities).
-                    _adv_prefix = f"{advertiser} " if advertiser else ""
-
-                    if not platform_snippets:
-                        # Retry 1: advertiser + brand + platform (drop category label only)
-                        simple_tasks: list[tuple[str, str]] = []
-                        if post_type in ("paid", "both"):
-                            simple_tasks.append((
-                                f"{_adv_prefix}{brand} {platform} paid ad sponsored 2025{geo}", "paid"
-                            ))
-                        if post_type in ("organic", "both"):
-                            simple_tasks.append((
-                                f"{_adv_prefix}{brand} {platform} official page followers engagement 2025{geo}", "organic"
-                            ))
-                        platform_snippets = _filter_nsfw(_parallel_search(simple_tasks), brand)
-                        if platform_snippets:
-                            print(f"[SocialSearch] Retry 1 (adv+brand+platform) succeeded for '{brand}' on {platform}{geo}.", flush=True)
-
-                    if not platform_snippets:
-                        # Retry 2: brand + platform only (drop advertiser — try brand alone)
-                        simple_tasks2: list[tuple[str, str]] = []
-                        if post_type in ("paid", "both"):
-                            simple_tasks2.append((
-                                f"{brand} {platform} paid ad sponsored 2025{geo}", "paid"
-                            ))
-                        if post_type in ("organic", "both"):
-                            simple_tasks2.append((
-                                f"{brand} {platform} official page engagement 2025{geo}", "organic"
-                            ))
-                        platform_snippets = _filter_nsfw(_parallel_search(simple_tasks2), brand)
-                        if platform_snippets:
-                            print(f"[SocialSearch] Retry 2 (brand+platform) succeeded for '{brand}' on {platform}{geo}.", flush=True)
-
-                    if not platform_snippets:
-                        # Retry 3: bare — widest possible net
-                        bare_tasks = [(f"{_adv_prefix}{brand} {platform} social media 2025{geo}", "both")]
-                        platform_snippets = _filter_nsfw(_parallel_search(bare_tasks), brand)
-                        if platform_snippets:
-                            print(f"[SocialSearch] Retry 3 (bare) succeeded for '{brand}' on {platform}{geo}.", flush=True)
-
-                    for s in platform_snippets:
-                        s.setdefault("market", market)
-
-                    if platform_snippets:
-                        matched = next(
-                            (p for p in brand_entry["platform_data"]
-                             if p["platform"] == platform and p.get("market") == market),
-                            None,
+                    if snippets:
+                        # Best candidate: first URL that matches platform domain, else first result
+                        best = next(
+                            (r for r in snippets if _is_platform_url(r.get("url", ""), platform)),
+                            snippets[0],
                         )
-                        if matched:
-                            matched["raw_results"].extend(platform_snippets)
-                        else:
-                            brand_entry["platform_data"].append({
-                                "platform":    platform,
-                                "market":      market,
-                                "raw_results": platform_snippets,
-                            })
-                        brand_entry["posts_found"] += len(platform_snippets)
-                    elif post_type in ("paid", "both"):
-                        # Category SoV fallback — only fires after all retries exhausted
+                        brand_entry["profiles"].append({
+                            "platform":        platform,
+                            "market":          market,
+                            "profile_url":     best.get("url", ""),
+                            "page_title":      best.get("title", ""),
+                            "snippet":         best.get("content", "")[:300],
+                            "all_candidates":  [r.get("url", "") for r in snippets[:5]],
+                            "industry_context": _cat_label,
+                            "date_scope":      {"from": date_from, "to": date_to},
+                        })
                         print(
-                            f"[SocialSearch] No results for '{brand}' on {platform}{geo} after retries — "
-                            "running category SoV fallback.",
+                            f"[SocialSearch] {brand} / {platform} / {market}: "
+                            f"found {best.get('url', '(no url)')}",
                             flush=True,
                         )
-                        industry_label = industry or "brand"
-                        tmpl = _CATEGORY_SOV_QUERIES.get(platform)
-                        if tmpl:
-                            cat_q = tmpl.format(industry=industry_label, geo=geo, paid_label=paid_label)
-                            cat_snippets = _parallel_search([(cat_q, "paid_category_fallback")])
-                            for s in cat_snippets:
-                                s.setdefault("market", market)
-                            if cat_snippets:
-                                brand_entry["platform_data"].append({
-                                    "platform":          platform,
-                                    "market":            market,
-                                    "raw_results":       cat_snippets,
-                                    "category_fallback": True,
-                                    "fallback_note": (
-                                        f"No '{brand}' ads found on {platform}{geo} after retries. "
-                                        f"Top-10 {industry_label} category ads returned instead."
-                                    ),
-                                })
-                                brand_entry["posts_found"] += len(cat_snippets)
-
-                # General brand social health — 1 query per brand × market
-                gen_q = (
-                    f"{brand_tag} social media presence overview {' '.join(platforms)} "
-                    f"followers engagement rate benchmark{geo} {date_hint}"
-                )
-                gen = _filter_nsfw(_search(gen_q, max_results=3), brand)
-                if gen:
-                    for s in gen:
-                        s.setdefault("market", market)
-                    brand_entry.setdefault("general_presence", []).extend(
-                        _enrich_snippets(gen, "organic")
-                    )
+                    else:
+                        print(
+                            f"[SocialSearch] {brand} / {platform} / {market}: no profile found.",
+                            flush=True,
+                        )
+                        brand_entry["profiles"].append({
+                            "platform":    platform,
+                            "market":      market,
+                            "profile_url": "",
+                            "page_title":  "",
+                            "not_found":   True,
+                            "date_scope":  {"from": date_from, "to": date_to},
+                        })
 
             results.append(brand_entry)
 
-        # ── Fallback to golden dataset ────────────────────────────────────
         brands_flat = [p["brand"] for p in brand_pairs]
-        if not any(b["platform_data"] for b in results):
-            golden_path = os.path.join(os.path.dirname(__file__), "../data/golden_dataset.json")
-            if os.path.exists(golden_path):
-                with open(golden_path, "r") as f:
-                    golden_data = json.load(f)
-                return json.dumps({
-                    "fallback": True,
-                    "fallback_reason": "All live searches returned zero results — serving cached seed data.",
-                    "query_meta": {
-                        "brands": brands_flat, "platforms": platforms,
-                        "post_type": post_type, "markets": markets,
-                    },
-                    "results": golden_data,
-                })
-            return json.dumps({
-                "fallback": True,
-                "fallback_reason": "All live searches returned zero results and no seed data is available.",
-                "results": [],
-            })
-
-        total_snippets = sum(b["posts_found"] for b in results)
         return json.dumps({
             "query_meta": {
-                "brands":      brands_flat,
-                "brand_pairs": brand_pairs,
-                "platforms":   platforms,
-                "post_type":   post_type,
-                "markets":     markets,
-                "date_range":  date_hint,
-                "total_snippets_retrieved": total_snippets,
+                "brands":    brands_flat,
+                "platforms": platforms,
+                "markets":   markets,
+                "date_from": date_from,
+                "date_to":   date_to,
+                "note": (
+                    "Profile URLs only. Post collection, engagement metrics, paid/organic "
+                    "classification, and ER baseline are handled by the Profile Scraper "
+                    "and Ad Library Collector agents using these handles."
+                ),
             },
             "brand_results": results,
         }, indent=2)

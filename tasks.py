@@ -70,25 +70,30 @@ class SocialTasks:
                 f"MARKETS: {markets_str}\n"
                 f"PLATFORMS: {plat_str}\n"
                 f"{industry_guard}\n"
+                "YOUR ONLY JOB IS PROFILE DISCOVERY — find official page URLs and handles.\n"
+                "Do NOT collect posts, engagement data, ad counts, or spend estimates.\n"
+                "Post collection and paid/organic classification happen downstream in the\n"
+                "Profile Scraper and Ad Library Collector agents.\n\n"
                 "FOR EACH brand × platform × market combination:\n"
-                "1. Use the Social Media Intelligence Search tool to find the official page.\n"
-                "   Search query format: '[Advertiser] [Brand] [Platform] official page [Market]'\n"
-                "   Example: 'Unilever Axe Facebook official page Philippines'\n"
-                "2. Extract the exact URL or handle from the search results.\n"
-                "3. Verify it is the brand-owned page (check bio, branding, follower scale).\n"
-                "4. Record confidence: 'high' (exact match, verified), 'medium' (likely match), "
-                "'low' (uncertain — flag for scraper to validate).\n\n"
-                "TOOL CALL FORMAT — pass this JSON block with your search query:\n"
+                "1. Use the 'Social Media Profile Discovery' tool to find the official page.\n"
+                "2. Extract the exact URL and handle from the search results.\n"
+                "3. Verify it is the brand-owned page (check page name, bio, follower scale).\n"
+                "4. Record confidence: 'high' (exact match), 'medium' (likely), 'low' (uncertain).\n\n"
+                "TOOL CALL FORMAT — pass this JSON with your query:\n"
                 f'{{"my_brands": {json.dumps(my_brands)}, '
                 f'"comp_brands": {json.dumps(comp_brands)}, '
                 f'"markets": {json.dumps(markets)}, '
                 f'"platforms": {json.dumps(platforms)}, '
-                f'"industry": "{industry}"}}\n\n'
-                "Output a structured profile map. Each entry must include:\n"
-                "  brand, advertiser, market, platform, url (or handle), confidence, notes\n\n"
-                "This profile map will be passed directly to the Profile Scraper and Ad Library "
-                "Collector agents — they will use your URLs as their scraping targets. "
-                "If you cannot find a profile for a combination, record url=null and explain why."
+                f'"country": "{country}", '
+                f'"industry": "{industry}", '
+                f'"date_from": "{params.get("date_from","")}", '
+                f'"date_to": "{params.get("date_to","")}"'
+                "}}\n\n"
+                "Output a structured profile map with one entry per brand × platform × market.\n"
+                "Include: brand, advertiser, market, platform, url, handle, confidence, notes.\n"
+                "If a profile cannot be found, record url=null with a reason.\n"
+                "This map is passed directly to the Profile Scraper and Ad Library Collector\n"
+                "as their scraping targets — accuracy here determines all downstream data quality."
             ),
             expected_output=(
                 "A JSON profile map: a list of objects, one per brand × platform × market, each with: "
