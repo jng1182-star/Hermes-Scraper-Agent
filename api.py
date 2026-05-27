@@ -68,7 +68,9 @@ _run_state = {
     "retry_count": 0,
     "start_ts": None,
 }
-_state_lock = threading.Lock()
+_state_lock   = threading.Lock()
+_stop_flag    = threading.Event()        # set by /stop-analysis
+_worker_thread: Optional[threading.Thread] = None  # reference to running pipeline thread
 
 # Map CrewAI agent roles → dashboard node IDs (current + legacy aliases)
 _ROLE_TO_NODE = {
@@ -159,8 +161,12 @@ def _log(msg: str):
 
 
 def _run_with_logging(params: dict):
+    global _worker_thread
     import io, os as _os, time as _time
     import logging as _logging
+
+    _stop_flag.clear()
+    _worker_thread = threading.current_thread()
 
     # Re-assert Ollama routing — Railway injects OPENAI_BASE_URL into the process env
     # after startup; litellm reads env at call-time, not import-time.
@@ -202,6 +208,8 @@ def _run_with_logging(params: dict):
             if clean:
                 with _state_lock:
                     _run_state["logs"].append(clean)
+            if _stop_flag.is_set():
+                raise RuntimeError("Analysis stopped by user.")
             return len(s)
         def flush(self): pass
 
@@ -250,14 +258,22 @@ def _run_with_logging(params: dict):
                 if _run_state["agent_states"][aid] == "active":
                     _run_state["agent_states"][aid] = "done"
     except Exception as e:
-        with _state_lock:
-            _run_state["error"] = str(e)
-            _run_state["logs"].append(f"ERROR: {e}")
+        if _stop_flag.is_set() or "stopped by user" in str(e).lower():
+            with _state_lock:
+                _run_state["logs"].append("[STOP] Analysis cancelled by user.")
+                for aid in _run_state["agent_states"]:
+                    _run_state["agent_states"][aid] = "idle"
+        else:
+            with _state_lock:
+                _run_state["error"] = str(e)
+                _run_state["logs"].append(f"ERROR: {e}")
     finally:
         _sys.stdout = _old_out
         _sys.stderr = _old_err
         _root_logger.removeHandler(_handler)
         _main_module._state_hook = None
+        _stop_flag.clear()
+        _worker_thread = None
         with _state_lock:
             _run_state["running"] = False
 
@@ -504,8 +520,29 @@ _NOT_AVAILABLE = JSONResponse(
 
 @app.post("/stop-analysis")
 async def stop_analysis():
-    """Stop is not available on Railway (no persistent worker thread)."""
-    return _NOT_AVAILABLE
+    if not _run_state.get("running"):
+        return {"ok": True, "status": "not_running"}
+
+    # 1. Set flag — _Cap.write() raises RuntimeError on next print() call
+    _stop_flag.set()
+
+    # 2. ctypes interrupt — raises RuntimeError inside the worker thread immediately,
+    #    even if it's blocked in a Python call (LLM wait, asyncio, etc.)
+    t = _worker_thread
+    if t and t.is_alive():
+        try:
+            import ctypes
+            ctypes.pythonapi.PyThreadState_SetAsyncExc(
+                ctypes.c_ulong(t.ident),
+                ctypes.py_object(RuntimeError),
+            )
+        except Exception:
+            pass
+
+    with _state_lock:
+        _run_state["logs"].append("[STOP] Stop requested by user.")
+
+    return {"ok": True, "status": "stop_requested"}
 
 
 @app.get("/proxy-status")
