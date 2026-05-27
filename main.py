@@ -20,7 +20,7 @@ from approval_gate import ApprovalGate
 # Injected by server.py before each run
 _state_hook = None  # callable(node_id: str, state: str) | None
 
-STALL_TIMEOUT  = int(os.getenv("STALL_TIMEOUT",    "90"))
+STALL_TIMEOUT  = int(os.getenv("STALL_TIMEOUT",    "240"))
 MAX_RETRIES    = int(os.getenv("STALL_MAX_RETRIES", "2"))
 GATE_TIMEOUT   = int(os.getenv("GATE_TIMEOUT",      "120"))
 

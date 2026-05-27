@@ -627,21 +627,25 @@ class SentinelObserver:
             )
 
             # Handler: LLM call starts → thinking stream
+            # crewai 1.x: LLMCallStartedEvent has no .agent; use agent_role string field directly.
             @_eb.on(LLMCallStartedEvent)
             def _on_llm_start(source, event):
-                role  = getattr(getattr(event, "agent", source), "role", "") or ""
+                role  = (getattr(event, "agent_role", None)
+                         or getattr(getattr(event, "agent", None), "role", None)
+                         or "")
                 phase = _ROLE_TO_PHASE.get(role.lower().strip(), "")
                 if phase:
                     self._gate_write(f"[AGENT THINKING: {role}] Starting LLM inference...")
 
             # Handler: tool usage finished → parse output for data quality signals
+            # crewai 1.x: ToolUsageFinishedEvent exposes agent_role as a plain string.
             @_eb.on(ToolUsageFinishedEvent)
             def _on_tool_done(source, event):
                 tool_name   = getattr(event, "tool_name", "") or ""
                 tool_output = str(getattr(event, "output", "") or "")
-                # agent is on the event object in crewai >= 1.x
-                agent_obj   = getattr(event, "agent", source)
-                role        = getattr(agent_obj, "role", "") or ""
+                role        = (getattr(event, "agent_role", None)
+                               or getattr(getattr(event, "agent", None), "role", None)
+                               or "")
                 phase       = _ROLE_TO_PHASE.get(role.lower().strip(), "")
                 if not phase:
                     return
@@ -652,12 +656,14 @@ class SentinelObserver:
                 self._parse_tool_output(phase, tool_name, tool_output)
 
             # Handler: agent execution complete → emit thinking summary + phase_complete
+            # crewai 1.x: AgentExecutionCompletedEvent has both .agent (object) and agent_role (str).
             @_eb.on(AgentExecutionCompletedEvent)
             def _on_agent_done(source, event):
-                agent_obj = getattr(event, "agent", source)
-                role      = getattr(agent_obj, "role", "") or ""
-                phase     = _ROLE_TO_PHASE.get(role.lower().strip(), "")
-                output    = str(getattr(event, "output", "") or "")
+                role   = (getattr(event, "agent_role", None)
+                          or getattr(getattr(event, "agent", None), "role", None)
+                          or "")
+                phase  = _ROLE_TO_PHASE.get(role.lower().strip(), "")
+                output = str(getattr(event, "output", "") or "")
                 if phase:
                     self._gate_write(
                         f"[AGENT THINKING: {role}] Task complete. "
@@ -702,7 +708,7 @@ class SentinelObserver:
 
                 # Emit thinking
                 self._gate_write(
-                    f"[AGENT THINKING: profile_scraper] "
+                    f"[AGENT THINKING: Profile Scraper] "
                     f"{brand}/{platform}: {n_posts} posts in scope. "
                     f"Baseline: {'available' if baseline else 'NOT available'}. "
                     f"ER threshold: {er_thresh:.3f}%."
@@ -751,8 +757,8 @@ class SentinelObserver:
             bl_outliers  = data.get("total_baseline_outliers", 0)
 
             self._gate_write(
-                f"[AGENT THINKING: feed_scroller] "
-                f"Feed scroll complete. Posts scrolled: {total_posts}. "
+                f"[AGENT THINKING: Ad Library Collector] "
+                f"Ad library collection complete. Posts scrolled: {total_posts}. "
                 f"DOM-confirmed ads: {dom_ads}. "
                 f"Baseline outliers: {bl_outliers}. "
                 f"Baselines applied: {baselines_ok}."

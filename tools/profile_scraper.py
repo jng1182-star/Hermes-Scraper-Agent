@@ -1046,18 +1046,21 @@ async def _run_profile_scrape(brands: list[dict], platforms: list[str],
                             _scrape_youtube_channel(ctx_headless, brand, handle, date_from, date_to, scan_dt)
                         )
 
-            try:
-                # 180s: leaves headroom within the 600s crew phase cap for LLM overhead.
-                # With _MAX_POST_URLS=40 and _MAX_CONCURRENT_POSTS=3, worst case is
-                # ~40 post-page visits × 15s timeout / 3 concurrency = ~200s per platform,
-                # but platforms run in parallel so total is bounded by the slowest platform.
-                raw = await asyncio.wait_for(
-                    asyncio.gather(*scrape_tasks, return_exceptions=True),
-                    timeout=180.0,
-                )
-            except asyncio.TimeoutError:
-                logger.warning("[ProfileScraper] Overall timeout — returning partial results.")
-                raw = []
+            # Wrap each platform×brand task with an individual 180s timeout so a
+            # single slow/blocked platform doesn't discard results from the others.
+            # Outer gather uses return_exceptions=True — TimeoutError treated as no-data.
+            async def _timed(coro, secs=180.0):
+                try:
+                    return await asyncio.wait_for(coro, timeout=secs)
+                except asyncio.TimeoutError:
+                    logger.warning("[ProfileScraper] Per-task timeout after %.0fs — partial data kept.", secs)
+                    return None
+                except Exception as exc:
+                    logger.warning("[ProfileScraper] Task error: %s", exc)
+                    return None
+
+            timed_tasks = [_timed(t) for t in scrape_tasks]
+            raw = await asyncio.gather(*timed_tasks)
 
             results = [r for r in raw if isinstance(r, dict)]
 
