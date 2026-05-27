@@ -185,15 +185,21 @@ class SocialSearchTool(BaseTool):
         "Input: JSON with brands (advertisers + competitors), platforms, country, date_from, date_to."
     )
 
-    def _run(self, query: str) -> str:
+    def _run(self, query) -> str:
+        # LLM sometimes passes a dict directly instead of a string — handle both.
         params: dict = {}
-        try:
-            bracket = query.find('{')
-            if bracket != -1:
-                params = json.loads(query[bracket:])
-                query  = query[:bracket].strip()
-        except Exception:
-            pass
+        if isinstance(query, dict):
+            params = query
+            query  = params.pop("query", "") or ""
+        else:
+            query = str(query or "")
+            try:
+                bracket = query.find('{')
+                if bracket != -1:
+                    params = json.loads(query[bracket:])
+                    query  = query[:bracket].strip()
+            except Exception:
+                pass
 
         brand_pairs, platforms = _extract_brands_and_platforms(query, params)
         country   = params.get("country", "")

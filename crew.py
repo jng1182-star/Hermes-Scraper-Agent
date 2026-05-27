@@ -17,8 +17,8 @@ from sentinel import (
 # Per-phase caps
 _PROFILE_TIMEOUT  = int(os.getenv("PROFILE_TIMEOUT",  "600"))  # 10 min — DOM scraping across multiple brands
 _FEED_TIMEOUT     = int(os.getenv("FEED_TIMEOUT",     "600"))  # 10 min — two scroll passes + ad library
-_ANALYST_TIMEOUT  = int(os.getenv("ANALYST_TIMEOUT",  "600"))  # 10 min — complex analysis needs time
-_REPORTER_TIMEOUT = int(os.getenv("REPORTER_TIMEOUT", "300"))  # 5 min
+_ANALYST_TIMEOUT  = int(os.getenv("ANALYST_TIMEOUT",  "300"))  # 5 min — must complete before ngrok 550s drop
+_REPORTER_TIMEOUT = int(os.getenv("REPORTER_TIMEOUT", "240"))  # 4 min
 _GATE_TIMEOUT     = int(os.getenv("GATE_TIMEOUT",     "120"))  # 2 min
 
 
@@ -282,11 +282,26 @@ class SocialListeningCrew:
             if cp_analyst:
                 print("[RESUME] Analyst output restored from checkpoint. Running Reporter only.", flush=True)
             else:
+                # Check if Sentinel flagged analyst_compact (fires when analyst approaches timeout)
+                _compact_mode = False
+                try:
+                    try:
+                        from server import _run_state, _state_lock
+                    except ImportError:
+                        from api import _run_state, _state_lock
+                    with _state_lock:
+                        _compact_mode = _run_state.get("sentinel_directives", {}).get("analyst_compact", False)
+                except Exception:
+                    pass
+
                 analyst_context = _build_analyst_context(
                     profile_output or "{}",
                     feed_output    or "{}",
                     profile_map    or "",
+                    compact=_compact_mode,
                 )
+                if _compact_mode:
+                    print("[SENTINEL] Analyst running in compact context mode (2000-char cap).", flush=True)
                 task_analyst = self.tasks.analysis_task(analyst, prior_context=analyst_context, params=self.params)
                 crew_analyst = Crew(agents=[analyst], tasks=[task_analyst],
                                     process=Process.sequential, verbose=True)
@@ -448,7 +463,8 @@ def _merge_scrape_outputs(profile_json: str, feed_json: str) -> dict:
     }
 
 
-def _build_analyst_context(profile_json: str, feed_json: str, search_json: str) -> str:
+def _build_analyst_context(profile_json: str, feed_json: str, search_json: str,
+                            compact: bool = False) -> str:
     """
     Build a structured context string for the analyst agent.
 
@@ -536,12 +552,18 @@ def _build_analyst_context(profile_json: str, feed_json: str, search_json: str) 
                 + json.dumps(feed_summary, indent=None)
             )
 
-    # ── Search fallback ────────────────────────────────────────────────────────
+    # ── Researcher profile map ────────────────────────────────────────────────
+    _search_cap = 800 if compact else 1500
     if search_json:
         parts.append(
-            "=== SEARCH FALLBACK (secondary — lower confidence) ===\n"
-            "Use only where scraper data is absent for a brand×platform.\n\n"
-            + search_json[:1500]
+            "=== AGENT 0: RESEARCHER PROFILE MAP ===\n"
+            "Verified brand handles/URLs discovered by the researcher before scraping.\n"
+            "Use handle/url fields to cross-reference scraper data per brand×platform.\n\n"
+            + search_json[:_search_cap]
         )
 
-    return "\n\n".join(parts)
+    # In compact mode, trim overall context to 2000 chars to prevent analyst stall
+    joined = "\n\n".join(parts)
+    if compact and len(joined) > 2000:
+        joined = joined[:2000] + "\n[SENTINEL COMPACT MODE: context trimmed to 2000 chars]"
+    return joined

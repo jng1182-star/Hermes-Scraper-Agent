@@ -409,23 +409,22 @@ class SocialTasks:
 
         prefix = ""
         if prior_context:
-            snippet = prior_context[:6000]
-            if len(prior_context) > 6000:
-                snippet += "\n[... TRUNCATED — earlier data omitted to stay within token limit ...]"
-            is_first_party = "AGENT 1:" in snippet or "AGENT 2:" in snippet
+            snippet = prior_context[:4000]
+            if len(prior_context) > 4000:
+                snippet += "\n[... TRUNCATED — use only the signals above for scoring ...]"
+            is_first_party = (
+                "AGENT 1:" in snippet or "AGENT 2:" in snippet
+                or "PROFILE SCRAPER" in snippet or "AD LIBRARIES" in snippet
+                or "RESEARCHER PROFILE MAP" in snippet
+            )
             if is_first_party:
                 prefix = (
-                    "DATA CONTEXT (first-party API/DOM data):\n"
-                    "The following data was collected directly from platform APIs and pages "
-                    "by Agent 1 (profile baseline) and Agent 2 (feed ad capture). "
-                    "Use these values directly — do NOT re-estimate when real signals are present.\n\n"
+                    "INPUT DATA (scrapers + researcher):\n"
                     + snippet + "\n\n"
                 )
             else:
                 prefix = (
-                    "[RESUMED FROM CHECKPOINT / SEARCH FALLBACK]\n"
-                    "The following data was collected via web search or fallback scraping. "
-                    "Treat as lower confidence than primary API values.\n\n"
+                    "INPUT DATA (web search fallback — lower confidence):\n"
                     + snippet + "\n\n"
                 )
 
@@ -583,13 +582,12 @@ class SocialTasks:
 
         prefix = ""
         if prior_context:
-            snippet = prior_context[:6000]
-            if len(prior_context) > 6000:
-                snippet += "\n[... TRUNCATED — earlier data omitted to stay within token limit ...]"
+            snippet = prior_context[:4000]
+            if len(prior_context) > 4000:
+                snippet += "\n[... TRUNCATED — format the brands shown above only ...]"
             prefix = (
-                "[RESUMED FROM CHECKPOINT]\n"
-                "The analyst already computed the SOV indices. Do NOT re-analyse. "
-                f"Format directly into the required JSON schema:\n\n{snippet}\n\n"
+                "ANALYST OUTPUT (format this into the required JSON schema — do NOT re-analyse):\n"
+                f"{snippet}\n\n"
             )
 
         return Task(

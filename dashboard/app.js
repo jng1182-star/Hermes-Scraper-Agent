@@ -436,12 +436,22 @@ function getFormParams() {
   let dateRange = State.dateRange;
   let dateFrom = null, dateTo = null;
   if (dateRange === 'custom') {
-    dateFrom = document.getElementById('dateFrom').value;
-    dateTo   = document.getElementById('dateTo').value;
-    if (dateFrom && dateTo) dateRange = `${dateFrom} to ${dateTo}`;
-  } else {
     dateFrom = document.getElementById('dateFrom').value || null;
     dateTo   = document.getElementById('dateTo').value   || null;
+    if (dateFrom && dateTo) dateRange = `${dateFrom} to ${dateTo}`;
+  } else {
+    // Preset — compute concrete ISO dates so the scraper has a real scope window.
+    // Format: YYYY-MM-DD (the profile scraper's _in_scope() expects ISO strings).
+    const activePreset = document.querySelector('.date-preset.active');
+    const days = activePreset ? parseInt(activePreset.dataset.days) : 30;
+    if (days > 0) {
+      const todayDt  = new Date();
+      const fromDt   = new Date(todayDt);
+      fromDt.setDate(todayDt.getDate() - days);
+      const _iso = d => d.toISOString().slice(0, 10);
+      dateFrom = _iso(fromDt);
+      dateTo   = _iso(todayDt);
+    }
   }
 
   // Multi-select country (markets)
@@ -742,6 +752,43 @@ function _routeLogLine(line, agentStates) {
   return null;
 }
 
+// Classify a log line's source type for visual rendering
+function _logLineType(raw) {
+  const l = raw.toLowerCase();
+  if (l.includes('[sentinel thinking]'))   return 'sentinel-think';
+  if (l.includes('[sentinel flag]'))       return 'sentinel-flag';
+  if (l.includes('[sentinel directive]'))  return 'sentinel-directive';
+  if (l.includes('[agent thinking:'))      return 'agent-think';
+  if (l.includes('[gate override]'))       return 'gate-override';
+  return 'normal';
+}
+
+// Render a raw log line into an HTML span with appropriate class + prefix
+function _renderLogLine(raw) {
+  const type = _logLineType(raw);
+  // Strip the leading bracketed tag so we don't double-display it
+  const body = raw.replace(/^\[[^\]]+\]\s*/, '').trim() || raw;
+  const esc  = s => s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  switch (type) {
+    case 'sentinel-think':
+      return `<span class="sl-sentinel-think">⬡ SENTINEL: ${esc(body)}</span>`;
+    case 'sentinel-flag':
+      return `<span class="sl-sentinel-flag">⚑ FLAG: ${esc(body)}</span>`;
+    case 'sentinel-directive':
+      return `<span class="sl-sentinel-directive">→ DIRECTIVE: ${esc(body)}</span>`;
+    case 'agent-think': {
+      // Extract the role from the original: [AGENT THINKING: <role>] ...
+      const rm = raw.match(/\[agent thinking:\s*([^\]]+)\]/i);
+      const roleLabel = rm ? rm[1].trim() : '';
+      return `<span class="sl-agent-think">◈ ${esc(roleLabel)}: ${esc(body)}</span>`;
+    }
+    case 'gate-override':
+      return `<span class="sl-gate-override">✔ OVERRIDE: ${esc(body)}</span>`;
+    default:
+      return `<span>${esc(body)}</span>`;
+  }
+}
+
 function updateAgentCards(agentStates, logs) {
   Object.entries(agentStates).forEach(([id, status]) => {
     const card  = document.getElementById('acard-' + id);
@@ -754,21 +801,18 @@ function updateAgentCards(agentStates, logs) {
 
   // Route new log lines to per-card feeds
   if (logs && logs.length) {
-    // Build per-agent line buckets from all logs
     const buckets = { profile: [], feed: [], scraper: [], analyst: [], reporter: [], gate: [] };
     logs.forEach(line => {
       const id = _routeLogLine(line, agentStates);
-      if (id) buckets[id].push(line.replace(/^\[.*?\]\s*/, '').trim());
+      if (id) buckets[id].push(line);   // keep raw line — _renderLogLine handles formatting
     });
     Object.entries(buckets).forEach(([id, lines]) => {
       const feedEl = document.getElementById('alog-' + id);
       if (!feedEl || !lines.length) return;
-      const state = agentStates[id] || 'idle';
-      if (state === 'idle' && !lines.length) return;
-      // Show last ~12 lines for the card
-      const show = lines.slice(-12).join('\n');
-      if (feedEl.textContent !== show) {
-        feedEl.textContent = show;
+      // Show last 14 lines for the card, rendered as HTML spans
+      const html = lines.slice(-14).map(_renderLogLine).join('\n');
+      if (feedEl.innerHTML !== html) {
+        feedEl.innerHTML = html;
         feedEl.scrollTop = feedEl.scrollHeight;
       }
     });

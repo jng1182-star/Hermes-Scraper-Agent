@@ -1058,6 +1058,18 @@ select.form-input { cursor: pointer; }
 .acard-feed::-webkit-scrollbar { width: 3px; }
 .acard-feed::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 2px; }
 
+/* ── Sentinel voice line types in agent card feeds ───────────────────── */
+.acard-feed span           { display: block; }
+.sl-sentinel-think         { color: #a78bfa; font-style: italic; }   /* violet — thinking */
+.sl-sentinel-flag          { color: #f87171; font-weight: bold; }     /* red — flag raised */
+.sl-sentinel-directive     { color: #34d399; font-weight: bold; }     /* green — directive / fix */
+.sl-agent-think            { color: #60a5fa; }                        /* blue — agent LLM call */
+.sl-gate-override          { color: #fbbf24; font-weight: bold; }     /* amber — gate override */
+.agent-card[data-state=active] .sl-sentinel-think    { color: #c4b5fd; }
+.agent-card[data-state=active] .sl-sentinel-flag     { color: #fca5a5; }
+.agent-card[data-state=active] .sl-sentinel-directive{ color: #6ee7b7; }
+.agent-card[data-state=active] .sl-agent-think       { color: #93c5fd; }
+
 /* ── Sentinel Flags Panel ── */
 .sentinel-flags-panel {
   display: none;           /* hidden when empty; shown by JS when flags exist */

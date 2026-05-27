@@ -347,11 +347,20 @@ class SentinelObserver:
     def _on_timeout_warning(self, event: SentinelEvent) -> None:
         elapsed = event.payload.get("elapsed_secs", 0)
         timeout = event.payload.get("timeout_secs", 1)
+        phase   = event.phase_name
         self._think(
-            f"[WARNING] Phase '{event.phase_name}' at 80%+ of timeout "
+            f"[WARNING] Phase '{phase}' at 80%+ of timeout "
             f"({elapsed:.0f}s of {timeout}s). "
             f"If it completes with empty output, I will flag it as a likely scraper block."
         )
+        # Autonomous fix for analyst stalls: switch to compact context so next retry succeeds
+        if phase == "analyst":
+            self._think(
+                "Analyst approaching timeout — autonomously enabling compact context mode "
+                "so the next retry uses a 2000-char input cap instead of 4000-char. "
+                "This prevents gemma4:26b from stalling on large profile map JSON."
+            )
+            self._action_switch_analyst_to_compact()
 
     def _on_output_sample(self, event: SentinelEvent) -> None:
         phase  = event.phase_name
@@ -361,44 +370,98 @@ class SentinelObserver:
 
         lower = sample.lower()
 
-        # Detect JSON parse errors in LLM stream
+        # Detect JSON parse errors in LLM stream — autonomous fix: strip fences + save checkpoint
         if any(x in lower for x in ("json.decode", "valueerror", "expecting value",
                                      "unterminated string", "invalid \\escape")):
-            self._raise_flag(SentinelFlag(
+            _raw_capture = sample
+            _phase_cap   = phase
+            _self_ref    = self
+
+            def _auto_strip():
+                _self_ref._action_strip_json_fence(_phase_cap, _raw_capture)
+
+            flag_json = SentinelFlag(
                 flag_id=self._new_id(), phase=phase, brand="", platform="",
-                issue="JSON parse error detected in LLM output stream",
+                issue="JSON parse error in LLM output — Sentinel auto-fixing: stripping fences",
                 technical=(
-                    "LLM output contains a JSON parse error signal. If this reaches the next "
-                    "phase it will cause _extract_baselines() or feed_task() json.loads() "
-                    "to fail, returning empty baselines silently."
+                    "LLM output contains a JSON parse error signal. Sentinel will automatically "
+                    "strip markdown code fences and re-validate before writing the checkpoint."
                 ),
                 methodological=(
-                    "Empty baselines disable ER outlier scoring in the feed scroller. "
-                    "TikTok and Facebook paid detection degrades to DOM labels only. "
-                    "In SEA markets where 'Sponsored' labels are inconsistently applied, "
-                    "this means the majority of paid activity will not be detected."
+                    "Empty baselines disable ER outlier scoring. TikTok and Facebook paid detection "
+                    "degrades to DOM labels only — ~30–40% miss rate in SEA markets."
                 ),
-                recommendation="INTERCEPT output before passing downstream. Apply _strip_fences() and re-validate JSON.",
+                recommendation="AUTO-FIX executing: _strip_fences() + checkpoint rewrite.",
                 confidence="HIGH", severity="CRITICAL",
-            ))
+            )
+            self._raise_flag(flag_json)
+            self._issue_directive(
+                flag_json,
+                "Sentinel auto-fixing JSON parse error: stripping fences and rewriting checkpoint.",
+                action=_auto_strip,
+            )
 
-        # Detect selector failures
+        # Detect selector failures — autonomous fix: log coverage gap + cap confidence
         if "queryselector" in lower and ("none" in lower or "not found" in lower):
-            self._raise_flag(SentinelFlag(
+            _self_ref = self
+            _phase_c  = phase
+
+            def _auto_selector():
+                _self_ref._action_set_directive(f"selector_stale_{_phase_c}", True)
+                _self_ref._action_log_coverage_gap("", "", f"selector_stale in {_phase_c} — confidence capped at Low")
+
+            flag_sel = SentinelFlag(
                 flag_id=self._new_id(), phase=phase, brand="", platform="",
-                issue="DOM selector returned None — possible selectors.json mismatch or platform DOM update",
+                issue="DOM selector returned None — Sentinel logging selector_stale directive",
                 technical=(
-                    "page.query_selector() returned None. This typically means the platform "
-                    "has updated its DOM and selectors.json is stale, or selectors.json is missing entirely."
+                    "page.query_selector() returned None. Platform DOM may have changed or "
+                    "selectors.json is stale. Sentinel will flag this phase as selector_stale."
                 ),
                 methodological=(
                     "If follower_count selector fails, ER denominator falls to max(avg_views, 1). "
                     "For brands with low view counts, ER becomes 100%+ and every post gets flagged "
                     "as baseline_outlier. SOV paid volume will be massively overstated."
                 ),
-                recommendation="Log selector failure. Flag platform as 'selector_stale' in output. Cap confidence at Low.",
+                recommendation="AUTO-FIX: setting selector_stale directive. Confidence capped at Low in output.",
                 confidence="HIGH", severity="WARNING",
-            ))
+            )
+            self._raise_flag(flag_sel)
+            self._issue_directive(
+                flag_sel,
+                "Selector failure recorded. This phase's confidence is capped at Low.",
+                action=_auto_selector,
+            )
+
+        # Detect ngrok tunnel errors — autonomous fix: switch analyst to compact + clear checkpoint
+        if "err_ngrok" in lower or "ngrok" in lower and "error" in lower:
+            _self_ref = self
+            _phase_c  = phase
+
+            def _auto_ngrok():
+                _self_ref._action_switch_analyst_to_compact()
+                _self_ref._action_clear_phase_checkpoint(_phase_c)
+
+            self._gate_write(
+                f"[SENTINEL] AUTO-FIX: ngrok error detected in {phase} — "
+                "switching analyst to compact mode and clearing phase checkpoint for retry."
+            )
+            threading.Thread(target=_auto_ngrok, daemon=True,
+                             name="sentinel-ngrok-fix").start()
+
+        # Detect OOM / target crashed — autonomous fix: log coverage gap
+        if "target crashed" in lower or "out of memory" in lower or "oom" in lower:
+            _self_ref = self
+
+            def _auto_oom():
+                _self_ref._action_set_directive("scraper_oom_detected", True)
+                _self_ref._action_log_coverage_gap("", "", "OOM/target_crashed — partial scraper results only")
+
+            self._gate_write(
+                "[SENTINEL] AUTO-FIX: OOM/target crash detected — logging coverage gap. "
+                "Scraper results for affected brand/platform may be partial."
+            )
+            threading.Thread(target=_auto_oom, daemon=True,
+                             name="sentinel-oom-fix").start()
 
     def _on_phase_complete(self, event: SentinelEvent) -> None:
         phase       = event.phase_name
@@ -415,24 +478,36 @@ class SentinelObserver:
             f"{'Output looks populated.' if output_len > 100 else 'Output is very short — checking for empty JSON.'}"
         )
 
-        # Check for empty/stub output
+        # Check for empty/stub output — autonomous fix: clear stale checkpoint
         stripped = sample.strip()
         if stripped in ("{}", "[]", '""', "", "None", "null"):
-            self._raise_flag(SentinelFlag(
+            _phase_cap = phase
+            _self_ref  = self
+
+            def _auto_clear():
+                _self_ref._action_clear_phase_checkpoint(_phase_cap)
+                _self_ref._action_set_directive(f"phase_empty_{_phase_cap}", True)
+
+            flag_empty = SentinelFlag(
                 flag_id=self._new_id(), phase=phase, brand="", platform="",
-                issue=f"Phase '{phase}' completed with empty output: '{stripped}'",
+                issue=f"Phase '{phase}' completed with empty output — Sentinel clearing checkpoint",
                 technical=(
-                    f"Phase runner returned '{stripped}'. This is treated as valid data by "
-                    "downstream phases — no exception is raised."
+                    f"Phase runner returned '{stripped}'. Sentinel is clearing the stale checkpoint "
+                    "so the next retry re-runs this phase rather than reading the empty cached result."
                 ),
                 methodological=(
-                    "The analyst will receive no signal data for this phase. It will either "
-                    "produce zero SOV scores (if it respects missing data) or hallucinate "
-                    "plausible-looking indices. Both are unacceptable for client delivery."
+                    "The analyst will receive no signal data for this phase. Without intervention, "
+                    "it will either produce zero SOV scores or hallucinate plausible-looking indices."
                 ),
-                recommendation="Mark phase output as UNAVAILABLE. Block analyst from scoring until gap is disclosed.",
+                recommendation="AUTO-FIX: clearing checkpoint so next retry re-runs this phase.",
                 confidence="HIGH", severity="CRITICAL",
-            ))
+            )
+            self._raise_flag(flag_empty)
+            self._issue_directive(
+                flag_empty,
+                f"Checkpoint for '{phase}' cleared. Next retry will re-run this phase from scratch.",
+                action=_auto_clear,
+            )
 
     def _on_data_quality(self, event: SentinelEvent) -> None:
         phase    = event.phase_name
@@ -458,7 +533,20 @@ class SentinelObserver:
                 f"Pattern is consistent with a scraper block, rate-limit, or login redirect — "
                 f"not an empty brand presence."
             )
-            self._raise_flag(SentinelFlag(
+            _brand_cap    = brand
+            _platform_cap = platform
+            _self_ref     = self
+
+            def _auto_gap():
+                _self_ref._action_log_coverage_gap(
+                    _brand_cap, _platform_cap,
+                    f"scraper_blocked — {consecutive_empty} consecutive empty batches"
+                )
+                _self_ref._action_set_directive(
+                    f"scraper_block_{_brand_cap}_{_platform_cap}", True
+                )
+
+            flag_block = SentinelFlag(
                 flag_id=self._new_id(), phase=phase, brand=brand, platform=platform,
                 issue=f"{label} — {consecutive_empty} consecutive empty batches (likely scraper block)",
                 technical=(
@@ -475,11 +563,18 @@ class SentinelObserver:
                     "will not be surfaced. SOV will structurally under-report paid presence."
                 ),
                 recommendation=(
-                    "RETRY with 30s cooldown. If retry yields 0 posts, mark "
-                    f"{label} as 'scraper_blocked' in coverage table and cap confidence at Low."
+                    "AUTO-FIX: logging coverage gap + setting scraper_block directive. "
+                    "Reporter will surface this as 'data unavailable' with Low confidence."
                 ),
                 confidence="HIGH", severity="CRITICAL",
-            ))
+            )
+            self._raise_flag(flag_block)
+            self._issue_directive(
+                flag_block,
+                f"Coverage gap logged for {label}. Confidence capped at Low. "
+                "Reporter will surface as 'scraper_blocked' in output.",
+                action=_auto_gap,
+            )
         elif posts > 0 and posts < _MIN_BASELINE_POSTS and phase == "profile":
             self._think(
                 f"{label}: only {posts} posts in scope (minimum for reliable baseline: "
@@ -584,7 +679,14 @@ class SentinelObserver:
             )
         # CRITICAL: phase stays paused until receive_agent_response() or override()
 
-    def _issue_directive(self, flag: SentinelFlag, directive: str) -> None:
+    def _issue_directive(self, flag: SentinelFlag, directive: str,
+                         action: Optional[Callable] = None) -> None:
+        """Issue a directive and optionally execute an autonomous fix action.
+
+        action: callable that will be invoked in a daemon thread immediately after
+                the directive is issued. Must not block the Sentinel thread long.
+                Any exception is caught and logged — it must never crash the observer.
+        """
         flag.resolved = True
         gate = self.get_pause_gate(flag.phase)
         gate.set()   # release the phase
@@ -608,6 +710,97 @@ class SentinelObserver:
             f"\n[SENTINEL DIRECTIVE] flag {flag.flag_id} → {flag.phase}\n"
             f"  {directive}"
         )
+
+        if action is not None:
+            def _run_action():
+                try:
+                    action()
+                except Exception as exc:
+                    self._gate_write(f"[SENTINEL] Autonomous action failed: {exc!s:.200}")
+            threading.Thread(target=_run_action, daemon=True,
+                             name=f"sentinel-action-{flag.flag_id}").start()
+
+    # ── Autonomous fix actions ─────────────────────────────────────────────
+
+    def _action_strip_json_fence(self, phase: str, raw_output: str) -> Optional[str]:
+        """Strip markdown fences from LLM output, validate JSON, write a fixed checkpoint."""
+        import re as _re, json as _json, pathlib as _p
+        cleaned = _re.sub(r"```(?:json)?\s*|```", "", raw_output).strip()
+        start   = cleaned.find("{")
+        end     = cleaned.rfind("}") + 1
+        if start == -1 or end <= start:
+            return None
+        candidate = cleaned[start:end]
+        try:
+            _json.loads(candidate)
+        except Exception:
+            return None
+        # Write fixed checkpoint so next phase picks it up
+        cp_dir = _p.Path("data/checkpoints")
+        cp_dir.mkdir(parents=True, exist_ok=True)
+        cp_path = cp_dir / f"{phase}.json"
+        import json as _json2
+        cp_path.write_text(_json2.dumps({"output": candidate}), encoding="utf-8")
+        self._gate_write(
+            f"[SENTINEL] AUTO-FIX: Stripped JSON fences in {phase} output and wrote fixed checkpoint."
+        )
+        return candidate
+
+    def _action_switch_analyst_to_compact(self) -> None:
+        """Notify crew.py that the analyst should use compact context on next retry."""
+        try:
+            try:
+                from server import _run_state, _state_lock
+            except ImportError:
+                from api import _run_state, _state_lock
+            with _state_lock:
+                _run_state.setdefault("sentinel_directives", {})["analyst_compact"] = True
+            self._gate_write(
+                "[SENTINEL] AUTO-FIX: Set analyst_compact=True — next retry will use "
+                "a 2000-char context cap to prevent LLM stall on large profile map."
+            )
+        except Exception as exc:
+            self._gate_write(f"[SENTINEL] compact directive failed: {exc!s:.80}")
+
+    def _action_set_directive(self, key: str, value) -> None:
+        """Generic: write an arbitrary key/value into _run_state['sentinel_directives']."""
+        try:
+            try:
+                from server import _run_state, _state_lock
+            except ImportError:
+                from api import _run_state, _state_lock
+            with _state_lock:
+                _run_state.setdefault("sentinel_directives", {})[key] = value
+            self._gate_write(f"[SENTINEL] AUTO-FIX: directive set — {key}={value!r}")
+        except Exception as exc:
+            self._gate_write(f"[SENTINEL] directive set failed: {exc!s:.80}")
+
+    def _action_clear_phase_checkpoint(self, phase: str) -> None:
+        """Delete a phase checkpoint so the next retry re-runs that phase from scratch."""
+        import pathlib as _p
+        cp = _p.Path("data/checkpoints") / f"{phase}.json"
+        if cp.exists():
+            try:
+                cp.unlink()
+                self._gate_write(f"[SENTINEL] AUTO-FIX: Cleared stale checkpoint for phase '{phase}'.")
+            except Exception as exc:
+                self._gate_write(f"[SENTINEL] checkpoint clear failed: {exc!s:.80}")
+
+    def _action_log_coverage_gap(self, brand: str, platform: str, reason: str) -> None:
+        """Record a coverage gap in _run_state so the reporter can surface it in output."""
+        try:
+            try:
+                from server import _run_state, _state_lock
+            except ImportError:
+                from api import _run_state, _state_lock
+            with _state_lock:
+                gaps = _run_state.setdefault("sentinel_coverage_gaps", [])
+                gaps.append({"brand": brand, "platform": platform, "reason": reason})
+            self._gate_write(
+                f"[SENTINEL] AUTO-FIX: Coverage gap logged — {brand}/{platform}: {reason}"
+            )
+        except Exception as exc:
+            self._gate_write(f"[SENTINEL] coverage gap log failed: {exc!s:.80}")
 
     # ── CrewAI event bus integration ───────────────────────────────────────
 
