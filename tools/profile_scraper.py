@@ -65,12 +65,13 @@ _SELECTORS: dict = json.loads(_SELECTORS_PATH.read_text())
 
 _HANDLE_SAFE    = re.compile(r"[^a-zA-Z0-9_.\-]")
 _DOMAIN_LAST_HIT: dict[str, float] = {}
-_MAX_CONCURRENT_POSTS = 3     # parallel post-page visits — reduced for Railway memory constraints
-_SCROLL_PAUSE_MIN     = 1.0   # tighter on Railway (no VPN jitter needed)
+_MAX_CONCURRENT_POSTS   = 2     # parallel post-page visits — keep low for Railway memory
+_MAX_CONCURRENT_SCRAPERS = 2   # max simultaneous platform×brand scrape coroutines
+_SCROLL_PAUSE_MIN     = 1.0
 _SCROLL_PAUSE_MAX     = 2.0
-_PAGE_TIMEOUT_MS      = 15_000  # 15s — faster fail on Railway where bot blocks are immediate
-_MAX_POST_URLS        = 40    # cap profile scroll at 40 posts — sufficient for ER baseline (need ≥12)
-_MAX_SCROLL_ATTEMPTS  = 15    # cap scroll attempts per profile
+_PAGE_TIMEOUT_MS      = 15_000  # 15s — fast fail on Railway where bot blocks are immediate
+_MAX_POST_URLS        = 30    # 30 posts is enough for a reliable ER baseline (need ≥12)
+_MAX_SCROLL_ATTEMPTS  = 10    # fewer scroll attempts → less memory pressure
 
 
 # ── Security helpers ──────────────────────────────────────────────────────────
@@ -1046,18 +1047,21 @@ async def _run_profile_scrape(brands: list[dict], platforms: list[str],
                             _scrape_youtube_channel(ctx_headless, brand, handle, date_from, date_to, scan_dt)
                         )
 
-            # Wrap each platform×brand task with an individual 180s timeout so a
-            # single slow/blocked platform doesn't discard results from the others.
-            # Outer gather uses return_exceptions=True — TimeoutError treated as no-data.
+            # Run at most _MAX_CONCURRENT_SCRAPERS platform×brand coroutines at once.
+            # A single Chromium page uses ~150-300MB on Railway; running all brands×platforms
+            # in parallel causes OOM ("Target crashed"). Semaphore keeps peak memory bounded.
+            _scraper_sem = asyncio.Semaphore(_MAX_CONCURRENT_SCRAPERS)
+
             async def _timed(coro, secs=180.0):
-                try:
-                    return await asyncio.wait_for(coro, timeout=secs)
-                except asyncio.TimeoutError:
-                    logger.warning("[ProfileScraper] Per-task timeout after %.0fs — partial data kept.", secs)
-                    return None
-                except Exception as exc:
-                    logger.warning("[ProfileScraper] Task error: %s", exc)
-                    return None
+                async with _scraper_sem:
+                    try:
+                        return await asyncio.wait_for(coro, timeout=secs)
+                    except asyncio.TimeoutError:
+                        logger.warning("[ProfileScraper] Per-task timeout after %.0fs — partial data kept.", secs)
+                        return None
+                    except Exception as exc:
+                        logger.warning("[ProfileScraper] Task error: %s", exc)
+                        return None
 
             timed_tasks = [_timed(t) for t in scrape_tasks]
             raw = await asyncio.gather(*timed_tasks)
