@@ -359,27 +359,46 @@ class SocialSearchTool(BaseTool):
 
                     # Iterative fallback: if full query returns nothing, retry with
                     # progressively simpler queries before giving up on this brand×platform.
+                    # advertiser (parent company) is kept in early retries — it disambiguates
+                    # brand names (e.g. "Unilever Closeup" vs unrelated "Closeup" entities).
+                    _adv_prefix = f"{advertiser} " if advertiser else ""
+
                     if not platform_snippets:
-                        # Retry 1: brand name + platform only (drop advertiser + category label)
+                        # Retry 1: advertiser + brand + platform (drop category label only)
                         simple_tasks: list[tuple[str, str]] = []
                         if post_type in ("paid", "both"):
                             simple_tasks.append((
-                                f"{brand} {platform} paid ad sponsored 2025{geo}", "paid"
+                                f"{_adv_prefix}{brand} {platform} paid ad sponsored 2025{geo}", "paid"
                             ))
                         if post_type in ("organic", "both"):
                             simple_tasks.append((
-                                f"{brand} {platform} official page followers engagement 2025{geo}", "organic"
+                                f"{_adv_prefix}{brand} {platform} official page followers engagement 2025{geo}", "organic"
                             ))
                         platform_snippets = _filter_nsfw(_parallel_search(simple_tasks), brand)
                         if platform_snippets:
-                            print(f"[SocialSearch] Simple retry succeeded for '{brand}' on {platform}{geo}.", flush=True)
+                            print(f"[SocialSearch] Retry 1 (adv+brand+platform) succeeded for '{brand}' on {platform}{geo}.", flush=True)
 
                     if not platform_snippets:
-                        # Retry 2: brand name alone — widest possible net
-                        bare_tasks = [(f"{brand} {platform} social media 2025{geo}", "both")]
+                        # Retry 2: brand + platform only (drop advertiser — try brand alone)
+                        simple_tasks2: list[tuple[str, str]] = []
+                        if post_type in ("paid", "both"):
+                            simple_tasks2.append((
+                                f"{brand} {platform} paid ad sponsored 2025{geo}", "paid"
+                            ))
+                        if post_type in ("organic", "both"):
+                            simple_tasks2.append((
+                                f"{brand} {platform} official page engagement 2025{geo}", "organic"
+                            ))
+                        platform_snippets = _filter_nsfw(_parallel_search(simple_tasks2), brand)
+                        if platform_snippets:
+                            print(f"[SocialSearch] Retry 2 (brand+platform) succeeded for '{brand}' on {platform}{geo}.", flush=True)
+
+                    if not platform_snippets:
+                        # Retry 3: bare — widest possible net
+                        bare_tasks = [(f"{_adv_prefix}{brand} {platform} social media 2025{geo}", "both")]
                         platform_snippets = _filter_nsfw(_parallel_search(bare_tasks), brand)
                         if platform_snippets:
-                            print(f"[SocialSearch] Bare retry succeeded for '{brand}' on {platform}{geo}.", flush=True)
+                            print(f"[SocialSearch] Retry 3 (bare) succeeded for '{brand}' on {platform}{geo}.", flush=True)
 
                     for s in platform_snippets:
                         s.setdefault("market", market)
