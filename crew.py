@@ -306,11 +306,33 @@ class SocialListeningCrew:
                 crew_analyst = Crew(agents=[analyst], tasks=[task_analyst],
                                     process=Process.sequential, verbose=True)
                 _fire_hook("analyst", "active")
-                _run_with_timeout(crew_analyst.kickoff, _ANALYST_TIMEOUT, "analyst")
-                _fire_hook("analyst", "done")
+                _analyst_failed = False
                 try:
-                    cp_analyst = str(task_analyst.output)
-                    _save_checkpoint("analyst", cp_analyst)
+                    _run_with_timeout(crew_analyst.kickoff, _ANALYST_TIMEOUT, "analyst")
+                except Exception as _ae:
+                    print(f"[PHASE] Analyst failed: {_ae} — Sentinel will attempt fallback synthesis.", flush=True)
+                    _analyst_failed = True
+                    if _sentinel:
+                        _sentinel.receive_agent_response("analyst", f"Phase failed: {str(_ae)[:200]}")
+                _fire_hook("analyst", "done")
+
+                try:
+                    _analyst_out = str(task_analyst.output) if not _analyst_failed else ""
+                    if _analyst_out and len(_analyst_out) > 20:
+                        cp_analyst = _analyst_out
+                        _save_checkpoint("analyst", cp_analyst)
+                    elif not cp_analyst:
+                        # Sentinel fallback: synthesise minimal SOV records from raw signals
+                        cp_analyst = _sentinel_fallback_analysis(
+                            profile_output or "{}",
+                            feed_output    or "{}",
+                            self.params,
+                        )
+                        if cp_analyst:
+                            _save_checkpoint("analyst", cp_analyst)
+                            print("[SENTINEL] Fallback analyst synthesis complete — proceeding to reporter.", flush=True)
+                        else:
+                            cp_analyst = analyst_context[:2000]
                 except Exception:
                     pass
 
@@ -337,6 +359,200 @@ class SocialListeningCrew:
                     reset_sentinel()
                 except Exception:
                     pass
+
+
+def _sentinel_fallback_analysis(profile_json: str, feed_json: str, params: dict) -> str:
+    """
+    Pure-Python SOV synthesis — no LLM required.
+    Called when the analyst agent times out or returns empty output.
+    Produces a minimal but valid SOV record set from raw scraper + ad library signals.
+
+    Methodology: compute each of the 6 SOV signals directly from the structured data,
+    normalize across brands per platform, and return a JSON string matching the
+    analyst's expected_output schema. The reporter can then format this into the
+    final report without needing to call the analyst again.
+    """
+    import copy
+    from datetime import datetime, timezone
+
+    today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+    # ── Parse inputs ──────────────────────────────────────────────────────────
+    try:
+        profile_data = json.loads(_strip_md_fences(profile_json)) if profile_json else {}
+    except Exception:
+        profile_data = {}
+    try:
+        feed_data = json.loads(_strip_md_fences(feed_json)) if feed_json else {}
+    except Exception:
+        feed_data = {}
+
+    profiles  = profile_data.get("profiles", [])
+    adlib     = feed_data.get("ad_library_results", {})
+    platforms = params.get("platforms", ["Facebook", "YouTube", "TikTok"])
+
+    # ── Build per-brand signal dicts ──────────────────────────────────────────
+    brand_signals: dict[str, dict] = {}
+
+    for entry in profiles:
+        brand    = (entry.get("brand") or "").strip()
+        platform = (entry.get("platform") or "").lower().strip()
+        if not brand:
+            continue
+        b = brand_signals.setdefault(brand, {})
+        b.setdefault("platforms", {})
+        b["platforms"][platform] = {
+            "posts_in_scope":     entry.get("posts_in_scope", 0),
+            "paid_post_count":    entry.get("paid_post_count", 0),
+            "organic_post_count": entry.get("organic_post_count", 0),
+            "avg_er_pct":         entry.get("avg_er_pct", 0.0),
+            "follower_count":     entry.get("follower_count", 0),
+            "baseline_available": entry.get("baseline_available", False),
+        }
+
+    for brand_name, bdata in adlib.items():
+        b = brand_signals.setdefault(brand_name, {})
+        b["adlib"] = {
+            "active_ads_found": bdata.get("active_ads_found", 0),
+            "impressions_min":  bdata.get("impressions_min"),
+            "impressions_max":  bdata.get("impressions_max"),
+            "new_ads_last_7d":  bdata.get("new_ads_last_7d", 0),
+            "ad_start_dates":   bdata.get("ad_start_dates", []),
+            "geo_countries":    bdata.get("geo_countries", []),
+        }
+
+    if not brand_signals:
+        return ""
+
+    brands_list = sorted(brand_signals.keys())
+
+    # ── Compute per-platform SOV signals ──────────────────────────────────────
+    def _tier(imp_min, imp_max):
+        if imp_min is None and imp_max is None:
+            return 0
+        val = imp_max or imp_min or 0
+        if val > 100_000: return 4
+        if val > 10_000:  return 3
+        if val > 1_000:   return 2
+        return 1
+
+    def _longevity(start_dates: list, today: str) -> float:
+        if not start_dates:
+            return 0.0
+        try:
+            today_dt = datetime.fromisoformat(today)
+            days = []
+            for d in start_dates:
+                try:
+                    days.append((today_dt - datetime.fromisoformat(d[:10])).days)
+                except Exception:
+                    pass
+            return float(sum(days) / len(days)) if days else 0.0
+        except Exception:
+            return 0.0
+
+    def _norm(vals: list[float]) -> list[float]:
+        mx = max(vals) if vals else 0
+        return [(v / mx * 100) if mx > 0 else 0.0 for v in vals]
+
+    sov_records = []
+
+    for plat in [p.lower() for p in platforms]:
+        # Collect raw signals per brand for this platform
+        raw_vol   = []
+        raw_vel   = []
+        raw_long  = []
+        raw_reach = []
+        raw_er    = []
+
+        for brand in brands_list:
+            b     = brand_signals[brand]
+            adl   = b.get("adlib", {})
+            pdata = (b.get("platforms") or {}).get(plat, {})
+
+            raw_vol.append(float(adl.get("active_ads_found") or 0))
+            raw_vel.append(float(adl.get("new_ads_last_7d") or 0))
+            raw_long.append(_longevity(adl.get("ad_start_dates", []), today_str))
+            raw_reach.append(float(_tier(adl.get("impressions_min"), adl.get("impressions_max"))))
+            raw_er.append(float(pdata.get("avg_er_pct") or 0))
+
+        norm_vol   = _norm(raw_vol)
+        norm_vel   = _norm(raw_vel)
+        norm_long  = _norm(raw_long)
+        norm_reach = [v / 4 * 100 for v in raw_reach]   # tier 1-4 → 0-100
+        norm_er    = _norm(raw_er)
+        # Platform presence: brand active on this platform?
+        active_counts = [
+            len([pl2 for pl2 in brand_signals[b].get("platforms", {}) if pl2])
+            for b in brands_list
+        ]
+        norm_pres = _norm([float(c) for c in active_counts])
+
+        for i, brand in enumerate(brands_list):
+            sov = (
+                norm_vol[i]   * 0.30 +
+                norm_vel[i]   * 0.10 +
+                norm_long[i]  * 0.15 +
+                norm_pres[i]  * 0.15 +
+                norm_reach[i] * 0.15 +
+                norm_er[i]    * 0.15
+            )
+            sov_records.append({
+                "brand": brand, "platform": plat,
+                "sov_index": round(min(sov, 100), 1),
+                "signals": {
+                    "creative_volume_share":    round(norm_vol[i],   1),
+                    "creative_velocity_score":  round(norm_vel[i],   1),
+                    "longevity_score":          round(norm_long[i],  1),
+                    "geo_presence_score":       round(norm_pres[i],  1),
+                    "reach_bucket_score":       round(norm_reach[i], 1),
+                    "engagement_corroboration": round(norm_er[i],    1),
+                },
+                "confidence": "Low",
+                "confidence_note": "Sentinel fallback synthesis — analyst timed out.",
+                "consistency_flag": False,
+                "source": "sentinel_fallback",
+            })
+
+    # ── Assemble per-brand output records ─────────────────────────────────────
+    brand_records = []
+    for brand in brands_list:
+        plat_data = {}
+        composite_total = 0.0
+        plat_count = 0
+        for rec in sov_records:
+            if rec["brand"] != brand:
+                continue
+            plat_data[rec["platform"]] = {
+                "sov_index":        rec["sov_index"],
+                "sov_label":        f"{rec['sov_index']} (Directional / Indexed – Not Actual Spend)",
+                "confidence":       rec["confidence"],
+                "confidence_note":  rec["confidence_note"],
+                "consistency_flag": rec["consistency_flag"],
+                "signals":          rec["signals"],
+                "posts":            [],
+                "data_source":      rec["source"],
+            }
+            composite_total += rec["sov_index"]
+            plat_count += 1
+
+        composite = round(composite_total / plat_count, 1) if plat_count else 0.0
+        brand_records.append({
+            "name": brand,
+            "markets": params.get("markets", [params.get("country", "")]),
+            "platforms": plat_data,
+            "composite_sov": composite,
+            "composite_sov_label": f"{composite} (Directional / Indexed – Not Actual Spend)",
+            "composite_confidence": "Low",
+            "content_themes": [],
+            "hashtags": [],
+            "top_posts": [],
+            "keywords_by_type": {"brand_say": [], "sma": [], "others_say": []},
+            "by_month": [], "by_week": [], "by_day": [],
+            "sentiment": "Neutral",
+        })
+
+    return json.dumps(brand_records, indent=None)
 
 
 def _post_profile_quality(profile_output: str, sentinel) -> None:

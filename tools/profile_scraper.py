@@ -81,6 +81,44 @@ def _sanitise_handle(handle: str) -> str:
     return _HANDLE_SAFE.sub("", handle)[:80]
 
 
+def _extract_handle(url_or_handle: str, platform: str) -> str:
+    """Extract a usable handle/path from a full URL or bare handle string.
+
+    For YouTube: returns the @handle or channel/c/user path.
+    For Facebook: returns the page slug (last path segment).
+    For TikTok: returns the @handle.
+    Falls back to the raw string if no pattern matches.
+    """
+    s = (url_or_handle or "").strip().rstrip("/")
+    if not s:
+        return ""
+    plat = platform.lower()
+    try:
+        from urllib.parse import urlparse
+        parsed = urlparse(s)
+        path   = parsed.path.strip("/")
+        if plat == "youtube":
+            # https://www.youtube.com/@AxePH  →  @AxePH  →  scraper prepends nothing
+            for seg in path.split("/"):
+                if seg.startswith("@") or seg in ("channel", "c", "user"):
+                    idx = path.index(seg)
+                    return path[idx:].split("/")[0].lstrip("@")
+            return path.split("/")[-1].lstrip("@")
+        elif plat == "facebook":
+            # https://www.facebook.com/AXEPhilippines  → AXEPhilippines
+            segs = [s for s in path.split("/") if s and s not in ("pg", "pages")]
+            return segs[-1] if segs else s
+        elif plat == "tiktok":
+            # https://www.tiktok.com/@axeofficial  → axeofficial
+            for seg in path.split("/"):
+                if seg.startswith("@"):
+                    return seg.lstrip("@")
+            return path.split("/")[-1].lstrip("@")
+    except Exception:
+        pass
+    return s.lstrip("@")
+
+
 _DANGEROUS = re.compile(
     r"(eval\(|Function\(|javascript:|data:text/html|<script)", re.IGNORECASE
 )
@@ -1022,51 +1060,107 @@ async def _run_profile_scrape(brands: list[dict], platforms: list[str],
                     "with standard headless Playwright. Expect rate-limiting after ~10 profiles."
                 )
 
+        # Semaphore: cap concurrent Chromium pages to prevent Railway OOM.
+        _scraper_sem = asyncio.Semaphore(_MAX_CONCURRENT_SCRAPERS)
+
+        async def _timed(coro, secs=180.0):
+            async with _scraper_sem:
+                try:
+                    return await asyncio.wait_for(coro, timeout=secs)
+                except asyncio.TimeoutError:
+                    logger.warning("[ProfileScraper] Per-task timeout after %.0fs — skipping.", secs)
+                    return None
+                except Exception as exc:
+                    logger.warning("[ProfileScraper] Task error: %s", exc)
+                    return None
+
+        def _make_coro(platform: str, brand: str, handle: str):
+            """Build the correct scraper coroutine for a platform."""
+            if platform == "Instagram":
+                return _scrape_instagram_profile(ctx_instagram, brand, handle, date_from, date_to, scan_dt)
+            elif platform == "Facebook":
+                return _scrape_facebook_profile(ctx_headless, brand, handle, date_from, date_to, scan_dt)
+            elif platform == "TikTok":
+                return _scrape_tiktok_profile(ctx_headless, brand, handle, date_from, date_to, scan_dt)
+            elif platform == "YouTube":
+                return _scrape_youtube_channel(ctx_headless, brand, handle, date_from, date_to, scan_dt)
+            return None
+
         try:
+            # ── Pass 1: scrape using primary handles ──────────────────────────
+            # Each brand_info may carry alt_candidates[platform] = [url1, url2, ...]
+            # from the researcher profile map. Pass 1 uses handles[platform] (primary).
             scrape_tasks = []
+            task_meta: list[dict] = []   # parallel index: brand / platform / alt list
+
             for brand_info in brands:
-                brand   = brand_info.get("name", "")
-                handles = brand_info.get("handles", {})
+                brand      = brand_info.get("name", "")
+                handles    = brand_info.get("handles", {})
+                alt_cands  = brand_info.get("alt_candidates", {})   # {platform: [url, url, ...]}
 
                 for platform in platforms:
                     handle = handles.get(platform, brand)
-                    if platform == "Instagram":
-                        scrape_tasks.append(
-                            _scrape_instagram_profile(ctx_instagram, brand, handle, date_from, date_to, scan_dt)
-                        )
-                    elif platform == "Facebook":
-                        scrape_tasks.append(
-                            _scrape_facebook_profile(ctx_headless, brand, handle, date_from, date_to, scan_dt)
-                        )
-                    elif platform == "TikTok":
-                        scrape_tasks.append(
-                            _scrape_tiktok_profile(ctx_headless, brand, handle, date_from, date_to, scan_dt)
-                        )
-                    elif platform == "YouTube":
-                        scrape_tasks.append(
-                            _scrape_youtube_channel(ctx_headless, brand, handle, date_from, date_to, scan_dt)
-                        )
+                    coro   = _make_coro(platform, brand, handle)
+                    if coro is None:
+                        continue
+                    scrape_tasks.append(_timed(coro))
+                    task_meta.append({
+                        "brand":    brand,
+                        "platform": platform,
+                        "handle":   handle,
+                        "alts":     [u for u in (alt_cands.get(platform) or []) if u and u != handle],
+                    })
 
-            # Run at most _MAX_CONCURRENT_SCRAPERS platform×brand coroutines at once.
-            # A single Chromium page uses ~150-300MB on Railway; running all brands×platforms
-            # in parallel causes OOM ("Target crashed"). Semaphore keeps peak memory bounded.
-            _scraper_sem = asyncio.Semaphore(_MAX_CONCURRENT_SCRAPERS)
+            raw = await asyncio.gather(*scrape_tasks)
 
-            async def _timed(coro, secs=180.0):
-                async with _scraper_sem:
-                    try:
-                        return await asyncio.wait_for(coro, timeout=secs)
-                    except asyncio.TimeoutError:
-                        logger.warning("[ProfileScraper] Per-task timeout after %.0fs — partial data kept.", secs)
-                        return None
-                    except Exception as exc:
-                        logger.warning("[ProfileScraper] Task error: %s", exc)
-                        return None
+            results: list[dict] = []
+            retry_tasks: list = []
+            retry_meta:  list[dict] = []
 
-            timed_tasks = [_timed(t) for t in scrape_tasks]
-            raw = await asyncio.gather(*timed_tasks)
+            for result, meta in zip(raw, task_meta):
+                if isinstance(result, dict) and result.get("posts_in_scope", 0) > 0:
+                    results.append(result)
+                else:
+                    # 0 posts — try first alternate candidate URL if available
+                    alts = meta.get("alts", [])
+                    if alts:
+                        alt_handle = _extract_handle(alts[0], meta["platform"])
+                        logger.info(
+                            "[ProfileScraper] %s/%s: 0 posts with primary handle '%s' — "
+                            "retrying with alt '%s'.",
+                            meta["brand"], meta["platform"], meta["handle"], alt_handle,
+                        )
+                        coro = _make_coro(meta["platform"], meta["brand"], alt_handle)
+                        if coro:
+                            retry_tasks.append(_timed(coro))
+                            retry_meta.append({**meta, "handle": alt_handle,
+                                               "alts": alts[1:]})
+                    elif isinstance(result, dict):
+                        results.append(result)   # keep empty result — better than nothing
 
-            results = [r for r in raw if isinstance(r, dict)]
+            # ── Pass 2: retry with first alternate handles ────────────────────
+            if retry_tasks:
+                retry_raw = await asyncio.gather(*retry_tasks)
+                for result, meta in zip(retry_raw, retry_meta):
+                    if isinstance(result, dict) and result.get("posts_in_scope", 0) > 0:
+                        results.append(result)
+                    else:
+                        # Try second alternate if available
+                        alts2 = meta.get("alts", [])
+                        if alts2:
+                            alt2 = _extract_handle(alts2[0], meta["platform"])
+                            logger.info(
+                                "[ProfileScraper] %s/%s: retry 1 failed — trying alt 2 '%s'.",
+                                meta["brand"], meta["platform"], alt2,
+                            )
+                            coro2 = _make_coro(meta["platform"], meta["brand"], alt2)
+                            if coro2:
+                                r2 = await _timed(coro2)
+                                if isinstance(r2, dict):
+                                    results.append(r2)
+                                    continue
+                        if isinstance(result, dict):
+                            results.append(result)   # keep whatever we got
 
         finally:
             await ctx_headless.close()
@@ -1074,6 +1168,69 @@ async def _run_profile_scrape(brands: list[dict], platforms: list[str],
             antidetect.stop_all()
 
     return results
+
+
+# ── Alt-candidate injector ────────────────────────────────────────────────────
+
+def _inject_alt_candidates(brands: list[dict], profile_map_raw: str,
+                            platforms: list[str]) -> list[dict]:
+    """
+    Parse the researcher profile map (JSON string or LLM text) and inject
+    all_candidates URLs into each brand_info dict under the key 'alt_candidates'.
+
+    The researcher's SocialSearchTool returns:
+      {"brand_results": [{"brand": "Axe", "profiles": [{"platform": "Facebook",
+        "profile_url": "https://...", "all_candidates": ["https://...", ...]}]}]}
+
+    We extract all_candidates per brand×platform and attach them to the matching
+    brand_info entry so _run_profile_scrape can retry on 0-post results.
+    """
+    import re as _re
+
+    # Try to parse JSON from the researcher output (may be wrapped in markdown/prose)
+    profile_data: dict = {}
+    try:
+        cleaned = _re.sub(r"```(?:json)?\s*|```", "", profile_map_raw).strip()
+        start   = cleaned.find("{")
+        if start != -1:
+            profile_data = json.loads(cleaned[start:])
+    except Exception:
+        return brands   # can't parse — return brands unchanged
+
+    # Build lookup: brand_name_lower → {platform_lower: [candidate_urls]}
+    cand_map: dict[str, dict[str, list[str]]] = {}
+    for br in profile_data.get("brand_results", []):
+        bname = (br.get("brand") or "").lower().strip()
+        if not bname:
+            continue
+        for prof in br.get("profiles", []):
+            plat  = (prof.get("platform") or "").lower().strip()
+            cands = prof.get("all_candidates") or []
+            primary = prof.get("profile_url") or ""
+            # Prepend primary so it becomes alts[0] (already the main handle, kept for retry chain)
+            all_urls = list(dict.fromkeys([primary] + cands))
+            cand_map.setdefault(bname, {})[plat] = all_urls
+
+    if not cand_map:
+        return brands
+
+    enriched = []
+    for brand_info in brands:
+        bname = (brand_info.get("name") or "").lower().strip()
+        lookup = cand_map.get(bname, {})
+        if lookup:
+            alt_candidates: dict[str, list[str]] = {}
+            for plat in platforms:
+                urls = lookup.get(plat.lower(), [])
+                # Skip the primary handle (already in handles[platform]) — keep the rest
+                primary_handle = brand_info.get("handles", {}).get(plat, "")
+                alt_candidates[plat] = [u for u in urls if u and u != primary_handle]
+            enriched.append({**brand_info, "alt_candidates": alt_candidates})
+        else:
+            enriched.append(brand_info)
+
+    logger.info("[ProfileScraper] Alt candidates injected for %d brands.", len(enriched))
+    return enriched
 
 
 # ── CrewAI BaseTool ───────────────────────────────────────────────────────────
@@ -1099,23 +1256,31 @@ class ProfileScraperTool(BaseTool):
 
     def _run(self, query: str) -> str:
         params: dict = {}
-        try:
-            bracket = query.find("{")
-            if bracket != -1:
-                params = json.loads(query[bracket:])
-        except Exception:
-            pass
+        if isinstance(query, dict):
+            params = query
+        else:
+            try:
+                bracket = str(query).find("{")
+                if bracket != -1:
+                    params = json.loads(str(query)[bracket:])
+            except Exception:
+                pass
 
         brands     = params.get("brands", [])
         platforms  = params.get("platforms", ["Instagram", "Facebook", "TikTok", "YouTube"])
         date_from  = params.get("date_from", "")
         date_to    = params.get("date_to", "")
         country    = params.get("country", "")
+        profile_map_raw = params.get("profile_map", "")   # researcher output for alt candidates
         scan_dt    = datetime.now(timezone.utc)
 
         # Normalise: if brands is a list of strings, convert to expected dict format
         if brands and isinstance(brands[0], str):
             brands = [{"name": b, "handles": {p: b for p in platforms}} for b in brands]
+
+        # Inject alt_candidates from researcher profile map if provided
+        if profile_map_raw:
+            brands = _inject_alt_candidates(brands, profile_map_raw, platforms)
 
         try:
             loop = asyncio.new_event_loop()

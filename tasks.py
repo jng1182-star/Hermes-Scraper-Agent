@@ -131,6 +131,8 @@ class SocialTasks:
             for p in all_brand_pairs
         ) or "all target brands"
 
+        # Pass the researcher profile_map into the tool so the scraper can
+        # extract alt_candidates and retry on 0-post results automatically.
         scraper_input = json.dumps({
             "brands": [
                 {"name": p.get("brand", ""), "handles": {pl: p.get("handle", p.get("brand", "")) for pl in platforms}}
@@ -140,13 +142,15 @@ class SocialTasks:
             "date_from": date_from,
             "date_to": date_to,
             "country": country or "",
+            "profile_map": profile_map or "",
         })
 
         profile_map_section = (
             f"\nRESEARCHER PROFILE MAP (use these verified handles/URLs as your scraping targets):\n"
-            f"{profile_map}\n"
-            "Override the handles in the tool input with the verified handles from the profile map "
-            "for each brand × platform combination.\n"
+            f"{profile_map[:800]}\n"
+            "Use the profile_url from the map as the primary handle for each brand × platform. "
+            "The 'profile_map' field in the tool input gives the scraper alternate candidates "
+            "to retry automatically if the primary handle returns 0 posts.\n"
         ) if profile_map else ""
 
         return Task(
@@ -157,15 +161,10 @@ class SocialTasks:
                 f"COUNTRY/MARKET: {country or 'Global'}\n"
                 f"DATE SCOPE: {date_from or 'start'} → {date_to or 'today'}\n"
                 f"{profile_map_section}\n"
-                "Call the 'Profile Scraper' tool with this input (update handles from profile map):\n"
+                "Call the 'Profile Scraper' tool with this exact JSON input:\n"
                 f"{scraper_input}\n\n"
-                "The tool will:\n"
-                "  1. Scrape all posts in the date scope from each brand's public profile page.\n"
-                "  2. Flag DOM-labelled paid posts (Sponsored / Paid partnership).\n"
-                "  3. Compute an organic ER baseline from DOM-clean posts.\n"
-                "  4. Re-score all remaining posts — flag those exceeding 3× organic ER as likely_paid.\n\n"
-                "Return the full tool output. Do not summarise or truncate — the analyst "
-                "uses the baseline metrics and post-level data to compute SOV signals."
+                "The tool handles alt-handle retries internally — do NOT modify the brands list.\n"
+                "Return the full tool output without summarising or truncating."
             ),
             expected_output=(
                 "JSON from the Profile Scraper tool: a 'profiles' list where each entry contains "
