@@ -11,7 +11,7 @@ from agents import SocialAgents
 from tasks import SocialTasks
 from sentinel import (
     init_sentinel, get_sentinel, reset_sentinel,
-    SentinelEvent, normalize_sov,
+    SentinelEvent, normalize_sov, _resolve_run_state,
 )
 
 # Per-phase caps
@@ -59,12 +59,11 @@ def _run_with_timeout(fn, timeout_secs: int, phase_name: str):
             payload={"timeout_secs": timeout_secs},
         ))
     try:
-        try:
-            from server import _run_state, _state_lock
-        except ImportError:
-            from api import _run_state, _state_lock
-        with _state_lock:
-            _run_state["active_phase"] = phase_name
+        from sentinel import _resolve_run_state as _rrs
+        _rs, _sl = _rrs()
+        if _rs is not None:
+            with _sl:
+                _rs["active_phase"] = phase_name
     except Exception:
         pass
 
@@ -181,20 +180,19 @@ class SocialListeningCrew:
         # ── Sentinel Observer init ────────────────────────────────────────────
         _sentinel = None
         try:
-            try:
-                from server import _run_state, _state_lock
-            except ImportError:
-                from api import _run_state, _state_lock  # Railway deploy uses api.py
+            _rs, _sl = _resolve_run_state()
+            if _rs is None:
+                raise RuntimeError("Cannot resolve _run_state — neither api nor server importable")
 
             def _gate_log_fn(line: str) -> None:
-                with _state_lock:
-                    _run_state["logs"].append(line)
-                    _run_state.setdefault("sentinel_logs", deque(maxlen=500)).append(line)
+                with _sl:
+                    _rs["logs"].append(line)
+                    _rs.setdefault("sentinel_logs", deque(maxlen=500)).append(line)
 
             def _flag_fn(flag_dict: dict) -> None:
                 """Write/update a Sentinel flag into _run_state["active_flags"] for dashboard."""
-                with _state_lock:
-                    active = _run_state.setdefault("active_flags", {})
+                with _sl:
+                    active = _rs.setdefault("active_flags", {})
                     fid = flag_dict.get("flag_id", "")
                     if fid:
                         active[fid] = flag_dict
@@ -295,12 +293,10 @@ class SocialListeningCrew:
                 # Check if Sentinel flagged analyst_compact (fires when analyst approaches timeout)
                 _compact_mode = False
                 try:
-                    try:
-                        from server import _run_state, _state_lock
-                    except ImportError:
-                        from api import _run_state, _state_lock
-                    with _state_lock:
-                        _compact_mode = _run_state.get("sentinel_directives", {}).get("analyst_compact", False)
+                    _rs2, _sl2 = _resolve_run_state()
+                    if _rs2 is not None:
+                        with _sl2:
+                            _compact_mode = _rs2.get("sentinel_directives", {}).get("analyst_compact", False)
                 except Exception:
                     pass
 

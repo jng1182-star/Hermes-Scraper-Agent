@@ -59,9 +59,12 @@ app.add_middleware(
 # Shared state
 _run_state = {
     "running": False,
-    "logs": [],                          # plain list — no maxlen drop
+    "logs": [],                          # plain list — must stay list; tap thread slices it
     "sentinel_logs": deque(maxlen=500),
     "active_flags": {},
+    "sentinel_directives": {},           # written by sentinel actions, read by crew phases
+    "sentinel_coverage_gaps": [],
+    "active_phase": "",
     "error": None,
     "agent_states": {},
     "timed_out": False,
@@ -181,14 +184,17 @@ def _run_with_logging(params: dict):
     _os.environ["OPENAI_API_BASE"] = _wk_v1
 
     with _state_lock:
-        _run_state["running"]       = True
-        _run_state["error"]         = None
-        _run_state["timed_out"]     = False
-        _run_state["retry_count"]   = 0
-        _run_state["start_ts"]      = _time.monotonic()
+        _run_state["running"]               = True
+        _run_state["error"]                 = None
+        _run_state["timed_out"]             = False
+        _run_state["retry_count"]           = 0
+        _run_state["start_ts"]              = _time.monotonic()
         _run_state["logs"].clear()
-        _run_state["sentinel_logs"] = deque(maxlen=500)
-        _run_state["active_flags"]  = {}
+        _run_state["sentinel_logs"]         = deque(maxlen=500)
+        _run_state["active_flags"]          = {}
+        _run_state["sentinel_directives"]   = {}
+        _run_state["sentinel_coverage_gaps"] = []
+        _run_state["active_phase"]          = ""
         _run_state["agent_states"] = {
             "profile":  "idle",
             "feed":     "idle",

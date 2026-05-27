@@ -31,6 +31,28 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Callable, Optional
 
+
+def _resolve_run_state():
+    """Return (_run_state, _state_lock) from the active server module.
+
+    Railway deploys api.py (uvicorn api:app). server.py is a local-only alternative.
+    We prefer api because its logs key is a plain list (sliceable by the tap thread).
+    server.py uses a deque which breaks cursor-based slicing.
+    Always try api first so Railway always gets the right dict.
+    """
+    try:
+        from api import _run_state, _state_lock  # Railway entrypoint
+        return _run_state, _state_lock
+    except ImportError:
+        pass
+    try:
+        from server import _run_state, _state_lock  # local fallback
+        return _run_state, _state_lock
+    except ImportError:
+        pass
+    return None, None
+
+
 # ── Constants ────────────────────────────────────────────────────────────────
 
 _MIN_BASELINE_POSTS   = 12    # below this, ER threshold is statistically unreliable
@@ -824,10 +846,9 @@ class SentinelObserver:
     def _action_switch_analyst_to_compact(self) -> None:
         """Notify crew.py that the analyst should use compact context on next retry."""
         try:
-            try:
-                from server import _run_state, _state_lock
-            except ImportError:
-                from api import _run_state, _state_lock
+            _run_state, _state_lock = _resolve_run_state()
+            if _run_state is None:
+                return
             with _state_lock:
                 _run_state.setdefault("sentinel_directives", {})["analyst_compact"] = True
             self._gate_write(
@@ -840,10 +861,9 @@ class SentinelObserver:
     def _action_set_directive(self, key: str, value) -> None:
         """Generic: write an arbitrary key/value into _run_state['sentinel_directives']."""
         try:
-            try:
-                from server import _run_state, _state_lock
-            except ImportError:
-                from api import _run_state, _state_lock
+            _run_state, _state_lock = _resolve_run_state()
+            if _run_state is None:
+                return
             with _state_lock:
                 _run_state.setdefault("sentinel_directives", {})[key] = value
             self._gate_write(f"[SENTINEL] AUTO-FIX: directive set — {key}={value!r}")
@@ -864,10 +884,9 @@ class SentinelObserver:
     def _action_log_coverage_gap(self, brand: str, platform: str, reason: str) -> None:
         """Record a coverage gap in _run_state so the reporter can surface it in output."""
         try:
-            try:
-                from server import _run_state, _state_lock
-            except ImportError:
-                from api import _run_state, _state_lock
+            _run_state, _state_lock = _resolve_run_state()
+            if _run_state is None:
+                return
             with _state_lock:
                 gaps = _run_state.setdefault("sentinel_coverage_gaps", [])
                 gaps.append({"brand": brand, "platform": platform, "reason": reason})
@@ -894,16 +913,15 @@ class SentinelObserver:
 
     def _tap_new_lines(self) -> None:
         """Read newly appended lines from _run_state['logs'] and process each."""
-        try:
-            try:
-                from server import _run_state, _state_lock
-            except ImportError:
-                from api import _run_state, _state_lock
-        except Exception:
+        _run_state, _state_lock = _resolve_run_state()
+        if _run_state is None:
             return
 
         with _state_lock:
-            logs: list = _run_state.get("logs", [])
+            logs = _run_state.get("logs", [])
+            # Convert deque to list for safe slicing (server.py uses deque; api.py uses list)
+            if not isinstance(logs, list):
+                logs = list(logs)
             new_lines = logs[self._tap_cursor:]
             self._tap_cursor = len(logs)
 
