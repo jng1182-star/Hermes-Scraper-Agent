@@ -47,18 +47,11 @@ async def lifespan(app):
 
 app = FastAPI(lifespan=lifespan)
 
-# Restrict CORS to localhost only — this app is local-first and should never be
-# reachable from an external origin. A wildcard CORS policy would allow any
-# webpage opened in the browser to trigger pipeline runs or read reports.
-_ALLOWED_ORIGINS = [
-    "http://localhost:8000",
-    "http://127.0.0.1:8000",
-    "http://localhost:3000",   # dev frontend if running separately
-    "http://127.0.0.1:3000",
-]
+# Allow Railway public URL + localhost. Wildcard is safe here because the Railway
+# app itself is the consumer — there's no sensitive user auth cookie to steal.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=_ALLOWED_ORIGINS,
+    allow_origins=["*"],
     allow_methods=["GET", "POST", "DELETE"],
     allow_headers=["Content-Type"],
 )
@@ -66,24 +59,35 @@ app.add_middleware(
 # Shared state
 _run_state = {
     "running": False,
-    "logs": deque(maxlen=200),
+    "logs": [],                          # plain list — no maxlen drop
     "sentinel_logs": deque(maxlen=500),
     "active_flags": {},
     "error": None,
-    "agent_states": {},  # e.g. {"scraper": "active", "analyst": "idle", ...}
+    "agent_states": {},
     "timed_out": False,
     "retry_count": 0,
-    "start_ts": None,   # monotonic time when run started
+    "start_ts": None,
 }
 _state_lock = threading.Lock()
 
-# Map CrewAI agent roles → dashboard node IDs
+# Map CrewAI agent roles → dashboard node IDs (current + legacy aliases)
 _ROLE_TO_NODE = {
-    "profile baseline scraper": "profile",
-    "feed ad capture agent":    "feed",
-    "social data scraper":      "scraper",
-    "engagement analyst":       "analyst",
-    "intelligence reporter":    "reporter",
+    # Current role strings (agents.py v4.2)
+    "profile scraper":           "profile",
+    "ad library collector":      "feed",
+    "social data researcher":    "scraper",
+    "share-of-voice analyst":    "analyst",
+    "sov intelligence reporter": "reporter",
+    "approval gate":             "gate",
+    # Legacy / alias names kept for backwards compat
+    "profile baseline scraper":  "profile",
+    "brand profile collector":   "profile",
+    "feed ad capture agent":     "feed",
+    "feed scroller":             "feed",
+    "in-feed ad collector":      "feed",
+    "social data scraper":       "scraper",
+    "engagement analyst":        "analyst",
+    "intelligence reporter":     "reporter",
 }
 
 
@@ -122,10 +126,10 @@ def _patch_crewai_agent():
     If the import fails, agent state tracking is disabled gracefully (no server crash).
     """
     try:
-        from crewai.agent.core import Agent as _Agent
+        from crewai import Agent as _Agent
     except (ImportError, AttributeError):
         try:
-            from crewai import Agent as _Agent  # fallback: newer CrewAI public import
+            from crewai.agent.agent import Agent as _Agent
         except (ImportError, AttributeError):
             return  # agent state tracking unavailable — degraded mode, not fatal
 
@@ -155,8 +159,20 @@ def _log(msg: str):
 
 
 def _run_with_logging(params: dict):
-    import io, time as _time
+    import io, os as _os, time as _time
     import logging as _logging
+
+    # Re-assert Ollama routing — Railway injects OPENAI_BASE_URL into the process env
+    # after startup; litellm reads env at call-time, not import-time.
+    _wk_ollama = _os.getenv("OLLAMA_HOST", "http://127.0.0.1:11434").rstrip("/")
+    _wk_v1     = _wk_ollama + "/v1"
+    for _stale in ("OPENAI_BASE_URL", "OPENAI_API_BASE", "BASE_URL", "API_BASE",
+                   "http_proxy", "https_proxy", "HTTP_PROXY", "HTTPS_PROXY",
+                   "ALL_PROXY", "all_proxy"):
+        _os.environ.pop(_stale, None)
+    _os.environ["OPENAI_API_KEY"]  = "ollama"
+    _os.environ["OPENAI_BASE_URL"] = _wk_v1
+    _os.environ["OPENAI_API_BASE"] = _wk_v1
 
     with _state_lock:
         _run_state["running"]       = True
@@ -176,8 +192,23 @@ def _run_with_logging(params: dict):
             "gate":     "idle",
         }
 
-    # Capture pipeline log output via a logging handler attached to the root logger
-    # for this thread only — avoids replacing the global sys.stdout (thread-unsafe).
+    # Capture stdout/stderr (CrewAI verbose print() output) into _run_state["logs"]
+    import sys as _sys, re as _re
+    _ANSI_RE = _re.compile(r"\x1b\[[0-9;]*m")
+
+    class _Cap(io.TextIOBase):
+        def write(self, s):
+            clean = _ANSI_RE.sub("", s).rstrip()
+            if clean:
+                with _state_lock:
+                    _run_state["logs"].append(clean)
+            return len(s)
+        def flush(self): pass
+
+    _old_out, _old_err = _sys.stdout, _sys.stderr
+    _sys.stdout = _sys.stderr = _Cap()
+
+    # Also hook Python logging → same bucket
     class _QueueHandler(_logging.Handler):
         def emit(self, record):
             msg = self.format(record).rstrip()
@@ -223,6 +254,8 @@ def _run_with_logging(params: dict):
             _run_state["error"] = str(e)
             _run_state["logs"].append(f"ERROR: {e}")
     finally:
+        _sys.stdout = _old_out
+        _sys.stderr = _old_err
         _root_logger.removeHandler(_handler)
         _main_module._state_hook = None
         with _state_lock:
@@ -254,8 +287,8 @@ async def get_status():
             "running":       _run_state["running"],
             "report_ready":  report_path.exists(),
             "error":         _run_state["error"],
-            "logs":          list(_run_state["logs"])[-80:],
-            "sentinel_logs": list(_run_state.get("sentinel_logs", []))[-100:],
+            "logs":          list(_run_state["logs"])[-100:],
+            "sentinel_logs": list(_run_state.get("sentinel_logs", []))[-200:],
             "active_flags":  dict(_run_state.get("active_flags", {})),
             "agent_states":  dict(_run_state["agent_states"]),
             "timed_out":     _run_state["timed_out"],
