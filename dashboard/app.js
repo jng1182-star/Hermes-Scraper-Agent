@@ -2536,17 +2536,31 @@ function _renderSovTrendChart(brands, bgColors) {
     if (grain.length) { labels = grain.map(g => g.period || g.date || g.week || g.month || '?'); break; }
   }
   if (!labels.length) {
-    container.innerHTML = `<div style="padding:16px;color:var(--text3);font-size:0.8rem;">No ${State.timeGrain} data available — run analysis with sufficient date range.</div>`;
+    container.innerHTML = `<div style="padding:16px;color:var(--text3);font-size:0.8rem;">No ${State.timeGrain} ad date data available. Meta Ad Library API returns <code>ad_delivery_start_time</code> for active ads — extend date range or re-run to populate.</div>`;
     return;
   }
 
-  const datasets = brands.map((b, i) => ({
-    label: b.name || '?',
-    data: (b[grainKey] || []).map(g => g.composite_sov || g.sov || 0),
+  // Two dataset types: SOV% line (primary y) + ad_count bar (secondary y)
+  const sovDatasets = brands.map((b, i) => ({
+    type: 'line',
+    label: `${b.name || '?'} SOV%`,
+    data: (b[grainKey] || []).map(g => g.composite_sov ?? g.sov ?? 0),
     borderColor: bgColors[i % bgColors.length],
     backgroundColor: bgColors[i % bgColors.length] + '22',
     borderWidth: 2, pointRadius: 3, tension: 0.35, fill: false,
+    yAxisID: 'ySov',
   }));
+  const adCountDatasets = brands.map((b, i) => ({
+    type: 'bar',
+    label: `${b.name || '?'} Ads`,
+    data: (b[grainKey] || []).map(g => g.ad_count ?? 0),
+    backgroundColor: bgColors[i % bgColors.length] + '44',
+    borderColor: bgColors[i % bgColors.length] + '88',
+    borderWidth: 1,
+    yAxisID: 'yAds',
+    barPercentage: 0.5,
+  }));
+  const datasets = [...adCountDatasets, ...sovDatasets];
 
   if (Charts.sovTrend) { Charts.sovTrend.destroy(); Charts.sovTrend = null; }
 
@@ -2558,16 +2572,34 @@ function _renderSovTrendChart(brands, bgColors) {
   }
 
   Charts.sovTrend = new Chart(canvas.getContext('2d'), {
-    type: 'line',
+    type: 'bar',
     data: { labels, datasets },
     options: {
       ...CHART_OPTS,
       plugins: {
         legend: { display: true, position: 'top', labels: { color: '#8b949e', font: { size: 10 } } },
-        tooltip: { callbacks: { label: ctx => `${ctx.dataset.label}: ${ctx.parsed.y.toFixed(1)} SOV (Dir.)` } },
+        tooltip: {
+          callbacks: {
+            label: ctx => ctx.dataset.yAxisID === 'ySov'
+              ? `${ctx.dataset.label}: ${ctx.parsed.y.toFixed(1)}%`
+              : `${ctx.dataset.label}: ${ctx.parsed.y} ads`,
+          }
+        },
       },
       scales: {
-        y: { ...CHART_OPTS.scales?.y, title: { display: true, text: 'SOV Index (Dir.)', color: '#8b949e', font: { size: 10 } } },
+        ySov: {
+          type: 'linear', position: 'left',
+          grid: { color: 'rgba(255,255,255,0.05)' },
+          ticks: { color: '#8b949e', font: { size: 10 } },
+          title: { display: true, text: 'SOV % (Dir.)', color: '#8b949e', font: { size: 10 } },
+        },
+        yAds: {
+          type: 'linear', position: 'right',
+          grid: { drawOnChartArea: false },
+          ticks: { color: '#8b949e', font: { size: 10 } },
+          title: { display: true, text: 'Ad Count', color: '#8b949e', font: { size: 10 } },
+        },
+        x: { ticks: { color: '#8b949e', font: { size: 9 }, maxRotation: 45 }, grid: { color: 'rgba(255,255,255,0.04)' } },
       },
     },
   });

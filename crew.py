@@ -795,6 +795,129 @@ def _post_profile_quality(profile_output: str, sentinel) -> None:
         pass
 
 
+def _inject_time_series(report: dict) -> dict:
+    """
+    Post-process hook: populate by_day / by_week / by_month on each brand using
+    real ad_delivery_start_time data from the feed checkpoint and Meta API sidecar.
+
+    Sources (in priority order):
+      1. data/checkpoints/feed.json  → ad_library_results[brand][meta_ad_library][by_day|by_week|by_month]
+         (populated by updated _meta_ad_library() in api_data_tool.py which captures start dates)
+      2. data/checkpoints/feed_raw_signals.json — integer per-platform ad counts only (no dates)
+         Used as fallback to build a flat single-point series if no date granularity exists.
+
+    Time series shape: [{period: 'YYYY-MM-DD'|'YYYY-WNN'|'YYYY-MM', ad_count: N, composite_sov: N}]
+    composite_sov per period = brand's ad_count / sum(all brands' ad_count that period) * 100
+    """
+    import datetime as _dt
+    from collections import defaultdict
+    from pathlib import Path
+
+    brands = report.get("brands") or report.get("competitors") or []
+    if not brands:
+        return report
+
+    # Load feed checkpoint for per-brand per-platform ad start date buckets
+    feed_cp = Path("data/checkpoints/feed.json")
+    feed_data: dict = {}
+    try:
+        raw_feed = feed_cp.read_text(encoding="utf-8") if feed_cp.exists() else ""
+        if raw_feed:
+            import re as _re
+            raw_feed = _re.sub(r"```(?:json)?\s*|```", "", raw_feed).strip()
+            s = raw_feed.find("{")
+            if s >= 0:
+                raw_feed = raw_feed[s:]
+            fd = json.loads(raw_feed)
+            output_str = fd.get("output", "")
+            if output_str:
+                output_str = _re.sub(r"```(?:json)?\s*|```", "", output_str).strip()
+                s2 = output_str.find("{")
+                if s2 >= 0:
+                    output_str = output_str[s2:]
+                feed_data = json.loads(output_str)
+    except Exception:
+        pass
+
+    ad_lib = feed_data.get("ad_library_results", {})
+
+    # Build per-brand date buckets from Meta + Google ATC start dates
+    # Structure: brand_buckets[brand_name][grain][period] = ad_count
+    brand_buckets: dict = {}
+    for brand_name, brand_ad_data in ad_lib.items():
+        brand_buckets[brand_name] = {"by_day": defaultdict(int),
+                                      "by_week": defaultdict(int),
+                                      "by_month": defaultdict(int)}
+        for _lib_key in ("meta_ad_library", "google_atc", "tiktok_ccl"):
+            lib = brand_ad_data.get(_lib_key, {})
+            # Use pre-bucketed data if available (from updated api_data_tool)
+            for grain in ("by_day", "by_week", "by_month"):
+                for entry in lib.get(grain, []):
+                    period = entry.get("period", "")
+                    count  = int(entry.get("ad_count", 0))
+                    if period and count:
+                        brand_buckets[brand_name][grain][period] += count
+            # Also process raw ad_start_dates if buckets not pre-computed
+            for d in lib.get("ad_start_dates", []):
+                try:
+                    dt = _dt.date.fromisoformat(d[:10])
+                    brand_buckets[brand_name]["by_day"][d[:10]] += 1
+                    iso_y, iso_w, _ = dt.isocalendar()
+                    brand_buckets[brand_name]["by_week"][f"{iso_y}-W{iso_w:02d}"] += 1
+                    brand_buckets[brand_name]["by_month"][f"{dt.year}-{dt.month:02d}"] += 1
+                except Exception:
+                    pass
+
+    if not any(
+        any(brand_buckets[b][g] for g in ("by_day","by_week","by_month"))
+        for b in brand_buckets
+    ):
+        # No date data at all — nothing to inject
+        return report
+
+    # Compute cross-brand SOV per period per grain
+    for grain in ("by_day", "by_week", "by_month"):
+        # Collect all periods across all brands
+        all_periods: set = set()
+        for b_buckets in brand_buckets.values():
+            all_periods.update(b_buckets[grain].keys())
+
+        if not all_periods:
+            continue
+
+        sorted_periods = sorted(all_periods)
+
+        # Total ad count per period across all brands
+        period_totals: dict = {}
+        for p in sorted_periods:
+            period_totals[p] = sum(
+                b_buckets[grain].get(p, 0)
+                for b_buckets in brand_buckets.values()
+            )
+
+        for brand in brands:
+            b_name = brand.get("name", "")
+            b_key  = next((k for k in brand_buckets if k.lower() == b_name.lower()), None)
+            if not b_key:
+                continue
+            b_grain = brand_buckets[b_key][grain]
+            series = []
+            for p in sorted_periods:
+                b_count = b_grain.get(p, 0)
+                total   = period_totals.get(p, 0)
+                sov     = round((b_count / total * 100), 1) if total > 0 else 0.0
+                series.append({"period": p, "ad_count": b_count, "composite_sov": sov})
+            brand[grain] = series
+
+    print(
+        f"[POST-PROCESS] Time-series injected from feed checkpoint: "
+        f"{sum(len(brand_buckets[b]['by_day']) for b in brand_buckets)} day-points, "
+        f"{sum(len(brand_buckets[b]['by_month']) for b in brand_buckets)} month-points.",
+        flush=True,
+    )
+    return report
+
+
 def _postprocess_report(raw, params: dict) -> object:
     """
     Apply Python-enforced post-processing to the reporter's output:
@@ -817,6 +940,7 @@ def _postprocess_report(raw, params: dict) -> object:
         if params.get("country"):
             report.setdefault("country", params["country"])
         normalized = normalize_sov(report)
+        normalized = _inject_time_series(normalized)
         print(
             f"[POST-PROCESS] SOV normalized. "
             f"Brands: {len(normalized.get('brands') or normalized.get('competitors') or [])}. "

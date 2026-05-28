@@ -293,7 +293,7 @@ def _meta_ad_library(brand: str, country: str = "PH") -> dict:
         f"&fields=id,ad_creative_bodies,ad_creative_link_captions,ad_creative_link_titles,"
         f"ad_delivery_start_time,ad_delivery_stop_time,impressions,spend,"
         f"page_name,publisher_platforms"
-        f"&limit=25"
+        f"&limit=100"
     )
     data = _get(url)
     if not data or "data" not in data:
@@ -303,10 +303,12 @@ def _meta_ad_library(brand: str, country: str = "PH") -> dict:
     if not ads:
         return {}
 
-    # Aggregate impression + spend ranges
+    # Aggregate impression + spend ranges; collect start dates for time-series bucketing
     total_imp_min = total_imp_max = 0
     total_spend_min = total_spend_max = 0
     captions = []
+    start_dates = []
+
     for ad in ads:
         imp = ad.get("impressions", {})
         if imp:
@@ -319,6 +321,30 @@ def _meta_ad_library(brand: str, country: str = "PH") -> dict:
         bodies = ad.get("ad_creative_bodies", [])
         if bodies:
             captions.extend(bodies[:2])
+        # Capture delivery start date (ISO-8601 date string)
+        s = ad.get("ad_delivery_start_time", "")
+        if s:
+            start_dates.append(s[:10])  # trim to YYYY-MM-DD
+
+    # Build time-series buckets from start dates
+    from collections import defaultdict
+    import datetime as _dt
+    _by_day: dict = defaultdict(int)
+    _by_week: dict = defaultdict(int)
+    _by_month: dict = defaultdict(int)
+    for d in start_dates:
+        try:
+            dt = _dt.date.fromisoformat(d)
+            _by_day[d] += 1
+            iso_year, iso_week, _ = dt.isocalendar()
+            _by_week[f"{iso_year}-W{iso_week:02d}"] += 1
+            _by_month[f"{dt.year}-{dt.month:02d}"] += 1
+        except Exception:
+            pass
+
+    by_day   = [{"period": k, "ad_count": v} for k, v in sorted(_by_day.items())]
+    by_week  = [{"period": k, "ad_count": v} for k, v in sorted(_by_week.items())]
+    by_month = [{"period": k, "ad_count": v} for k, v in sorted(_by_month.items())]
 
     return {
         "platform":         "Facebook",
@@ -329,6 +355,10 @@ def _meta_ad_library(brand: str, country: str = "PH") -> dict:
         "spend_min_usd":    total_spend_min,
         "spend_max_usd":    total_spend_max,
         "ad_captions":      captions[:5],
+        "ad_start_dates":   start_dates,
+        "by_day":           by_day,
+        "by_week":          by_week,
+        "by_month":         by_month,
         "confidence":       "high" if ads else "low",
     }
 
