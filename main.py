@@ -306,9 +306,25 @@ def run_pipeline(params: dict):
     print("Running Approval Gate…", flush=True)
     gate = ApprovalGate(country=country, industry=industry)
 
+    # Compute scope_days for signal annotation
+    import re as _re, datetime as _dt
+    _scope_days = 30
+    try:
+        df = params.get("date_from") or ""
+        dt = params.get("date_to")   or ""
+        if df and dt:
+            _scope_days = (_dt.date.fromisoformat(dt) - _dt.date.fromisoformat(df)).days
+        else:
+            _dr = params.get("date_range", "Last 30 days")
+            _m  = _re.search(r"(\d+)\s*days?", _dr, _re.I)
+            if _m:
+                _scope_days = int(_m.group(1))
+    except Exception:
+        pass
+
     import concurrent.futures as _cf
     with _cf.ThreadPoolExecutor(max_workers=1) as _pool:
-        _fut = _pool.submit(gate.process_final_report, str(raw_output))
+        _fut = _pool.submit(gate.process_final_report, str(raw_output), _scope_days)
         try:
             final_json_str = _fut.result(timeout=GATE_TIMEOUT)
         except _cf.TimeoutError:

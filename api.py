@@ -304,13 +304,73 @@ async def root():
     return RedirectResponse(url="/dashboard/index.html")
 
 
+def _validate_scope(params: dict) -> dict:
+    """Validate the requested date scope and return {ok, error, warnings[]}.
+
+    Hard minimum: 14 days (creative velocity signal requires at least 7 of those
+    to have any contrast vs new_ads_last_7d; below 14d the two values overlap
+    too heavily to be meaningful).
+    Soft warning: <60 days — ad longevity signal will be truncated (campaigns started
+    before the window look artificially short-lived).
+    """
+    import datetime as _dt
+    warnings = []
+    date_from = params.get("date_from") or ""
+    date_to   = params.get("date_to")   or ""
+    if not date_from or not date_to:
+        # Preset-named ranges
+        dr = params.get("date_range", "Last 30 days")
+        # Extract days from "Last X days"
+        import re as _re
+        m = _re.search(r"(\d+)\s*days?", dr, _re.I)
+        span_days = int(m.group(1)) if m else 30
+    else:
+        try:
+            d0 = _dt.date.fromisoformat(date_from)
+            d1 = _dt.date.fromisoformat(date_to)
+            span_days = (d1 - d0).days
+        except Exception:
+            span_days = 30
+
+    if span_days < 14:
+        return {
+            "ok": False,
+            "error": (
+                f"Scope too narrow ({span_days} days). "
+                "Minimum is 14 days — creative velocity signal requires at least 14 days "
+                "to produce a meaningful contrast between total active ads and new ads last 7 days."
+            ),
+            "warnings": [],
+            "scope_days": span_days,
+        }
+
+    if span_days < 60:
+        warnings.append(
+            f"Ad longevity signal may be truncated — scope is {span_days} days. "
+            "Campaigns started before the window appear artificially short-lived. "
+            "60+ days recommended for reliable ad longevity scoring."
+        )
+
+    return {"ok": True, "error": None, "warnings": warnings, "scope_days": span_days}
+
+
 @app.post("/run-analysis")
 async def trigger_analysis(body: ScanParams, background_tasks: BackgroundTasks):
     with _state_lock:
         if _run_state["running"]:
             return {"status": "already_running", "message": "Analysis already in progress."}
+
+    validation = _validate_scope(body.model_dump())
+    if not validation["ok"]:
+        return {"status": "scope_error", "message": validation["error"]}
+
     background_tasks.add_task(_run_with_logging, body.model_dump())
-    return {"status": "started", "message": "Analysis started."}
+    return {
+        "status":   "started",
+        "message":  "Analysis started.",
+        "warnings": validation["warnings"],
+        "scope_days": validation["scope_days"],
+    }
 
 
 def _read_partial_report() -> dict:

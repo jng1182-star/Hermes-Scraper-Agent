@@ -158,6 +158,92 @@ def scrub(text: str) -> str:
     return text
 
 
+def _dedup_paid_signals(data: dict) -> dict:
+    """Remove double-counted paid signals between profile scraper and ad library.
+
+    The profile scraper marks individual posts as Paid (Confirmed) or Paid (Est.)
+    via DOM labels or ER outlier detection. The ad library tool independently counts
+    active_ads_found for the same campaign window. The analyst LLM may count both
+    as separate evidence for the creative_volume SOV signal, inflating scores.
+
+    Rule: within top_posts[] for each brand/platform, a post classified as
+    Paid (Confirmed) or Paid (Est.) is the profile-scraper signal. The ad library
+    signal is the active_ads_found count in signals{}. These are complementary
+    (different dimensions: post-level vs campaign-level) — but if the same ad
+    appears in both, it should not be double-counted in the creative_volume signal.
+
+    Fix applied here: deduplicate top_posts[] by URL within each brand/platform
+    (removes duplicate scrape artefacts), and add data_dedup_applied=True to signal
+    that post-level paid counts reflect unique posts only.
+    """
+    brands = data.get("brands", [])
+    dedup_count = 0
+    for brand in brands:
+        for plat, pd in (brand.get("platforms") or {}).items():
+            if not isinstance(pd, dict):
+                continue
+            posts = pd.get("posts") or pd.get("top_posts") or []
+            if not posts:
+                continue
+            seen_urls: set[str] = set()
+            unique_posts = []
+            for post in posts:
+                url = (post.get("url") or post.get("post_url") or "").strip()
+                # Posts with no URL are kept (can't dedup without identifier)
+                if not url or url not in seen_urls:
+                    if url:
+                        seen_urls.add(url)
+                    unique_posts.append(post)
+                else:
+                    dedup_count += 1
+            if "posts" in pd:
+                pd["posts"] = unique_posts
+            elif "top_posts" in pd:
+                pd["top_posts"] = unique_posts
+            pd["data_dedup_applied"] = True
+
+    if dedup_count:
+        logger.info(
+            "[ApprovalGate] Deduped %d duplicate paid post entries across brand/platform pairs.",
+            dedup_count,
+        )
+    return data
+
+
+def _annotate_scope_warnings(data: dict, scope_days: int) -> dict:
+    """Annotate report with scope-related warnings when window is too narrow.
+
+    Ad longevity signal (avg days since earliest ad start date) is unreliable
+    when scope <60 days — campaigns started before the window show artificially
+    short durations. Flag this at the brand level so the dashboard can surface it.
+    """
+    if scope_days >= 60:
+        return data
+
+    note = (
+        f"Scope is {scope_days} days (recommended ≥60 days for ad longevity). "
+        "The longevity_score signal reflects only ads active within the window — "
+        "long-running campaigns are under-represented."
+    )
+    brands = data.get("brands", [])
+    for brand in brands:
+        for plat, pd in (brand.get("platforms") or {}).items():
+            if not isinstance(pd, dict):
+                continue
+            sigs = pd.setdefault("signals", {})
+            existing = sigs.get("longevity_score", 0)
+            if existing:
+                sigs["longevity_score_note"] = note
+                # Hard-cap longevity_score confidence contribution for narrow scope
+                if scope_days < 30:
+                    sigs["longevity_score"] = round(float(existing) * 0.5, 2)
+
+    data.setdefault("scope_warnings", [])
+    if scope_days < 60:
+        data["scope_warnings"].append(note)
+    return data
+
+
 class ApprovalGate:
     def __init__(self, country: str = "", industry: str = ""):
         self.country  = country  or ""
@@ -304,12 +390,18 @@ class ApprovalGate:
 
         return pd
 
-    def process_final_report(self, raw_output: str) -> str:
+    def process_final_report(self, raw_output: str, scope_days: int = 30) -> str:
         cleaned = self._extract_json(raw_output)
         data    = self._parse(cleaned)
 
         # Normalize to brands[] schema (handles legacy competitors[] too)
         data = self._normalize_to_brands(data)
+
+        # Deduplicate paid signals (profile scraper vs ad library overlap)
+        data = _dedup_paid_signals(data)
+
+        # Annotate scope-related signal warnings
+        data = _annotate_scope_warnings(data, scope_days)
 
         brands = data.get("brands", [])
 

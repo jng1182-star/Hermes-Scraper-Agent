@@ -513,6 +513,8 @@ document.getElementById('runBtn').addEventListener('click', async () => {
   State.partialShown = false;
   setPartialPill(false);
   resetAgentCards();
+  const _swBar = document.getElementById('scopeWarningBar');
+  if (_swBar) _swBar.style.display = 'none';
   updateDots('running');
   lockForm(true);
 
@@ -539,6 +541,21 @@ document.getElementById('runBtn').addEventListener('click', async () => {
     const data = await res.json();
     if (data.status === 'already_running') {
       setLogStatus('running', 'Analysis already in progress…');
+    } else if (data.status === 'scope_error') {
+      setLogStatus('error', data.message || 'Scope too narrow — increase date range.');
+      resetRunBtn(); updateDots('idle'); lockForm(false); return;
+    }
+    // Show scope warnings (soft — run proceeds)
+    if (data.warnings && data.warnings.length) {
+      const logOut = document.getElementById('logOutput');
+      data.warnings.forEach(w => {
+        if (logOut) logOut.textContent += `[SCOPE WARNING] ${w}\n`;
+      });
+      const scopeBar = document.getElementById('scopeWarningBar');
+      if (scopeBar) {
+        scopeBar.textContent = data.warnings[0];
+        scopeBar.style.display = 'block';
+      }
     }
   } catch(e) {
     setLogStatus('error', 'Could not reach server.');
@@ -1366,6 +1383,18 @@ function renderResults(rawData) {
 
   document.getElementById('noDataState').style.display   = 'none';
   document.getElementById('resultsContent').style.display = 'block';
+
+  // Scope warnings from report (e.g. ad longevity signal truncated)
+  const _scopeWarnings = (rawData || {}).scope_warnings || [];
+  const _scopeBar = document.getElementById('scopeWarningBar');
+  if (_scopeBar) {
+    if (_scopeWarnings.length) {
+      _scopeBar.textContent = _scopeWarnings[0];
+      _scopeBar.style.display = 'block';
+    } else {
+      _scopeBar.style.display = 'none';
+    }
+  }
 
   const params = data.scan_params || {};
 
