@@ -160,45 +160,116 @@ _ROLE_TO_PHASE = {
 # named fix immediately. fix_key maps to _SENTINEL_FIXES below.
 
 _ERROR_TAXONOMY: list[tuple] = [
-    # JSON / parse failures
+    # ── Playwright page navigation timeouts (MUST be before generic "timeout") ──
+    # Exact patterns logged by profile_scraper.py and feed_scroller.py
+    ("timeout 15000ms exceeded",    "WARNING",  "scraper_timeout","Playwright goto 15s timeout"),
+    ("timeout 30000ms exceeded",    "WARNING",  "scraper_timeout","Playwright goto 30s timeout"),
+    ("per-task timeout",            "WARNING",  "scraper_timeout","ProfileScraper per-task cap hit"),
+    ("overall session timeout",     "WARNING",  "scraper_timeout","FeedScroller overall session cap hit"),
+    ("page.goto:",                  "WARNING",  "scraper_timeout","Playwright page navigation error"),
+    ("waiting until",               "WARNING",  "scraper_timeout","Playwright navigation stall"),
+    # ── ProfileScraper tool errors (exact logger.error prefix patterns) ──────────
+    ("[profilescraper] youtube channel error",  "WARNING", "scraper_gap", "ProfileScraper YouTube error"),
+    ("[profilescraper] facebook profile error", "WARNING", "scraper_gap", "ProfileScraper Facebook error"),
+    ("[profilescraper] instagram profile error","WARNING", "scraper_gap", "ProfileScraper Instagram error"),
+    ("[profilescraper] tiktok profile error",   "WARNING", "scraper_gap", "ProfileScraper TikTok error"),
+    ("[profilescraper] task error",             "WARNING", "scraper_gap", "ProfileScraper task exception"),
+    ("[profilescraper] _run error",             "CRITICAL","scraper_gap", "ProfileScraper _run crash"),
+    ("[profilescraper] anti-detect connect",    "WARNING", "scraper_gap", "ProfileScraper anti-detect failed"),
+    # ── FeedScroller tool errors ─────────────────────────────────────────────────
+    ("[feedscroller] facebook scroll error",    "WARNING", "scraper_gap", "FeedScroller Facebook error"),
+    ("[feedscroller] instagram scroll error",   "WARNING", "scraper_gap", "FeedScroller Instagram error"),
+    ("[feedscroller] tiktok scroll error",      "WARNING", "scraper_gap", "FeedScroller TikTok error"),
+    ("[feedscroller] youtube shorts scroll",    "WARNING", "scraper_gap", "FeedScroller YouTube error"),
+    ("[feedscroller] _run error",               "CRITICAL","scraper_gap", "FeedScroller _run crash"),
+    ("[feedscroller] scroll returned error",    "WARNING", "scraper_gap", "FeedScroller scroll error"),
+    ("[feedscroller] anti-detect connect",      "WARNING", "scraper_gap", "FeedScroller anti-detect failed"),
+    # ── PaidAdLib / APIDataTool errors ───────────────────────────────────────────
+    ("[paidadlib] meta scrape error",           "WARNING", "adlib_fallback","PaidAdLib Meta scrape error"),
+    ("[paidadlib] google scrape error",         "WARNING", "adlib_fallback","PaidAdLib Google scrape error"),
+    ("[paidadlib] _run error",                  "CRITICAL","adlib_fallback","PaidAdLib _run crash"),
+    ("[apidatatool] get failed",                "WARNING", "adlib_fallback","APIDataTool GET failed"),
+    ("[apidatatool] http",                      "WARNING", "adlib_fallback","APIDataTool HTTP error"),
+    # ── TikTok API errors ────────────────────────────────────────────────────────
+    ("[tiktokapi] ad query error",              "WARNING", "adlib_fallback","TikTok API query error"),
+    ("[tiktokapi] paid ad fetch error",         "WARNING", "adlib_fallback","TikTok paid ad fetch error"),
+    ("[tiktokapi] token fetch failed",          "CRITICAL","adlib_fallback","TikTok token fetch failed"),
+    # ── OOM / Chromium crashes ───────────────────────────────────────────────────
+    ("target crashed",              "CRITICAL", "oom_gap",        "Chromium target crashed (OOM)"),
+    ("out of memory",               "CRITICAL", "oom_gap",        "OOM in scraper"),
+    ("process exited",              "CRITICAL", "oom_gap",        "Playwright process exited"),
+    # ── Network errors ───────────────────────────────────────────────────────────
+    ("net::err_",                   "WARNING",  "net_error",      "Network error in Playwright"),
+    ("net::err_name_not_resolved",  "WARNING",  "net_error",      "DNS resolution failed"),
+    ("net::err_connection_refused", "WARNING",  "net_error",      "Connection refused (network)"),
+    ("err_ngrok",                   "CRITICAL", "ngrok_drop",     "ngrok tunnel dropped"),
+    ("ngrok tunnel",                "CRITICAL", "ngrok_drop",     "ngrok tunnel error"),
+    ("incomplete http response",    "CRITICAL", "ngrok_drop",     "Incomplete HTTP (ngrok timeout)"),
+    ("connection refused",          "CRITICAL", "ollama_down",    "Ollama connection refused"),
+    ("connection reset by peer",    "WARNING",  "ollama_retry",   "LLM connection reset"),
+    ("read timeout",                "WARNING",  "ollama_retry",   "LLM read timeout"),
+    # ── LLM / Ollama errors ──────────────────────────────────────────────────────
+    ("failed to connect to openai api: request timed out", "CRITICAL", "ollama_retry", "Ollama request timed out"),
+    ("failed to connect to openai api: connection error",  "CRITICAL", "ollama_down",  "Ollama connection error"),
+    ("openai api call failed",      "CRITICAL", "ollama_retry",   "OpenAI/Ollama API call failed"),
+    ("invalid response from llm",   "CRITICAL", "compact_analyst","LLM returned invalid response"),
+    ("none or empty",               "CRITICAL", "compact_analyst","LLM returned None/empty"),
+    ("context length exceeded",     "CRITICAL", "compact_analyst","LLM context overflow"),
+    ("prompt is too long",          "CRITICAL", "compact_analyst","LLM prompt too long"),
+    ("an unknown error occurred",   "WARNING",  "ollama_retry",   "Unknown LLM error"),
+    # ── JSON / parse failures ────────────────────────────────────────────────────
     ("json.decodeerror",            "CRITICAL", "strip_json",     "JSON decode error in LLM output"),
     ("expecting value",             "CRITICAL", "strip_json",     "JSON parse: unexpected token"),
     ("unterminated string",         "CRITICAL", "strip_json",     "JSON parse: unterminated string"),
     ("invalid \\escape",            "CRITICAL", "strip_json",     "JSON parse: bad escape sequence"),
     ("valueerror: invalid",         "WARNING",  "strip_json",     "ValueError in LLM output"),
-    # Scraper / Playwright errors
-    ("target crashed",              "CRITICAL", "oom_gap",        "Chromium target crashed (OOM)"),
-    ("out of memory",               "CRITICAL", "oom_gap",        "OOM in scraper"),
+    ("syntaxerror",                 "WARNING",  "strip_json",     "SyntaxError in output"),
+    # ── Selector / DOM errors ────────────────────────────────────────────────────
     ("page.query_selector_all:",    "WARNING",  "selector_gap",   "Playwright selector error"),
-    ("timeouterror",                "WARNING",  "phase_timeout",  "Playwright page timeout"),
-    ("net::err_",                   "WARNING",  "net_error",      "Network error in Playwright"),
-    # Ollama / LLM errors
-    ("connection refused",          "CRITICAL", "ollama_down",    "Ollama connection refused"),
-    ("err_ngrok",                   "CRITICAL", "ngrok_drop",     "ngrok tunnel dropped"),
-    ("incomplete http response",    "CRITICAL", "ngrok_drop",     "Incomplete HTTP (ngrok timeout)"),
-    ("invalid response from llm",   "CRITICAL", "compact_analyst","LLM returned invalid response"),
-    ("none or empty",               "CRITICAL", "compact_analyst","LLM returned None/empty"),
-    ("connection reset by peer",    "WARNING",  "ollama_retry",   "LLM connection reset"),
-    ("read timeout",                "WARNING",  "ollama_retry",   "LLM read timeout"),
-    ("context length exceeded",     "CRITICAL", "compact_analyst","LLM context overflow"),
-    ("prompt is too long",          "CRITICAL", "compact_analyst","LLM prompt too long"),
-    # Ad library / tool errors
-    ("meta api",                    "WARNING",  "adlib_fallback", "Meta API error"),
+    ("queryselector",               "WARNING",  "selector_gap",   "querySelector returned None"),
+    # ── Ad library API errors ────────────────────────────────────────────────────
     ("400 bad request",             "WARNING",  "adlib_fallback", "HTTP 400 in tool call"),
     ("403 forbidden",               "WARNING",  "adlib_fallback", "HTTP 403 in tool call"),
     ("rate limit",                  "WARNING",  "adlib_fallback", "Rate limit hit"),
     ("no ads found",                "INFO",     "adlib_log",      "No ads found for brand"),
-    # Auth / anti-detect
+    ("running category sov fallback","INFO",    "adlib_log",      "SocialSearch using seed data"),
+    # ── Auth / anti-detect walls ─────────────────────────────────────────────────
     ("login_required",              "WARNING",  "scraper_gap",    "Platform requires login"),
     ("checkpoint required",         "WARNING",  "scraper_gap",    "Instagram checkpoint wall"),
     ("sorry, something went wrong", "WARNING",  "scraper_gap",    "Platform error page"),
-    # Reporter / output errors
-    ("syntaxerror",                 "WARNING",  "strip_json",     "SyntaxError in output"),
+    # ── CrewAI event bus warnings (informational — don't need fix) ───────────────
+    ("event pairing mismatch",      "INFO",     "log_error",      "CrewAI event bus mismatch"),
+    ("ending event",                "INFO",     "log_error",      "CrewAI event bus warning"),
+    # ── Python exceptions in agents ──────────────────────────────────────────────
     ("attributeerror",              "WARNING",  "log_error",      "AttributeError in agent"),
     ("typeerror",                   "WARNING",  "log_error",      "TypeError in agent"),
     ("keyerror",                    "WARNING",  "log_error",      "KeyError in agent"),
     ("recursionerror",              "WARNING",  "log_error",      "RecursionError in agent"),
 ]
+
+
+# ── Scraper error wildcard interceptor ────────────────────────────────────────
+# Any ERROR/WARNING log line from a known tool prefix is caught here as a final
+# safety net, independent of the taxonomy. This catches future tool errors even
+# if no taxonomy pattern matches.
+_TOOL_ERROR_PREFIXES = (
+    "[profilescraper]",
+    "[feedscroller]",
+    "[paidadlib]",
+    "[apidatatool]",
+    "[tiktokapi]",
+    "[socialsearch]",
+    "[proxymanager]",
+    "[antidetectclient]",
+)
+_LOG_ERROR_PREFIXES = ("error ", "warning ", "error:", "warning:")
+
+
+def _is_tool_error_line(lower: str) -> bool:
+    """Return True if this line is an ERROR/WARNING from a known tool — wildcard catch-all."""
+    has_tool = any(p in lower for p in _TOOL_ERROR_PREFIXES)
+    has_level = any(lower.startswith(p) for p in _LOG_ERROR_PREFIXES)
+    return has_tool and has_level
 
 
 class SentinelObserver:
@@ -936,26 +1007,29 @@ class SentinelObserver:
             self._classify_and_fix(line, self._active_phase)
 
     def _classify_and_fix(self, line: str, phase: str) -> None:
-        """Match a log line against _ERROR_TAXONOMY and dispatch fix actions with dedup guard."""
+        """Match a log line against _ERROR_TAXONOMY and dispatch fix actions with dedup guard.
+
+        Two passes:
+          1. Taxonomy match — specific pattern → named fix_key
+          2. Wildcard catch-all — any ERROR/WARNING from known tool prefixes → scraper_gap
+             This ensures future tool errors are caught even if no taxonomy pattern matches.
+        """
         lower = line.lower()
-        for pattern, severity, fix_key, description in _ERROR_TAXONOMY:
-            if pattern not in lower:
-                continue
+
+        def _fire(fix_key: str, severity: str, description: str) -> None:
             dedup_key = f"{fix_key}:{phase}"
             if dedup_key in self._fired_fixes:
-                continue
+                return
             self._fired_fixes.add(dedup_key)
             self._gate_write(
-                f"[SENTINEL TAP] {severity} — {description} detected in phase '{phase}'. "
-                f"Dispatching autonomous fix: {fix_key}"
+                f"[SENTINEL TAP] {severity} — {description} in phase '{phase}'. "
+                f"→ autonomous fix: {fix_key}"
             )
             fix_fn = _SENTINEL_FIXES.get(fix_key)
             if fix_fn:
-                _self = self
-                _phase = phase
-                _fn = fix_fn
+                _s, _p, _f = self, phase, fix_fn
 
-                def _dispatch(_s=_self, _p=_phase, _f=_fn):
+                def _dispatch(_s=_s, _p=_p, _f=_f):
                     try:
                         _f(_s, _p)
                     except Exception as exc:
@@ -963,7 +1037,16 @@ class SentinelObserver:
 
                 threading.Thread(target=_dispatch, daemon=True,
                                  name=f"sentinel-fix-{fix_key}").start()
-            break   # one fix per line (highest-priority pattern wins)
+
+        # Pass 1 — taxonomy (first match wins)
+        for pattern, severity, fix_key, description in _ERROR_TAXONOMY:
+            if pattern in lower:
+                _fire(fix_key, severity, description)
+                return   # one fix per line
+
+        # Pass 2 — wildcard catch-all for any tool ERROR/WARNING not in taxonomy
+        if _is_tool_error_line(lower):
+            _fire("scraper_gap", "WARNING", f"Unclassified tool error: {line[:120]}")
 
     # ── CrewAI event bus integration ───────────────────────────────────────
 
@@ -1224,9 +1307,22 @@ def _fix_adlib_fallback(s: "SentinelObserver", phase: str) -> None:
 def _fix_adlib_log(s: "SentinelObserver", phase: str) -> None:
     s._action_log_coverage_gap("", phase, "no_ads_found — brand may have zero paid activity in window")
 
+def _fix_scraper_timeout(s: "SentinelObserver", phase: str) -> None:
+    """Playwright page navigation timeout — log gap, cap confidence, note partial results."""
+    s._gate_write(
+        f"[SENTINEL] AUTO-FIX: Playwright navigation timeout in '{phase}'. "
+        "Brand will have partial or zero scraper data. Logging coverage gap and capping confidence."
+    )
+    s._action_log_coverage_gap("", phase, "playwright_nav_timeout — brand page unreachable within 15s")
+    s._action_set_directive(f"scraper_timeout_{phase}", True)
+
 def _fix_scraper_gap(s: "SentinelObserver", phase: str) -> None:
-    s._action_log_coverage_gap("", phase, "auth_wall — platform requires login; results unavailable")
-    s._action_set_directive(f"auth_wall_{phase}", True)
+    s._action_log_coverage_gap("", phase, "scraper_error — platform error or auth wall")
+    s._action_set_directive(f"scraper_error_{phase}", True)
+    s._gate_write(
+        f"[SENTINEL] AUTO-FIX: Tool-layer error in '{phase}'. "
+        "Coverage gap logged. Reporter will surface as partial data with Low confidence."
+    )
 
 def _fix_log_error(s: "SentinelObserver", phase: str) -> None:
     s._gate_write(
@@ -1236,19 +1332,20 @@ def _fix_log_error(s: "SentinelObserver", phase: str) -> None:
 
 
 _SENTINEL_FIXES: dict[str, callable] = {
-    "strip_json":      _fix_strip_json,
-    "oom_gap":         _fix_oom_gap,
-    "compact_analyst": _fix_compact_analyst,
-    "ngrok_drop":      _fix_ngrok_drop,
-    "ollama_down":     _fix_ollama_down,
-    "ollama_retry":    _fix_ollama_retry,
-    "selector_gap":    _fix_selector_gap,
-    "phase_timeout":   _fix_phase_timeout,
-    "net_error":       _fix_net_error,
-    "adlib_fallback":  _fix_adlib_fallback,
-    "adlib_log":       _fix_adlib_log,
-    "scraper_gap":     _fix_scraper_gap,
-    "log_error":       _fix_log_error,
+    "strip_json":       _fix_strip_json,
+    "oom_gap":          _fix_oom_gap,
+    "compact_analyst":  _fix_compact_analyst,
+    "ngrok_drop":       _fix_ngrok_drop,
+    "ollama_down":      _fix_ollama_down,
+    "ollama_retry":     _fix_ollama_retry,
+    "selector_gap":     _fix_selector_gap,
+    "phase_timeout":    _fix_phase_timeout,
+    "scraper_timeout":  _fix_scraper_timeout,
+    "net_error":        _fix_net_error,
+    "adlib_fallback":   _fix_adlib_fallback,
+    "adlib_log":        _fix_adlib_log,
+    "scraper_gap":      _fix_scraper_gap,
+    "log_error":        _fix_log_error,
 }
 
 
