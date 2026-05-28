@@ -398,6 +398,10 @@ class SentinelObserver:
             "Proceeding directly to researcher → ad library → analyst."
         )
 
+        # Pre-warm Ollama in background so model is loaded before researcher's first call
+        threading.Thread(target=self._action_prewarm_ollama, daemon=True,
+                         name="sentinel-prewarm").start()
+
     def stop(self) -> None:
         """Stop the Sentinel thread and deregister event listeners."""
         self._stop_evt.set()
@@ -973,6 +977,41 @@ class SentinelObserver:
                              name=f"sentinel-action-{flag.flag_id}").start()
 
     # ── Autonomous fix actions ─────────────────────────────────────────────
+
+    def _action_prewarm_ollama(self) -> None:
+        """Fire a tiny generate request to load the model into GPU memory before
+        the researcher phase starts its first real call. Cold-load on a large
+        context prompt causes the 90s no-token stall that triggers the watchdog.
+        Runs in a background daemon thread at Sentinel start."""
+        import os, urllib.request, json as _json, time as _time
+        ollama_host = os.getenv("OLLAMA_HOST", "http://127.0.0.1:11434").rstrip("/")
+        model       = os.getenv("OLLAMA_MODEL", "gemma4:e4b")
+        url         = f"{ollama_host}/api/generate"
+        payload     = _json.dumps({
+            "model":  model,
+            "prompt": "hi",
+            "stream": False,
+            "options": {"num_predict": 1},
+        }).encode()
+        self._gate_write(
+            f"[SENTINEL] Pre-warming Ollama model '{model}' before researcher starts…"
+        )
+        try:
+            req  = urllib.request.Request(url, data=payload,
+                                          headers={"Content-Type": "application/json"})
+            t0   = _time.monotonic()
+            with urllib.request.urlopen(req, timeout=180) as r:
+                _ = r.read()
+            elapsed = _time.monotonic() - t0
+            self._gate_write(
+                f"[SENTINEL] Ollama pre-warm complete ({elapsed:.1f}s). "
+                f"Model '{model}' is resident — researcher can start without cold-load delay."
+            )
+        except Exception as exc:
+            self._gate_write(
+                f"[SENTINEL FLAG] Ollama pre-warm failed: {exc}. "
+                "Researcher may hit cold-load stall — watchdog timeout may need increase."
+            )
 
     def _action_strip_json_fence(self, phase: str, raw_output: str) -> Optional[str]:
         """Strip markdown fences from LLM output, validate JSON, write a fixed checkpoint."""
