@@ -657,7 +657,28 @@ async function pollStatus() {
           } catch(e) { lockForm(false); }
         }, 1000);
       } else {
-        setLogStatus('done', 'Finished.'); updateDots('idle');
+        // report_ready flag may be stale (set before file write completes, or
+        // fallback reporter wrote report.json without setting the flag). Try
+        // fetching the report directly before giving up.
+        try {
+          const rep = await fetch('/report').then(r => r.json());
+          if (rep && (rep.brands?.length || rep.competitors?.length)) {
+            setLogStatus('done', 'Analysis complete — loading results…');
+            updateDots('done');
+            if (banner) banner.style.display = 'none';
+            Object.keys(State.agentStates).forEach(k => { State.agentStates[k] = 'done'; });
+            _setReportData(rep);
+            saveRun(rep);
+            lockForm(false);
+            showPage('results');
+          } else {
+            setLogStatus('done', 'Finished.'); updateDots('idle');
+            lockForm(false);
+          }
+        } catch(e) {
+          setLogStatus('done', 'Finished.'); updateDots('idle');
+          lockForm(false);
+        }
       }
     }
     State.pollFailCount = 0; // reset on success

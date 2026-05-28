@@ -288,6 +288,13 @@ def _run_with_logging(params: dict):
         _worker_thread = None
         with _state_lock:
             _run_state["running"] = False
+        # Always evict the local LLM from VRAM when the pipeline ends
+        # (success, error, or stop). main.py does this on the success path;
+        # this covers all other exit paths.
+        try:
+            _main_module._kill_ollama_runner()
+        except Exception:
+            pass
 
 
 @app.get("/")
@@ -304,24 +311,62 @@ async def trigger_analysis(body: ScanParams, background_tasks: BackgroundTasks):
     return {"status": "started", "message": "Analysis started."}
 
 
+def _read_partial_report() -> dict:
+    """
+    Returns analyst checkpoint as a partial report dict when available.
+    Only called during an active run to avoid stale data after completion.
+    """
+    cp_path = _PROJECT_ROOT / "data" / "checkpoints" / "analyst.json"
+    if not cp_path.exists():
+        return {}
+    try:
+        import json as _j
+        data = _j.loads(cp_path.read_text())
+        content = data.get("output", "")
+        if not content:
+            return {}
+        # Strip markdown fences if present
+        stripped = content.strip()
+        if stripped.startswith("```"):
+            stripped = "\n".join(stripped.split("\n")[1:])
+            if stripped.endswith("```"):
+                stripped = stripped[: stripped.rfind("```")]
+            stripped = stripped.strip()
+        parsed = _j.loads(stripped)
+        if isinstance(parsed, list):
+            parsed = {"brands": parsed}
+        if not parsed.get("brands") and not parsed.get("competitors"):
+            return {}
+        parsed["_partial_phase"] = "analyst"
+        return parsed
+    except Exception:
+        return {}
+
+
 @app.get("/status")
 async def get_status():
     import time as _time
     report_path = _PROJECT_ROOT / "data" / "report.json"
     with _state_lock:
-        start = _run_state["start_ts"]
+        start   = _run_state["start_ts"]
         elapsed = round(_time.monotonic() - start) if start is not None else 0
+        running = _run_state["running"]
+
+    partial = _read_partial_report() if running else {}
+
+    with _state_lock:
         return {
-            "running":       _run_state["running"],
-            "report_ready":  report_path.exists(),
-            "error":         _run_state["error"],
-            "logs":          list(_run_state["logs"])[-100:],
-            "sentinel_logs": list(_run_state.get("sentinel_logs", []))[-200:],
-            "active_flags":  dict(_run_state.get("active_flags", {})),
-            "agent_states":  dict(_run_state["agent_states"]),
-            "timed_out":     _run_state["timed_out"],
-            "retry_count":   _run_state["retry_count"],
-            "elapsed_secs":  elapsed,
+            "running":        running,
+            "report_ready":   report_path.exists(),
+            "error":          _run_state["error"],
+            "logs":           list(_run_state["logs"])[-100:],
+            "sentinel_logs":  list(_run_state.get("sentinel_logs", []))[-200:],
+            "active_flags":   dict(_run_state.get("active_flags", {})),
+            "agent_states":   dict(_run_state["agent_states"]),
+            "timed_out":      _run_state["timed_out"],
+            "retry_count":    _run_state["retry_count"],
+            "elapsed_secs":   elapsed,
+            "partial_report": partial,
         }
 
 
