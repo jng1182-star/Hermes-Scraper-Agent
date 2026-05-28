@@ -300,8 +300,39 @@ class SocialListeningCrew:
                 except Exception:
                     pass
 
+                # Pull sentinel-derived synthetic baselines; patch or stub profile entries
+                _profile_for_analyst = profile_output or "{}"
+                try:
+                    _rs3, _sl3 = _resolve_run_state()
+                    if _rs3 is not None:
+                        with _sl3:
+                            _syn   = dict(_rs3.get("synthetic_baselines", {}))
+                            _stubs = {k: v for k, v in _rs3.get("sentinel_directives", {}).items()
+                                      if k.startswith("profile_stub:")}
+                        if _syn or _stubs:
+                            _pdata = json.loads(_profile_for_analyst) if _profile_for_analyst != "{}" else {}
+                            _profiles = _pdata.setdefault("profiles", [])
+                            # Patch existing entries that have baseline_available=False
+                            _existing_keys = set()
+                            for _entry in _profiles:
+                                _key = f"{_entry.get('brand','')}:{_entry.get('platform','').lower()}"
+                                _existing_keys.add(_key)
+                                if _key in _syn and not _entry.get("baseline_available"):
+                                    _sb = _syn[_key]
+                                    _entry["baseline_available"] = True
+                                    _entry["er_threshold"]       = _sb["er_threshold"]
+                                    _entry["baseline_note"]      = f"sentinel_synthetic ({_sb['source']})"
+                            # Add stub entries for brands the scraper missed entirely
+                            for _stub_key, _stub_val in _stubs.items():
+                                _key = f"{_stub_val['brand']}:{_stub_val['platform']}"
+                                if _key not in _existing_keys:
+                                    _profiles.append(_stub_val)
+                            _profile_for_analyst = json.dumps(_pdata)
+                except Exception:
+                    pass
+
                 analyst_context = _build_analyst_context(
-                    profile_output or "{}",
+                    _profile_for_analyst,
                     feed_output    or "{}",
                     profile_map    or "",
                     compact=_compact_mode,
