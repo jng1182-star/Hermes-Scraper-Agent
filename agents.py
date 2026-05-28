@@ -93,6 +93,7 @@ class SocialAgents:
             ),
             tools=[self.adlib_tool],
             llm=self.scraper_llm,
+            max_iter=3,
             verbose=True,
         )
 
@@ -120,6 +121,7 @@ class SocialAgents:
             ),
             tools=[self.search_tool],
             llm=self.scraper_llm,
+            max_iter=3,
             verbose=True,
         )
 
@@ -158,6 +160,7 @@ class SocialAgents:
                 "rather than averaging away the discrepancy."
             ),
             llm=self.llm,
+            max_iter=3,
             verbose=True,
         )
 
@@ -183,5 +186,6 @@ class SocialAgents:
                 "You output clean JSON only — no markdown, no commentary, no code fences."
             ),
             llm=self.llm,
+            max_iter=3,
             verbose=True,
         )

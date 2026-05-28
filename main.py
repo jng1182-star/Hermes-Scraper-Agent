@@ -283,6 +283,10 @@ def run_pipeline(params: dict):
                     or "ERR_NGROK" in str(exc)
                     or "incomplete HTTP response" in str(exc)
                     or "[PHASE TIMEOUT]" in str(exc)
+                    or "Connection error" in str(exc)
+                    or "Request timed out" in str(exc)
+                    or "Failed to connect to OpenAI API" in str(exc)
+                    or "ConnectionError" in type(exc).__name__
                 )
                 if is_stall:
                     _attempt += 1
