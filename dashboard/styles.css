@@ -883,6 +883,24 @@ select.form-input { cursor: pointer; }
 /* Gate card allows vertical scroll to accommodate sentinel flags panel */
 #acard-gate { overflow-y: auto; }
 
+/* Skipped card — permanently dimmed, no state transitions */
+.agent-card--skipped {
+  opacity: 0.45;
+  pointer-events: none;
+}
+.agent-card--skipped::before { opacity: 0 !important; }
+.agent-card--skipped .acard-dot {
+  background: #374151 !important;
+  box-shadow: none !important;
+  animation: none !important;
+}
+.agent-card--skipped .acard-badge {
+  background: #1f2937 !important;
+  color: #6b7280 !important;
+  border-color: #374151 !important;
+  animation: none !important;
+}
+
 /* Top accent stripe (newsletter pattern) */
 .agent-card::before {
   content: '';

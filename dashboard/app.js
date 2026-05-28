@@ -832,14 +832,16 @@ function updateAgentCards(agentStates, logs) {
     const card  = document.getElementById('acard-' + id);
     const badge = document.getElementById('abadge-' + id);
     if (!card || !badge) return;
+    // Skipped cards are frozen — don't update badge or state
+    if (card.classList.contains('agent-card--skipped')) return;
 
     card.dataset.state = status;
     badge.textContent = status === 'active' ? '⟳ WORKING' : status === 'done' ? '✓ DONE' : 'STANDBY';
   });
 
-  // Route new log lines to per-card feeds
+  // Route new log lines to per-card feeds (profile excluded — skipped card)
   if (logs && logs.length) {
-    const buckets = { profile: [], feed: [], scraper: [], analyst: [], reporter: [], gate: [] };
+    const buckets = { feed: [], scraper: [], analyst: [], reporter: [], gate: [] };
     logs.forEach(line => {
       const id = _routeLogLine(line, agentStates);
       if (id) buckets[id].push(line);   // keep raw line — _renderLogLine handles formatting
@@ -870,6 +872,8 @@ function resetAgentCards() {
     const badge = document.getElementById('abadge-' + id);
     const logEl = document.getElementById('alog-'   + id);
     if (!card || !badge || !logEl) return;
+    // Skipped cards stay frozen across runs
+    if (card.classList.contains('agent-card--skipped')) return;
     card.dataset.state = 'idle';
     badge.textContent  = 'STANDBY';
     logEl.textContent  = CARD_LOG_HINTS[id]?.idle || 'Awaiting…';
