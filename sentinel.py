@@ -382,7 +382,20 @@ class SentinelObserver:
             "[SENTINEL] Live log tap active — real-time error interception enabled.\n"
             "[SENTINEL] Authority: flags are binding per phase.\n"
             "[SENTINEL] Approval Gate retains override authority.\n"
+            "[SENTINEL] MODE: AD-LIBRARY-ONLY — profile scraper evicted.\n"
+            "[SENTINEL] SOV computed from 5 signals (engagement_corroboration=0 for all brands).\n"
+            "[SENTINEL] Confidence hard-capped at Medium for all brands/platforms this run.\n"
+            "[SENTINEL] Responsibilities in this mode:\n"
+            "  1. Validate feed sidecar has real integer ad counts per brand after Phase 2.\n"
+            "  2. Proactively inject synthetic ER stubs so analyst context is complete.\n"
+            "  3. Hard-cap confidence after analyst LLM completes.\n"
+            "  4. Halt if all brands return zero ads — escalate before analyst wastes a cycle.\n"
             + "═" * 60
+        )
+        # Announce skipped profile phase immediately so gate log is coherent
+        self._gate_write(
+            "[SENTINEL] Phase 'profile' — SKIPPED (ad-library-only mode). "
+            "Proceeding directly to researcher → ad library → analyst."
         )
 
     def stop(self) -> None:
@@ -663,6 +676,14 @@ class SentinelObserver:
             f"Output length: {output_len} chars. "
             f"{'Output looks populated.' if output_len > 100 else 'Output is very short — checking for empty JSON.'}"
         )
+
+        # Ad-library-only mode: after feed phase, validate sidecar and cap confidence
+        if phase == "feed":
+            _s = self
+            threading.Thread(
+                target=_s._action_validate_feed_sidecar,
+                daemon=True, name="sentinel-sidecar-validate"
+            ).start()
 
         # Check for empty/stub output
         stripped = sample.strip()
@@ -1164,12 +1185,11 @@ class SentinelObserver:
         import pathlib as _p, json as _j
         cp_dir = _p.Path("data/checkpoints")
         try:
-            profile_json = ""
+            # Ad-library-only mode: profile.json is always empty — skip it.
+            # All SOV signal data lives in feed.json + feed_raw_signals.json sidecar.
+            profile_json = "{}"
             feed_json    = ""
-            profile_cp = cp_dir / "profile.json"
             feed_cp    = cp_dir / "feed.json"
-            if profile_cp.exists():
-                profile_json = _j.loads(profile_cp.read_text()).get("output", "")
             if feed_cp.exists():
                 feed_json = _j.loads(feed_cp.read_text()).get("output", "")
 
@@ -1368,6 +1388,171 @@ class SentinelObserver:
         )
         self._action_set_directive(f"hallucination_risk_{phase}", True)
 
+    def _action_validate_feed_sidecar(self) -> None:
+        """
+        Ad-library-only mode: validate the feed_raw_signals.json sidecar after Phase 2.
+
+        Checks:
+          1. Sidecar exists — if not, the PaidAdLibTool produced no structured output.
+             Force Sentinel fallback synthesis immediately rather than letting the analyst
+             receive empty context and hallucinate.
+          2. Per-brand ad counts — if any brand has active_ads_found_total=0, log a
+             coverage gap and set a directive so the analyst knows that brand has no data.
+          3. All brands zero — if EVERY brand returns zero, this is a critical failure
+             (proxy issue, Playwright blocked, ad library unreachable). Halt the analyst
+             phase and synthesise a data_unavailable report directly.
+          4. Distribution sanity — if one brand has 10× more ads than others, log it
+             (not an error — just a noteworthy signal for the analyst context).
+        """
+        import pathlib as _p, json as _j
+
+        sidecar_path = _p.Path("data/checkpoints/feed_raw_signals.json")
+
+        self._gate_write(
+            "[SENTINEL] AD-LIBRARY SIDECAR VALIDATION — checking feed_raw_signals.json..."
+        )
+
+        # Case 1: sidecar missing
+        if not sidecar_path.exists():
+            self._gate_write(
+                "[SENTINEL] CRITICAL: feed_raw_signals.json not found after feed phase. "
+                "PaidAdLibTool did not write structured ad counts. "
+                "Analyst will receive zero signal data — forcing immediate Sentinel synthesis."
+            )
+            self._action_set_directive("adlib_sidecar_missing", True)
+            # Synthesise directly — don't waste an analyst LLM cycle on empty data
+            self._action_synthesize_analyst_output()
+            return
+
+        try:
+            sidecar = _j.loads(sidecar_path.read_text(encoding="utf-8"))
+        except Exception as exc:
+            self._gate_write(f"[SENTINEL] CRITICAL: Sidecar parse error: {exc!s:.80}. Forcing synthesis.")
+            self._action_synthesize_analyst_output()
+            return
+
+        if not sidecar:
+            self._gate_write(
+                "[SENTINEL] CRITICAL: Sidecar is empty. No brands written. Forcing synthesis."
+            )
+            self._action_synthesize_analyst_output()
+            return
+
+        # Case 2 & 3: per-brand ad counts
+        brand_counts = {
+            b: int(v.get("active_ads_found_total") or 0)
+            for b, v in sidecar.items()
+        }
+        zero_brands  = [b for b, c in brand_counts.items() if c == 0]
+        total_brands = len(brand_counts)
+        total_ads    = sum(brand_counts.values())
+
+        self._gate_write(
+            f"[SENTINEL] Sidecar validation: {total_brands} brands, "
+            f"{total_ads} total ads. Counts: {dict(list(brand_counts.items())[:6])}"
+        )
+
+        # All brands zero — critical failure
+        if total_ads == 0:
+            self._gate_write(
+                "[SENTINEL] CRITICAL: ALL brands have zero active_ads_found. "
+                "Ad libraries returned no data — likely Playwright connectivity failure, "
+                "proxy issue, or incorrect brand names. "
+                "Setting adlib_all_zero directive. Analyst will receive data_unavailable records. "
+                "Forcing immediate Sentinel synthesis to avoid hallucinated zero-scores."
+            )
+            self._action_set_directive("adlib_all_zero", True)
+            self._action_synthesize_analyst_output()
+            return
+
+        # Some brands zero — log coverage gaps
+        if zero_brands:
+            self._gate_write(
+                f"[SENTINEL] WARNING: {len(zero_brands)}/{total_brands} brands have zero ads: "
+                f"{zero_brands}. "
+                "These brands will receive zero creative_volume SOV signal. "
+                "Logging coverage gaps and setting zero_ads directives."
+            )
+            for b in zero_brands:
+                self._action_log_coverage_gap(
+                    b, "all",
+                    "active_ads_found=0 — brand not found in ad libraries or no active campaigns in window"
+                )
+                self._action_set_directive(f"adlib_zero_{b}", True)
+
+        # Case 4: distribution sanity check
+        nonzero = {b: c for b, c in brand_counts.items() if c > 0}
+        if len(nonzero) >= 2:
+            max_ads = max(nonzero.values())
+            min_ads = min(nonzero.values())
+            if max_ads > 0 and (max_ads / max(min_ads, 1)) >= 10:
+                top_brand = max(nonzero, key=nonzero.get)
+                self._gate_write(
+                    f"[SENTINEL] NOTE: {top_brand} has {max_ads}x more ads than the lowest brand "
+                    f"({min_ads}). SOV creative_volume signal will be heavily skewed. "
+                    "This is real data — not an error. Analyst should reflect this in SOV indices."
+                )
+
+        self._gate_write(
+            "[SENTINEL] Sidecar validation PASSED — analyst will receive authoritative integer counts. "
+            "Confidence hard-capped at Medium (ad-library-only mode, no engagement baseline)."
+        )
+        # Enforce the confidence cap directive so analyst task prompt sees it
+        self._action_set_directive("adlib_only_mode", True)
+        self._action_set_directive("confidence_cap_medium", True)
+
+    def _action_enforce_adlib_confidence_cap(self) -> None:
+        """
+        Post-analyst hook: walk the analyst checkpoint and hard-cap all confidence values
+        at Medium. Called after analyst completes in ad-library-only mode.
+        This is a belt-and-suspenders enforcement — normalize_sov() also applies the cap,
+        but doing it here means the reporter receives already-capped data.
+        """
+        import pathlib as _p, json as _j
+        cp = _p.Path("data/checkpoints/analyst.json")
+        if not cp.exists():
+            return
+        try:
+            raw = _j.loads(cp.read_text(encoding="utf-8"))
+            analyst_out = raw.get("output", "")
+            if not analyst_out:
+                return
+
+            import re as _re
+            cleaned = _re.sub(r"```(?:json)?\s*|```", "", analyst_out).strip()
+            start = cleaned.find("[") if "[" in cleaned and (cleaned.find("{") == -1 or cleaned.find("[") < cleaned.find("{")) else cleaned.find("{")
+            if start == -1:
+                return
+            data = _j.loads(cleaned[start:])
+
+            brands = data if isinstance(data, list) else (data.get("brands") or data.get("competitors") or [])
+            changed = 0
+            for b in brands:
+                for plat, pd in (b.get("platforms") or {}).items():
+                    if isinstance(pd, dict) and pd.get("confidence") == "High":
+                        pd["confidence"] = "Medium"
+                        pd["confidence_note"] = (
+                            "Sentinel hard-cap: ad-library-only mode. "
+                            "Engagement corroboration (15%) unavailable — profile scraper evicted."
+                        )
+                        changed += 1
+                if b.get("composite_confidence") == "High":
+                    b["composite_confidence"] = "Medium"
+                    changed += 1
+
+            if changed:
+                if isinstance(data, list):
+                    analyst_out_fixed = _j.dumps(data, ensure_ascii=False)
+                else:
+                    analyst_out_fixed = _j.dumps(data, ensure_ascii=False)
+                cp.write_text(_j.dumps({"output": analyst_out_fixed}), encoding="utf-8")
+                self._gate_write(
+                    f"[SENTINEL] CONFIDENCE CAP: Downgraded {changed} High→Medium confidence values "
+                    "in analyst checkpoint (ad-library-only mode, engagement_corroboration=0)."
+                )
+        except Exception as exc:
+            self._gate_write(f"[SENTINEL] Confidence cap enforcement failed: {exc!s:.80}")
+
     def _action_log_coverage_gap(self, brand: str, platform: str, reason: str) -> None:
         """Record a coverage gap in _run_state so the reporter can surface it in output."""
         try:
@@ -1552,69 +1737,14 @@ class SentinelObserver:
         if not data:
             return
 
-        # Profile scraper output
+        # Profile scraper output — ad-library-only mode: this block should never fire.
+        # If it somehow does (stale checkpoint), log and ignore.
         if "profiles" in data:
-            for entry in data.get("profiles", []):
-                brand    = entry.get("brand", "")
-                platform = entry.get("platform", "")
-                n_posts  = entry.get("posts_in_scope", 0)
-                baseline = entry.get("baseline_available", False)
-                er_thresh = entry.get("er_threshold", 0.0)
-
-                # Store real baselines so synthetic fallback can use cross-brand median
-                if baseline and er_thresh > 0:
-                    try:
-                        _rs, _sl = _resolve_run_state()
-                        if _rs is not None:
-                            with _sl:
-                                _rs.setdefault("scraped_baselines", {})[
-                                    f"{brand}:{platform.lower()}"
-                                ] = er_thresh
-                    except Exception:
-                        pass
-
-                # Emit thinking
-                self._gate_write(
-                    f"[AGENT THINKING: Profile Scraper] "
-                    f"{brand}/{platform}: {n_posts} posts in scope. "
-                    f"Baseline: {'available' if baseline else 'NOT available'}. "
-                    f"ER threshold: {er_thresh:.3f}%."
-                )
-
-                self.post(SentinelEvent(
-                    event_type="data_quality_check",
-                    phase_name=phase,
-                    timestamp=time.monotonic(),
-                    payload={
-                        "brand":              brand,
-                        "platform":           platform,
-                        "post_count":         n_posts,
-                        "baseline_available": baseline,
-                        "er_threshold":       er_thresh,
-                        "consecutive_empty":  0,
-                    },
-                ))
-
-                # Nielsen Director check: is ER threshold suspiciously low or zero?
-                if baseline and er_thresh == 0.0:
-                    self._think(
-                        f"{brand}/{platform}: baseline_available=True but er_threshold=0.0. "
-                        f"This means avg_er_pct=0 — all metric selectors likely returned 0. "
-                        f"ER denominator may have collapsed to 1 (selector miss). "
-                        f"SOV engagement corroboration signal will be zero for this brand."
-                    )
-
-                # Nielsen Director check: platform-specific ER multiplier calibration
-                plat_lower = platform.lower()
-                recommended_mult = _PLATFORM_ER_MULTIPLIER.get(plat_lower, _DEFAULT_ER_MULTIPLIER)
-                if plat_lower == "tiktok" and baseline and er_thresh > 0:
-                    self._think(
-                        f"{brand}/TikTok: NOTE — TikTok organic ER variance is structurally "
-                        f"high. A 3× multiplier over a mean ER baseline produces more false "
-                        f"positives than 1.5× over the 90th percentile (Nielsen/Kantar standard). "
-                        f"Flagging for Approval Gate review: TikTok paid detection "
-                        f"threshold may be miscalibrated."
-                    )
+            self._gate_write(
+                "[SENTINEL] WARNING: Profile scraper output detected in tool event — "
+                "this phase is evicted in ad-library-only mode. Ignoring profile data. "
+                "If this appears during a run, clear checkpoints and restart."
+            )
 
         # Feed scroller output
         if "total_posts_scrolled" in data:
@@ -1855,6 +1985,16 @@ def normalize_sov(report: dict) -> dict:
         result["methodology_disclaimer"] = _METHODOLOGY_DISCLAIMER
 
     # ── 3. Confidence caps ──────────────────────────────────────────────────
+    # Detect ad-library-only mode: if ALL brands on ALL platforms have
+    # engagement_corroboration=0, the profile scraper was evicted this run.
+    _all_er_zero = all(
+        float((plat_data.get("signals") or {}).get("engagement_corroboration") or 0) == 0.0
+        for b in brands
+        for plat_data in (b.get("platforms") or {}).values()
+        if isinstance(plat_data, dict)
+    )
+    _adlib_only_mode = _all_er_zero and bool(brands)
+
     for b in brands:
         for plat, plat_data in (b.get("platforms") or {}).items():
             if not isinstance(plat_data, dict):
@@ -1867,8 +2007,18 @@ def normalize_sov(report: dict) -> dict:
             ])
             baseline_ok = plat_data.get("baseline_available", True)
 
-            # Hard cap: no baseline → no higher than Medium
-            if not baseline_ok and current_conf == "High":
+            # Hard cap: ad-library-only mode — engagement_corroboration=0 for all brands.
+            # Confidence cannot be High when the ER signal (15% weight) is absent entirely.
+            if _adlib_only_mode and current_conf == "High":
+                plat_data["confidence"] = "Medium"
+                plat_data["confidence_note"] = (
+                    "Capped at Medium: ad-library-only mode — profile scraper evicted. "
+                    "Engagement corroboration signal (15%) is zero for all brands. "
+                    "SOV computed from 5 signals only."
+                )
+
+            # Hard cap: no baseline → no higher than Medium (also covers adlib-only)
+            if not baseline_ok and plat_data.get("confidence", "Low") == "High":
                 plat_data["confidence"] = "Medium"
                 plat_data["confidence_note"] = (
                     "Downgraded from High: baseline_available=False. "

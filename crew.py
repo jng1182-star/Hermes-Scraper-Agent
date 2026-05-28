@@ -378,6 +378,9 @@ class SocialListeningCrew:
                         if _output_valid:
                             cp_analyst = _analyst_out
                             _save_checkpoint("analyst", cp_analyst)
+                            # Ad-library-only mode: hard-cap any High confidence to Medium
+                            if _sentinel:
+                                _sentinel._action_enforce_adlib_confidence_cap()
                         else:
                             print("[SENTINEL] Analyst output failed hallucination validation — forcing synthesis.", flush=True)
                             _analyst_out = ""   # fall through to synthesis below
@@ -396,6 +399,8 @@ class SocialListeningCrew:
                             cp_analyst = _synthesis
                             if cp_analyst:
                                 _save_checkpoint("analyst", cp_analyst)
+                                if _sentinel:
+                                    _sentinel._action_enforce_adlib_confidence_cap()
                                 print("[SENTINEL] Fallback analyst synthesis complete — proceeding to reporter.", flush=True)
                             else:
                                 cp_analyst = analyst_context[:2000]
@@ -1001,13 +1006,13 @@ def _build_analyst_context(profile_json: str, feed_json: str, search_json: str,
 
         if feed_summary:
             parts.append(
-                "=== AGENT 2: FEED SCROLLER (geo-bounded) + AD LIBRARIES ===\n"
-                "Ad library = primary SOV signal (creative volume, velocity, reach, geo).\n"
+                "=== AGENT 2: AD LIBRARIES (Meta · Google ATC · TikTok CCL) ===\n"
+                "MODE: AD-LIBRARY-ONLY — profile scraper evicted. NO organic post data.\n"
+                "engagement_corroboration = 0 for ALL brands. DO NOT fabricate ER values.\n"
+                "Confidence MUST be 'Medium' for all brands/platforms — never 'High' this run.\n"
                 "CRITICAL: active_ads_found values below are AUTHORITATIVE INTEGERS from the scraper.\n"
                 "You MUST use these exact integers in the Creative Volume SOV formula.\n"
-                "Do NOT substitute lower values, do NOT re-derive from prose text.\n"
-                "baselines_applied=False → feed paid detection was DOM-only; "
-                "under-reports paid in SEA markets (~30–40% miss rate).\n\n"
+                "Do NOT substitute lower values, do NOT re-derive from prose text.\n\n"
                 + json.dumps(feed_summary, indent=None)
             )
 
