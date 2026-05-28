@@ -67,6 +67,7 @@ _run_state = {
     "active_phase": "",
     "scraped_baselines": {},             # brand:platform → er_threshold from successful scrapes
     "synthetic_baselines": {},           # brand:platform → sentinel-derived baseline
+    "scan_params": {},                   # copy of run params — readable by Sentinel for synthesis
     "error": None,
     "agent_states": {},
     "timed_out": False,
@@ -199,6 +200,7 @@ def _run_with_logging(params: dict):
         _run_state["active_phase"]          = ""
         _run_state["scraped_baselines"]     = {}
         _run_state["synthetic_baselines"]   = {}
+        _run_state["scan_params"]           = params
         _run_state["agent_states"] = {
             "profile":  "idle",
             "feed":     "idle",

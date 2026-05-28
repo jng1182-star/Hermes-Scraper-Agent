@@ -240,8 +240,8 @@ class SocialListeningCrew:
                                                            profile_map=profile_map)
                     crew_profile = Crew(agents=[profile_agent], tasks=[task_profile],
                                         process=Process.sequential, verbose=True)
-                    _run_with_timeout(crew_profile.kickoff, _PROFILE_TIMEOUT, "profile")
-                    profile_output = str(task_profile.output)
+                    _profile_raw = _run_with_timeout(crew_profile.kickoff, _PROFILE_TIMEOUT, "profile")
+                    profile_output = str(_profile_raw) if _profile_raw is not None else (str(task_profile.output) if task_profile.output is not None else "{}")
                     _save_checkpoint("profile", profile_output)
                     # Post data_quality_check events to Sentinel
                     _post_profile_quality(profile_output, _sentinel)
@@ -274,8 +274,8 @@ class SocialListeningCrew:
                                                      profile_baselines=_profile_baselines)
                     crew_feed = Crew(agents=[feed_agent], tasks=[task_feed],
                                      process=Process.sequential, verbose=True)
-                    _run_with_timeout(crew_feed.kickoff, _FEED_TIMEOUT, "feed")
-                    feed_output = str(task_feed.output)
+                    _feed_raw = _run_with_timeout(crew_feed.kickoff, _FEED_TIMEOUT, "feed")
+                    feed_output = str(_feed_raw) if _feed_raw is not None else (str(task_feed.output) if task_feed.output is not None else "{}")
                     _save_checkpoint("feed", feed_output)
                     print("[PHASE] Ad Library complete.", flush=True)
                 except Exception as exc:
@@ -344,8 +344,9 @@ class SocialListeningCrew:
                                     process=Process.sequential, verbose=True)
                 _fire_hook("analyst", "active")
                 _analyst_failed = False
+                _analyst_raw = None
                 try:
-                    _run_with_timeout(crew_analyst.kickoff, _ANALYST_TIMEOUT, "analyst")
+                    _analyst_raw = _run_with_timeout(crew_analyst.kickoff, _ANALYST_TIMEOUT, "analyst")
                 except Exception as _ae:
                     print(f"[PHASE] Analyst failed: {_ae} — Sentinel will attempt fallback synthesis.", flush=True)
                     _analyst_failed = True
@@ -354,7 +355,14 @@ class SocialListeningCrew:
                 _fire_hook("analyst", "done")
 
                 try:
-                    _analyst_out = str(task_analyst.output) if not _analyst_failed else ""
+                    # Prefer the kickoff() return value; fall back to task.output for
+                    # CrewAI versions that store output on the Task object directly.
+                    if _analyst_raw is not None and not _analyst_failed:
+                        _analyst_out = str(_analyst_raw)
+                    elif not _analyst_failed:
+                        _analyst_out = str(task_analyst.output) if task_analyst.output is not None else ""
+                    else:
+                        _analyst_out = ""
                     if _analyst_out and len(_analyst_out) > 20:
                         cp_analyst = _analyst_out
                         _save_checkpoint("analyst", cp_analyst)

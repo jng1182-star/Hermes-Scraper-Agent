@@ -240,6 +240,9 @@ _ERROR_TAXONOMY: list[tuple] = [
     # ── CrewAI event bus warnings (informational — don't need fix) ───────────────
     ("event pairing mismatch",      "INFO",     "log_error",      "CrewAI event bus mismatch"),
     ("ending event",                "INFO",     "log_error",      "CrewAI event bus warning"),
+    # ── Phase timeout — analyst-specific recovery ────────────────────────────────
+    ("[phase timeout] analyst",     "CRITICAL", "analyst_timeout", "Analyst phase timed out"),
+    ("analyst failed:",             "CRITICAL", "analyst_timeout", "Analyst phase raised exception"),
     # ── Python exceptions in agents ──────────────────────────────────────────────
     ("attributeerror",              "WARNING",  "log_error",      "AttributeError in agent"),
     ("typeerror",                   "WARNING",  "log_error",      "TypeError in agent"),
@@ -646,36 +649,72 @@ class SentinelObserver:
             f"{'Output looks populated.' if output_len > 100 else 'Output is very short — checking for empty JSON.'}"
         )
 
-        # Check for empty/stub output — autonomous fix: clear stale checkpoint
+        # Check for empty/stub output
         stripped = sample.strip()
-        if stripped in ("{}", "[]", '""', "", "None", "null"):
+        is_empty = stripped in ("{}", "[]", '""', "", "None", "null") or output_len < 20
+
+        if is_empty:
             _phase_cap = phase
             _self_ref  = self
 
-            def _auto_clear():
-                _self_ref._action_clear_phase_checkpoint(_phase_cap)
-                _self_ref._action_set_directive(f"phase_empty_{_phase_cap}", True)
+            if phase == "analyst":
+                # Analyst empty: Sentinel synthesises SOV directly — no retry needed
+                def _auto_analyst_recovery():
+                    _self_ref._gate_write(
+                        "[SENTINEL] AUTONOMOUS DECISION: Analyst phase returned empty output. "
+                        "Bypassing LLM retry — synthesising SOV scores directly from scraper data. "
+                        "This avoids another timeout cycle and maintains pipeline momentum."
+                    )
+                    _self_ref._action_synthesize_analyst_output()
 
-            flag_empty = SentinelFlag(
-                flag_id=self._new_id(), phase=phase, brand="", platform="",
-                issue=f"Phase '{phase}' completed with empty output — Sentinel clearing checkpoint",
-                technical=(
-                    f"Phase runner returned '{stripped}'. Sentinel is clearing the stale checkpoint "
-                    "so the next retry re-runs this phase rather than reading the empty cached result."
-                ),
-                methodological=(
-                    "The analyst will receive no signal data for this phase. Without intervention, "
-                    "it will either produce zero SOV scores or hallucinate plausible-looking indices."
-                ),
-                recommendation="AUTO-FIX: clearing checkpoint so next retry re-runs this phase.",
-                confidence="HIGH", severity="CRITICAL",
-            )
-            self._raise_flag(flag_empty)
-            self._issue_directive(
-                flag_empty,
-                f"Checkpoint for '{phase}' cleared. Next retry will re-run this phase from scratch.",
-                action=_auto_clear,
-            )
+                flag_analyst = SentinelFlag(
+                    flag_id=self._new_id(), phase=phase, brand="", platform="",
+                    issue="Analyst phase returned empty output — Sentinel synthesising SOV directly",
+                    technical=(
+                        f"Analyst LLM returned '{stripped}' ({output_len} chars). "
+                        "Sentinel is invoking pure-Python SOV synthesis from profile + feed checkpoints. "
+                        "Reporter will proceed with Sentinel-derived analyst output."
+                    ),
+                    methodological=(
+                        "LLM-derived SOV indices are replaced with pure-Python signal aggregation. "
+                        "Directional accuracy is maintained; confidence capped at Low. "
+                        "Methodology disclaimer will note Sentinel synthesis."
+                    ),
+                    recommendation="AUTO-FIX: synthesising analyst output from scraper data — no retry.",
+                    confidence="HIGH", severity="CRITICAL",
+                )
+                self._raise_flag(flag_analyst)
+                self._issue_directive(
+                    flag_analyst,
+                    "Analyst synthesis dispatched. Reporter will proceed without LLM analyst.",
+                    action=_auto_analyst_recovery,
+                )
+            else:
+                # Other phases: clear checkpoint so next retry re-runs from scratch
+                def _auto_clear():
+                    _self_ref._action_clear_phase_checkpoint(_phase_cap)
+                    _self_ref._action_set_directive(f"phase_empty_{_phase_cap}", True)
+
+                flag_empty = SentinelFlag(
+                    flag_id=self._new_id(), phase=phase, brand="", platform="",
+                    issue=f"Phase '{phase}' completed with empty output — Sentinel clearing checkpoint",
+                    technical=(
+                        f"Phase runner returned '{stripped}'. Sentinel is clearing the stale checkpoint "
+                        "so the next retry re-runs this phase rather than reading the empty cached result."
+                    ),
+                    methodological=(
+                        "The analyst will receive no signal data for this phase. Without intervention, "
+                        "it will either produce zero SOV scores or hallucinate plausible-looking indices."
+                    ),
+                    recommendation="AUTO-FIX: clearing checkpoint so next retry re-runs this phase.",
+                    confidence="HIGH", severity="CRITICAL",
+                )
+                self._raise_flag(flag_empty)
+                self._issue_directive(
+                    flag_empty,
+                    f"Checkpoint for '{phase}' cleared. Next retry will re-run this phase from scratch.",
+                    action=_auto_clear,
+                )
 
     def _on_data_quality(self, event: SentinelEvent) -> None:
         phase    = event.phase_name
@@ -1099,6 +1138,58 @@ class SentinelObserver:
             f"Confidence capped at Low. Analyst will use this as the paid detection floor."
         )
 
+    def _action_synthesize_analyst_output(self) -> None:
+        """Sentinel autonomous analyst synthesis — called when the analyst LLM produced no output.
+
+        Reads the profile and feed checkpoints from disk, calls the same pure-Python
+        SOV synthesiser used by the crew fallback, writes the result to the analyst
+        checkpoint, and injects a directive so the reporter knows the source.
+        This makes the Sentinel self-healing at the analyst phase without any LLM call.
+        """
+        import pathlib as _p, json as _j
+        cp_dir = _p.Path("data/checkpoints")
+        try:
+            profile_json = ""
+            feed_json    = ""
+            profile_cp = cp_dir / "profile.json"
+            feed_cp    = cp_dir / "feed.json"
+            if profile_cp.exists():
+                profile_json = _j.loads(profile_cp.read_text()).get("output", "")
+            if feed_cp.exists():
+                feed_json = _j.loads(feed_cp.read_text()).get("output", "")
+
+            # Retrieve params from run_state
+            _rs, _sl = _resolve_run_state()
+            params = {}
+            if _rs is not None:
+                with _sl:
+                    params = dict(_rs.get("scan_params") or {})
+
+            # Lazy import to avoid circular import at module load time
+            from crew import _sentinel_fallback_analysis
+            result = _sentinel_fallback_analysis(profile_json, feed_json, params)
+
+            if result and len(result) > 20:
+                cp_dir.mkdir(parents=True, exist_ok=True)
+                (cp_dir / "analyst.json").write_text(
+                    _j.dumps({"output": result}), encoding="utf-8"
+                )
+                self._action_set_directive("sentinel_analyst_synthesis", True)
+                self._gate_write(
+                    "[SENTINEL] AUTONOMOUS SYNTHESIS: Analyst LLM produced no output. "
+                    "Sentinel has synthesised SOV scores directly from scraper + ad library data. "
+                    f"Analyst checkpoint written ({len(result)} chars). Reporter will proceed. "
+                    "Confidence capped at Low — Sentinel-derived, not LLM-derived."
+                )
+            else:
+                self._gate_write(
+                    "[SENTINEL] Autonomous analyst synthesis returned empty — insufficient scraper data. "
+                    "Reporter will receive empty analyst context. Confidence: Very Low."
+                )
+                self._action_log_coverage_gap("", "analyst", "analyst_empty — no scraper data to synthesise from")
+        except Exception as exc:
+            self._gate_write(f"[SENTINEL] Analyst synthesis failed: {exc!s:.120}")
+
     def _action_log_coverage_gap(self, brand: str, platform: str, reason: str) -> None:
         """Record a coverage gap in _run_state so the reporter can surface it in output."""
         try:
@@ -1489,22 +1580,40 @@ def _fix_log_error(s: "SentinelObserver", phase: str) -> None:
         "If phase output is empty, Sentinel fallback synthesis will be triggered."
     )
 
+def _fix_analyst_timeout(s: "SentinelObserver", phase: str) -> None:
+    """Analyst timed out or raised an exception — synthesise output directly.
+
+    This fix fires from the live log tap (belt-and-suspenders with the
+    phase_complete event handler). It is deduplicated by fix_key:phase so
+    it only fires once per run even if multiple log lines match.
+    """
+    s._gate_write(
+        "[SENTINEL] AUTONOMOUS DECISION: Analyst timeout/failure detected in live log. "
+        "Initiating immediate SOV synthesis from scraper checkpoint data. "
+        "Pipeline will not stall waiting for LLM — Sentinel is taking over analyst duties."
+    )
+    # Run synthesis in a daemon thread so it doesn't block the tap loop
+    t = threading.Thread(target=s._action_synthesize_analyst_output, daemon=True,
+                         name="sentinel-analyst-synthesis")
+    t.start()
+
 
 _SENTINEL_FIXES: dict[str, callable] = {
-    "strip_json":       _fix_strip_json,
-    "oom_gap":          _fix_oom_gap,
-    "compact_analyst":  _fix_compact_analyst,
-    "ngrok_drop":       _fix_ngrok_drop,
-    "ollama_down":      _fix_ollama_down,
-    "ollama_retry":     _fix_ollama_retry,
-    "selector_gap":     _fix_selector_gap,
-    "phase_timeout":    _fix_phase_timeout,
-    "scraper_timeout":  _fix_scraper_timeout,
-    "net_error":        _fix_net_error,
-    "adlib_fallback":   _fix_adlib_fallback,
-    "adlib_log":        _fix_adlib_log,
-    "scraper_gap":      _fix_scraper_gap,
-    "log_error":        _fix_log_error,
+    "strip_json":        _fix_strip_json,
+    "oom_gap":           _fix_oom_gap,
+    "compact_analyst":   _fix_compact_analyst,
+    "ngrok_drop":        _fix_ngrok_drop,
+    "ollama_down":       _fix_ollama_down,
+    "ollama_retry":      _fix_ollama_retry,
+    "selector_gap":      _fix_selector_gap,
+    "phase_timeout":     _fix_phase_timeout,
+    "scraper_timeout":   _fix_scraper_timeout,
+    "net_error":         _fix_net_error,
+    "adlib_fallback":    _fix_adlib_fallback,
+    "adlib_log":         _fix_adlib_log,
+    "scraper_gap":       _fix_scraper_gap,
+    "log_error":         _fix_log_error,
+    "analyst_timeout":   _fix_analyst_timeout,
 }
 
 
