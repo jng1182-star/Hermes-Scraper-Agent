@@ -18,7 +18,7 @@ from sentinel import (
 _PROFILE_TIMEOUT  = int(os.getenv("PROFILE_TIMEOUT",  "600"))  # 10 min — DOM scraping across multiple brands
 _FEED_TIMEOUT     = int(os.getenv("FEED_TIMEOUT",     "600"))  # 10 min — two scroll passes + ad library
 _ANALYST_TIMEOUT  = int(os.getenv("ANALYST_TIMEOUT",  "300"))  # 5 min — must complete before ngrok 550s drop
-_REPORTER_TIMEOUT = int(os.getenv("REPORTER_TIMEOUT", "240"))  # 4 min
+_REPORTER_TIMEOUT = int(os.getenv("REPORTER_TIMEOUT", "360"))  # 6 min — gemma4:26b needs headroom for full JSON
 _GATE_TIMEOUT     = int(os.getenv("GATE_TIMEOUT",     "120"))  # 2 min
 
 
@@ -378,9 +378,30 @@ class SocialListeningCrew:
             crew_reporter = Crew(agents=[reporter], tasks=[task_reporter],
                                  process=Process.sequential, verbose=True)
             _fire_hook("reporter", "active")
-            raw = _run_with_timeout(crew_reporter.kickoff, _REPORTER_TIMEOUT, "reporter")
+            _reporter_failed = False
+            raw = None
+            try:
+                raw = _run_with_timeout(crew_reporter.kickoff, _REPORTER_TIMEOUT, "reporter")
+            except Exception as _re:
+                print(f"[PHASE] Reporter failed: {_re} — Sentinel will format analyst output directly.", flush=True)
+                _reporter_failed = True
+                if _sentinel:
+                    _sentinel.receive_agent_response("reporter", f"Phase failed: {str(_re)[:200]}")
             _fire_hook("reporter", "done")
-            _save_checkpoint("reporter", str(raw))
+
+            # Sentinel fallback reporter: if LLM timed out, format analyst output into final schema
+            _reporter_out = str(raw) if raw and not _reporter_failed else ""
+            if not _reporter_out or len(_reporter_out) < 20:
+                print("[SENTINEL] Reporter timed out or returned empty — formatting analyst output directly.", flush=True)
+                _reporter_out = _sentinel_fallback_reporter(cp_analyst, self.params)
+                if _reporter_out:
+                    print("[SENTINEL] Fallback reporter synthesis complete.", flush=True)
+            if _reporter_out:
+                _save_checkpoint("reporter", _reporter_out)
+                raw = _reporter_out
+
+            if not raw:
+                raise RuntimeError("Reporter produced no output and fallback synthesis also failed.")
 
             # ── Post-processing: normalization, disclaimer, confidence caps ───
             # All arithmetic done in Python — never left to LLM judgment.
@@ -590,6 +611,77 @@ def _sentinel_fallback_analysis(profile_json: str, feed_json: str, params: dict)
         })
 
     return json.dumps(brand_records, indent=None)
+
+
+def _sentinel_fallback_reporter(analyst_output: str, params: dict) -> str:
+    """
+    Pure-Python reporter fallback — no LLM required.
+    Called when the reporter agent times out or returns empty.
+
+    The analyst output is already a valid brand_records JSON array (either from
+    the LLM analyst or from _sentinel_fallback_analysis). This function wraps it
+    into the final report schema that _postprocess_report expects, adding required
+    top-level fields (run_metadata, methodology_disclaimer, scan_params) so the
+    dashboard can render it correctly.
+
+    If analyst_output is not parseable JSON, it returns "" so the caller can raise.
+    """
+    from datetime import datetime, timezone
+
+    stripped = _strip_md_fences(analyst_output or "")
+    # Find the outermost JSON structure — could be list or dict
+    start = stripped.find("[") if stripped.find("[") != -1 and (stripped.find("{") == -1 or stripped.find("[") < stripped.find("{")) else stripped.find("{")
+    if start == -1:
+        return ""
+
+    try:
+        brand_records = json.loads(stripped[start:])
+    except Exception:
+        # Try to find a valid sub-slice
+        for ch_open, ch_close in (("[", "]"), ("{", "}")):
+            s = stripped.find(ch_open)
+            e = stripped.rfind(ch_close)
+            if s != -1 and e > s:
+                try:
+                    brand_records = json.loads(stripped[s:e+1])
+                    break
+                except Exception:
+                    pass
+        else:
+            return ""
+
+    # Normalise: analyst fallback returns a list; LLM analyst may return a dict with brands[]
+    if isinstance(brand_records, dict):
+        brand_records = brand_records.get("brands") or brand_records.get("competitors") or []
+
+    if not brand_records:
+        return ""
+
+    now = datetime.now(timezone.utc).isoformat()
+    report = {
+        "schema_version": "4.0.0",
+        "generated_at":   now,
+        "run_metadata": {
+            "generated_at": now,
+            "source":       "sentinel_fallback_reporter",
+            "note":         "Reporter LLM timed out. Output formatted directly from analyst data.",
+        },
+        "scan_params": {
+            "advertiser":   params.get("advertiser", ""),
+            "competitors":  params.get("competitors", []),
+            "country":      params.get("country", ""),
+            "platforms":    params.get("platforms", []),
+            "date_from":    params.get("date_from", ""),
+            "date_to":      params.get("date_to", ""),
+        },
+        "brands":     brand_records,
+        "methodology_disclaimer": (
+            "All values are directional Share-of-Voice indices (0–100 scale, "
+            "Directional / Indexed – Not Actual Spend). Reporter LLM timed out; "
+            "scores formatted directly from analyst output by Sentinel. Confidence capped at Low."
+        ),
+    }
+    return json.dumps(report, indent=None)
 
 
 def _post_profile_quality(profile_output: str, sentinel) -> None:
