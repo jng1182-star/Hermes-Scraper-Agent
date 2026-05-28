@@ -77,6 +77,7 @@ if _META_TOK:
 
 
 def _get(url: str, headers: dict = None) -> dict | None:
+    global _META_TOK_INVALID
     try:
         req = urllib.request.Request(url, headers=headers or {
             "User-Agent": "Mozilla/5.0 (compatible; HermesBot/1.0)"
@@ -94,7 +95,6 @@ def _get(url: str, headers: dict = None) -> dict | None:
             try:
                 err_body = json.loads(body)
                 if err_body.get("error", {}).get("code") == 10 and not _META_TOK_INVALID:
-                    global _META_TOK_INVALID
                     _META_TOK_INVALID = True
                     logger.error(
                         "[APIDataTool] Meta Ad Library token lacks 'ads_read' permission "
