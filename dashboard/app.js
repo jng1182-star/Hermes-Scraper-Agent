@@ -724,7 +724,6 @@ const CARD_LOG_HINTS = {
 
 // keyword → agent-id mapping for routing log lines to individual cards
 const _LOG_ROUTE = {
-  profile:  ['profile scraper', 'profile baseline', 'brand profile', '[profile]', 'brand api data'],
   feed:     ['feed scroller', 'in-feed', 'feed ad', '[feed]', 'ad capture', 'paid adlib',
              'ad library collector', 'ad library', 'meta ad library', 'google atc', 'tiktok ccl'],
   scraper:  ['social data researcher', 'researcher', 'profile discovery', 'profile map',
@@ -738,9 +737,6 @@ const _LOG_ROUTE = {
 
 // [AGENT THINKING: <role>] → role keyword → card-id
 const _THINKING_ROLE_MAP = {
-  'profile scraper':          'profile',
-  'profile baseline scraper': 'profile',
-  'brand profile collector':  'profile',
   'feed scroller':            'feed',
   'in-feed ad collector':     'feed',
   'feed ad capture agent':    'feed',
@@ -844,7 +840,7 @@ function updateAgentCards(agentStates, logs) {
     const buckets = { feed: [], scraper: [], analyst: [], reporter: [], gate: [] };
     logs.forEach(line => {
       const id = _routeLogLine(line, agentStates);
-      if (id) buckets[id].push(line);   // keep raw line — _renderLogLine handles formatting
+      if (id && buckets[id]) buckets[id].push(line);   // keep raw line — _renderLogLine handles formatting
     });
     Object.entries(buckets).forEach(([id, lines]) => {
       const feedEl = document.getElementById('alog-' + id);
