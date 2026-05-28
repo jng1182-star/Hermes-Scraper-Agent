@@ -149,6 +149,13 @@ def clear_checkpoints() -> None:
                     f.unlink()
                 except Exception:
                     pass
+    # Also clear sidecar — the sidecar accumulates across tool calls, must reset on new run
+    _sidecar = _CHECKPOINT_DIR / "feed_raw_signals.json"
+    if _sidecar.exists():
+        try:
+            _sidecar.unlink()
+        except Exception:
+            pass
 
 
 def _fire_hook(node_id: str, state: str):
@@ -364,20 +371,50 @@ class SocialListeningCrew:
                     else:
                         _analyst_out = ""
                     if _analyst_out and len(_analyst_out) > 20:
-                        cp_analyst = _analyst_out
-                        _save_checkpoint("analyst", cp_analyst)
-                    elif not cp_analyst:
-                        # Sentinel fallback: synthesise minimal SOV records from raw signals
-                        cp_analyst = _sentinel_fallback_analysis(
-                            profile_output or "{}",
-                            feed_output    or "{}",
-                            self.params,
-                        )
-                        if cp_analyst:
+                        # Hallucination guard: validate analyst output against sidecar ad counts.
+                        # If LLM assigned equal scores despite unequal ad data, override with synthesis.
+                        _hallucination_risk = False
+                        try:
+                            _rs4, _sl4 = _resolve_run_state()
+                            if _rs4 is not None:
+                                with _sl4:
+                                    _hallucination_risk = any(
+                                        k.startswith("hallucination_risk_analyst")
+                                        for k in _rs4.get("sentinel_directives", {})
+                                    )
+                        except Exception:
+                            pass
+
+                        _output_valid = True
+                        if _sentinel and (not _analyst_failed):
+                            _output_valid = _sentinel._validate_analyst_output(_analyst_out)
+                        elif _hallucination_risk:
+                            _output_valid = False
+
+                        if _output_valid:
+                            cp_analyst = _analyst_out
                             _save_checkpoint("analyst", cp_analyst)
-                            print("[SENTINEL] Fallback analyst synthesis complete — proceeding to reporter.", flush=True)
                         else:
-                            cp_analyst = analyst_context[:2000]
+                            print("[SENTINEL] Analyst output failed hallucination validation — forcing synthesis.", flush=True)
+                            _analyst_out = ""   # fall through to synthesis below
+
+                    if not _analyst_out or len(_analyst_out) <= 20:
+                        if not cp_analyst:
+                            # Sentinel fallback: synthesise minimal SOV records from raw signals
+                            _synthesis = _sentinel_fallback_analysis(
+                                profile_output or "{}",
+                                feed_output    or "{}",
+                                self.params,
+                            )
+                            # Self-validate: if all signals zero, emit honest data_unavailable
+                            if _synthesis and _sentinel:
+                                _synthesis = _sentinel._validate_sentinel_synthesis(_synthesis, self.params)
+                            cp_analyst = _synthesis
+                            if cp_analyst:
+                                _save_checkpoint("analyst", cp_analyst)
+                                print("[SENTINEL] Fallback analyst synthesis complete — proceeding to reporter.", flush=True)
+                            else:
+                                cp_analyst = analyst_context[:2000]
                 except Exception:
                     pass
 
@@ -479,13 +516,44 @@ def _sentinel_fallback_analysis(profile_json: str, feed_json: str, params: dict)
     for brand_name, bdata in adlib.items():
         b = brand_signals.setdefault(brand_name, {})
         b["adlib"] = {
-            "active_ads_found": bdata.get("active_ads_found", 0),
+            "active_ads_found": int(bdata.get("active_ads_found") or 0),
             "impressions_min":  bdata.get("impressions_min"),
             "impressions_max":  bdata.get("impressions_max"),
-            "new_ads_last_7d":  bdata.get("new_ads_last_7d", 0),
+            "new_ads_last_7d":  int(bdata.get("new_ads_last_7d") or 0),
             "ad_start_dates":   bdata.get("ad_start_dates", []),
             "geo_countries":    bdata.get("geo_countries", []),
         }
+
+    # Fallback: parse raw_tool_results from PaidAdLibTool if ad_library_results was empty
+    for _brand_result in (feed_data.get("raw_tool_results") or feed_data.get("brand_results") or []):
+        _brand = (_brand_result.get("brand") or "").strip()
+        if not _brand:
+            continue
+        _total_ads = 0
+        for _pd in (_brand_result.get("platform_data") or []):
+            _total_ads += int(_pd.get("active_ads_found") or len(_pd.get("raw_results") or []))
+        b = brand_signals.setdefault(_brand, {})
+        existing_adlib = b.get("adlib", {})
+        if _total_ads > int(existing_adlib.get("active_ads_found") or 0):
+            existing_adlib["active_ads_found"] = _total_ads
+            existing_adlib.setdefault("source", "paid_adlib_tool_direct")
+            b["adlib"] = existing_adlib
+
+    # Highest-priority override: sidecar file written by PaidAdLibTool._run()
+    try:
+        _sidecar = Path("data/checkpoints/feed_raw_signals.json")
+        if _sidecar.exists():
+            _sidecar_data = json.loads(_sidecar.read_text(encoding="utf-8"))
+            for _brand, _bsig in _sidecar_data.items():
+                _sidecar_total = int(_bsig.get("active_ads_found_total") or 0)
+                b = brand_signals.setdefault(_brand, {})
+                existing_adlib = b.get("adlib", {})
+                if _sidecar_total > int(existing_adlib.get("active_ads_found") or 0):
+                    existing_adlib["active_ads_found"] = _sidecar_total
+                    existing_adlib["source"] = "paid_adlib_tool_sidecar"
+                    b["adlib"] = existing_adlib
+    except Exception:
+        pass
 
     if not brand_signals:
         return ""
@@ -874,17 +942,41 @@ def _build_analyst_context(profile_json: str, feed_json: str, search_json: str,
     if feed_json and feed_json != "{}":
         try:
             _fd = json.loads(feed_json)
-            # Extract ad library results per brand (primary SOV signals)
+            # Primary path: ad_library_results keyed by brand (LLM-formatted output)
             for brand_key, adlib in (_fd.get("ad_library_results") or {}).items():
                 feed_signals[brand_key] = {
-                    "active_ads_found":   adlib.get("active_ads_found", 0),
+                    "active_ads_found":   int(adlib.get("active_ads_found") or 0),
                     "impressions_min":     adlib.get("impressions_min"),
                     "impressions_max":     adlib.get("impressions_max"),
-                    "new_ads_last_7d":     adlib.get("new_ads_last_7d", 0),
+                    "new_ads_last_7d":     int(adlib.get("new_ads_last_7d") or 0),
                     "ad_start_dates":      (adlib.get("ad_start_dates") or [])[:3],
                     "geo_countries":       adlib.get("geo_countries", []),
                     "source":              adlib.get("source", "ad_library"),
                 }
+
+            # Fallback path: raw PaidAdLibTool output — the LLM may not extract
+            # ad counts into ad_library_results, so also parse the tool's structured
+            # platform_data[] directly. Each entry has active_ads_found as an integer.
+            # This path fires when feed_signals is empty or has zero counts.
+            _raw_tool_results = _fd.get("raw_tool_results") or []
+            if not _raw_tool_results:
+                # The feed LLM may embed the raw tool JSON as a string in its output —
+                # try to find a brand/platform_data structure anywhere in the feed JSON
+                _raw_tool_results = _fd.get("brand_results") or []
+
+            for _brand_result in _raw_tool_results:
+                _brand = (_brand_result.get("brand") or "").strip()
+                if not _brand:
+                    continue
+                _existing = feed_signals.get(_brand, {})
+                _total_ads = int(_existing.get("active_ads_found") or 0)
+                for _pd in (_brand_result.get("platform_data") or []):
+                    _plat_ads = int(_pd.get("active_ads_found") or len(_pd.get("raw_results") or []))
+                    _total_ads += _plat_ads
+                if _total_ads > int(_existing.get("active_ads_found") or 0):
+                    feed_signals.setdefault(_brand, {})["active_ads_found"] = _total_ads
+                    feed_signals[_brand].setdefault("source", "paid_adlib_tool_direct")
+
             # Top-level feed summary
             feed_summary = {
                 "total_posts_scrolled": _fd.get("total_posts_scrolled", 0),
@@ -896,10 +988,32 @@ def _build_analyst_context(profile_json: str, feed_json: str, search_json: str,
         except Exception:
             feed_summary = {}
 
+        # Highest-priority override: sidecar file written by PaidAdLibTool._run()
+        # contains Python-parsed integer counts that bypass LLM re-extraction entirely.
+        try:
+            _sidecar = Path("data/checkpoints/feed_raw_signals.json")
+            if _sidecar.exists():
+                _sidecar_data = json.loads(_sidecar.read_text(encoding="utf-8"))
+                for _brand, _bsig in _sidecar_data.items():
+                    _sidecar_total = int(_bsig.get("active_ads_found_total") or 0)
+                    _existing_total = int((feed_signals.get(_brand) or {}).get("active_ads_found") or 0)
+                    if _sidecar_total > _existing_total:
+                        feed_signals.setdefault(_brand, {})["active_ads_found"] = _sidecar_total
+                        feed_signals[_brand]["source"] = "paid_adlib_tool_sidecar"
+                        feed_signals[_brand]["per_platform"] = _bsig.get("per_platform", {})
+                        print(f"[CONTEXT] Sidecar override for {_brand}: {_sidecar_total} ads (was {_existing_total})", flush=True)
+                if feed_summary:
+                    feed_summary["brand_ad_library"] = feed_signals
+        except Exception:
+            pass
+
         if feed_summary:
             parts.append(
                 "=== AGENT 2: FEED SCROLLER (geo-bounded) + AD LIBRARIES ===\n"
                 "Ad library = primary SOV signal (creative volume, velocity, reach, geo).\n"
+                "CRITICAL: active_ads_found values below are AUTHORITATIVE INTEGERS from the scraper.\n"
+                "You MUST use these exact integers in the Creative Volume SOV formula.\n"
+                "Do NOT substitute lower values, do NOT re-derive from prose text.\n"
                 "baselines_applied=False → feed paid detection was DOM-only; "
                 "under-reports paid in SEA markets (~30–40% miss rate).\n\n"
                 + json.dumps(feed_summary, indent=None)

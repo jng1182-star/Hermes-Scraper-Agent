@@ -248,6 +248,21 @@ _ERROR_TAXONOMY: list[tuple] = [
     ("typeerror",                   "WARNING",  "log_error",      "TypeError in agent"),
     ("keyerror",                    "WARNING",  "log_error",      "KeyError in agent"),
     ("recursionerror",              "WARNING",  "log_error",      "RecursionError in agent"),
+    # ── Hallucination tells — LLM admitting it has no data ───────────────────────
+    # These lines in agent output indicate the LLM is about to fabricate values.
+    # Sentinel intercepts before the output reaches the analyst checkpoint.
+    ("i don't have",                "WARNING",  "hallucination_guard", "LLM admits no data — possible hallucination"),
+    ("i cannot determine",          "WARNING",  "hallucination_guard", "LLM cannot determine value"),
+    ("no data available",           "WARNING",  "hallucination_guard", "LLM signals data gap"),
+    ("cannot be determined",        "WARNING",  "hallucination_guard", "LLM signals data gap"),
+    ("information not available",   "WARNING",  "hallucination_guard", "LLM signals data gap"),
+    ("based on general knowledge",  "WARNING",  "hallucination_guard", "LLM using training data instead of tool output"),
+    ("as a well-known brand",       "WARNING",  "hallucination_guard", "LLM using prior knowledge, not scraped data"),
+    ("i'll estimate",               "WARNING",  "hallucination_guard", "LLM self-declaring estimation"),
+    ("i will estimate",             "WARNING",  "hallucination_guard", "LLM self-declaring estimation"),
+    ("assuming",                    "INFO",     "hallucination_guard", "LLM making assumptions — monitor"),
+    # ── Sidecar verification failures ────────────────────────────────────────────
+    ("[context] sidecar override",  "INFO",     "adlib_log",      "Sidecar ad count override applied"),
 ]
 
 
@@ -1190,6 +1205,169 @@ class SentinelObserver:
         except Exception as exc:
             self._gate_write(f"[SENTINEL] Analyst synthesis failed: {exc!s:.120}")
 
+    def _validate_analyst_output(self, analyst_json: str, feed_sidecar_path: str = "data/checkpoints/feed_raw_signals.json") -> bool:
+        """
+        Compare the analyst LLM's SOV scores against the Python-parsed ad counts from the
+        sidecar file. Returns True if the output is plausible, False if hallucination detected.
+
+        Hallucination detection rule: if two or more brands have non-zero active_ads_found
+        in the sidecar (real ad data), but the analyst assigned them identical or near-identical
+        SOV scores (within 2% of each other), the analyst likely fabricated scores rather than
+        deriving them from the data — flag for Sentinel override.
+
+        Also checks: if all brands have zero composite_sov the output is invalid regardless of
+        source — the fallback synthesis should always produce non-zero values when ads exist.
+        """
+        import pathlib as _pl, json as _j, re as _re
+        try:
+            # Load sidecar
+            sc_path = _pl.Path(feed_sidecar_path)
+            if not sc_path.exists():
+                return True   # no sidecar to compare against — can't validate
+            sidecar = _j.loads(sc_path.read_text(encoding="utf-8"))
+            brands_with_ads = {
+                b: int(v.get("active_ads_found_total") or 0)
+                for b, v in sidecar.items()
+                if int(v.get("active_ads_found_total") or 0) > 0
+            }
+            if len(brands_with_ads) < 2:
+                return True   # only 0 or 1 brands with data — can't test distribution
+
+            # Parse analyst output
+            cleaned = _re.sub(r"```(?:json)?\s*|```", "", analyst_json).strip()
+            # Find JSON array or object
+            start = cleaned.find("[") if "[" in cleaned and (cleaned.find("{") == -1 or cleaned.find("[") < cleaned.find("{")) else cleaned.find("{")
+            if start == -1:
+                return True   # can't parse — assume valid, will fail downstream
+            data = _j.loads(cleaned[start:])
+            if isinstance(data, list):
+                brands_out = data
+            elif isinstance(data, dict):
+                brands_out = data.get("brands") or data.get("competitors") or []
+            else:
+                return True
+
+            # Extract composite_sov per brand
+            sov_map = {
+                b.get("name", ""): float(b.get("composite_sov") or 0)
+                for b in brands_out if isinstance(b, dict) and b.get("name")
+            }
+            if not sov_map:
+                return True
+
+            # Check 1: all-zero composite SOV when ad data exists
+            if sum(sov_map.values()) == 0 and sum(brands_with_ads.values()) > 0:
+                self._gate_write(
+                    "[SENTINEL HALLUCINATION GUARD] FAIL: All brands have composite_sov=0.0 "
+                    f"but sidecar shows real ad data ({dict(list(brands_with_ads.items())[:3])}). "
+                    "Analyst output is invalid — forcing Sentinel fallback synthesis."
+                )
+                return False
+
+            # Check 2: identical SOV for brands with very different ad counts
+            sov_values = [v for k, v in sov_map.items() if k in brands_with_ads and v > 0]
+            if len(sov_values) >= 2:
+                sov_range = max(sov_values) - min(sov_values)
+                ad_count_range = max(brands_with_ads.values()) - min(brands_with_ads.values())
+                # If ads differ by >3x but SOV differs by <2 points → hallucination
+                if (ad_count_range / max(brands_with_ads.values())) > 0.5 and sov_range < 2.0:
+                    self._gate_write(
+                        f"[SENTINEL HALLUCINATION GUARD] FAIL: Brands have very different ad counts "
+                        f"(range: {ad_count_range}) but nearly identical SOV scores "
+                        f"(range: {sov_range:.1f}). "
+                        "Analyst likely hallucinated equal scores — forcing Sentinel synthesis."
+                    )
+                    return False
+
+            self._gate_write(
+                "[SENTINEL HALLUCINATION GUARD] PASS: Analyst SOV distribution is plausible "
+                f"relative to ad data. Scores: {dict(list(sov_map.items())[:4])}."
+            )
+            return True
+
+        except Exception as exc:
+            self._gate_write(f"[SENTINEL] Hallucination validation error: {exc!s:.120}")
+            return True   # on error, don't block — proceed with analyst output
+
+    def _validate_sentinel_synthesis(self, synthesis_json: str, params: dict) -> str:
+        """
+        Self-check the pure-Python SOV synthesis output before writing to checkpoint.
+        If all brands have zero active_ads_found (no real data at all), replace the
+        output with an honest 'data_unavailable' record rather than fabricating equal
+        near-zero scores that look like real data.
+
+        Returns the validated (possibly replaced) JSON string.
+        """
+        import json as _j
+        try:
+            data = _j.loads(synthesis_json) if isinstance(synthesis_json, str) else synthesis_json
+            if isinstance(data, list):
+                brands = data
+            elif isinstance(data, dict):
+                brands = data.get("brands") or []
+            else:
+                return synthesis_json
+
+            all_zero = all(
+                float(b.get("composite_sov") or 0) == 0.0
+                for b in brands if isinstance(b, dict)
+            )
+            all_signals_zero = all(
+                all(
+                    float(v) == 0.0
+                    for v in (plat_data.get("signals") or {}).values()
+                )
+                for b in brands if isinstance(b, dict)
+                for plat_data in (b.get("platforms") or {}).values()
+                if isinstance(plat_data, dict)
+            )
+
+            if all_zero and all_signals_zero and brands:
+                self._gate_write(
+                    "[SENTINEL SELF-CHECK] All synthesis signals are zero — "
+                    "this means no real ad data was collected. "
+                    "Replacing fabricated zeros with honest data_unavailable records. "
+                    "This prevents the dashboard from showing meaningless 0.0 scores as if real."
+                )
+                # Mark each brand as data_unavailable rather than zero-scored
+                for b in brands:
+                    b["composite_sov"] = 0.0
+                    b["composite_confidence"] = "Low"
+                    b["data_unavailable"] = True
+                    b["data_unavailable_reason"] = (
+                        "No ad library data was collected for this run. "
+                        "Scores cannot be computed. Verify Playwright connectivity, "
+                        "proxy configuration, and that the brand name is searchable "
+                        "in Meta Ad Library and Google Ads Transparency Center."
+                    )
+                    for plat_data in (b.get("platforms") or {}).values():
+                        if isinstance(plat_data, dict):
+                            plat_data["confidence"] = "Low"
+                            plat_data["data_unavailable"] = True
+
+                return _j.dumps(brands, ensure_ascii=False)
+
+            return synthesis_json
+
+        except Exception as exc:
+            self._gate_write(f"[SENTINEL SELF-CHECK] Validation error: {exc!s:.80}")
+            return synthesis_json
+
+    def _action_hallucination_guard(self, phase: str) -> None:
+        """
+        Fire when the LLM emits a hallucination tell in its output stream.
+        Logs a flag and sets a directive so the analyst post-processor validates
+        the output before writing the checkpoint. Does NOT immediately discard output —
+        the full output must be validated after completion via _validate_analyst_output().
+        """
+        self._gate_write(
+            f"[SENTINEL HALLUCINATION GUARD] LLM in phase '{phase}' emitted a hallucination tell "
+            "(admitted lack of data or stated it will estimate). "
+            "Setting hallucination_risk directive — analyst output will be validated against "
+            "sidecar ad counts before the checkpoint is written."
+        )
+        self._action_set_directive(f"hallucination_risk_{phase}", True)
+
     def _action_log_coverage_gap(self, brand: str, platform: str, reason: str) -> None:
         """Record a coverage gap in _run_state so the reporter can surface it in output."""
         try:
@@ -1580,6 +1758,10 @@ def _fix_log_error(s: "SentinelObserver", phase: str) -> None:
         "If phase output is empty, Sentinel fallback synthesis will be triggered."
     )
 
+def _fix_hallucination_guard(s: "SentinelObserver", phase: str) -> None:
+    s._action_hallucination_guard(phase)
+
+
 def _fix_analyst_timeout(s: "SentinelObserver", phase: str) -> None:
     """Analyst timed out or raised an exception — synthesise output directly.
 
@@ -1614,6 +1796,7 @@ _SENTINEL_FIXES: dict[str, callable] = {
     "scraper_gap":       _fix_scraper_gap,
     "log_error":         _fix_log_error,
     "analyst_timeout":   _fix_analyst_timeout,
+    "hallucination_guard": _fix_hallucination_guard,
 }
 
 

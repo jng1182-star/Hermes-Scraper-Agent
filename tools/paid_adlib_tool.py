@@ -112,6 +112,29 @@ async def _attr(el, attr: str, fallback: str = "") -> str:
 
 # ── Platform scrapers ─────────────────────────────────────────────────────────
 
+def _parse_atc_count(text: str) -> int:
+    """
+    Parse Google Ads Transparency Center ad count strings into integers.
+    Handles: '~3k ads', '~150 ads', '3,200 ads', '1.2K ads', 'about 500 ads'.
+    Returns 0 if no number found.
+    """
+    if not text:
+        return 0
+    # Normalise: remove commas, lowercase
+    text = text.replace(",", "").lower()
+    # Match patterns like ~3k, ~150, 1.2k, 500 followed by 'ads'
+    m = re.search(r"(?:~|about\s+)?(\d+(?:\.\d+)?)\s*([km])?\s*(?:ads?|ad\b)", text)
+    if not m:
+        return 0
+    val = float(m.group(1))
+    suffix = (m.group(2) or "").lower()
+    if suffix == "k":
+        val *= 1_000
+    elif suffix == "m":
+        val *= 1_000_000
+    return int(val)
+
+
 async def _scrape_meta(context, brand: str, country: str) -> list[dict]:
     """Scrape Meta Ad Library for paid ads by brand."""
     from tools.proxy_manager import COUNTRY_TO_CODE
@@ -128,10 +151,20 @@ async def _scrape_meta(context, brand: str, country: str) -> list[dict]:
 
     page = await context.new_page()
     ads: list[dict] = []
+    total_result_count = 0  # parsed from "X results" header if present
     try:
         await _rate_limit("www.facebook.com")
         await page.goto(url, timeout=20_000, wait_until="domcontentloaded")
         await asyncio.sleep(3)  # let React render ad cards
+
+        # Try to extract the total results count shown in the header (e.g. "1,234 results")
+        try:
+            body_text = await page.inner_text("body")
+            m_count = re.search(r"([\d,]+)\s+results?\b", body_text, re.IGNORECASE)
+            if m_count:
+                total_result_count = int(m_count.group(1).replace(",", ""))
+        except Exception:
+            pass
 
         # Meta Ad Library DOM selectors (updated 2025 — old carousel testid removed):
         # Each ad block is wrapped in [data-testid="ad-library-dynamic-content-container"]
@@ -182,6 +215,12 @@ async def _scrape_meta(context, brand: str, country: str) -> list[dict]:
         print(f"[PaidAdLib] Meta scrape error for '{brand}': {e}", flush=True)
     finally:
         await page.close()
+
+    # Attach structured signal: prefer parsed header count, fall back to card count
+    active_ads = total_result_count if total_result_count > 0 else len(ads)
+    for ad in ads:
+        ad["active_ads_found"] = active_ads
+        ad["cards_scraped"] = len(ads)
 
     return ads
 
@@ -249,12 +288,16 @@ async def _scrape_google(context, brand: str, country: str) -> list[dict]:
         if not entries:
             entries = [result_block[:800]]
 
+        # Parse total ad count from the result block prose (e.g. "~3k ads", "150 ads")
+        parsed_count = _parse_atc_count(result_block)
+
         for entry in entries[:5]:
             ads.append({
                 "url": base_url,
                 "title": f"{safe_brand} — Google Ads Transparency",
                 "content": entry[:1500],
                 "source_type": "paid",
+                "active_ads_found": parsed_count,
             })
 
     except Exception as e:
@@ -398,18 +441,31 @@ async def _scrape_all(brand: str, country: str, platforms: list[str],
                 ads = mg.get(sub_label, [])
                 if not ads:
                     continue
+                # Extract the max active_ads_found across all ad objects (set by scraper)
+                parsed_count = max(
+                    (int(a.get("active_ads_found", 0)) for a in ads if isinstance(a, dict)),
+                    default=len(ads),
+                )
                 for plat_name in platform_map[sub_label]:
                     if plat_name in platforms:
                         platform_data.append({
-                            "platform":    plat_name,
-                            "raw_results": ads,
+                            "platform":        plat_name,
+                            "active_ads_found": parsed_count,
+                            "cards_scraped":    len(ads),
+                            "data_source":      f"{sub_label}_ad_library_scraper",
+                            "confidence":       "medium" if parsed_count > 0 else "low",
+                            "raw_results":      ads,
                         })
         elif label == "tiktok":
             ads = result if isinstance(result, list) else []
             if ads:
                 platform_data.append({
-                    "platform":    "TikTok",
-                    "raw_results": ads,
+                    "platform":        "TikTok",
+                    "active_ads_found": len(ads),
+                    "cards_scraped":    len(ads),
+                    "data_source":      "tiktok_api",
+                    "confidence":       "high" if ads else "low",
+                    "raw_results":      ads,
                 })
 
     return {"brand": brand, "platform_data": platform_data}
@@ -453,5 +509,43 @@ class PaidAdLibTool(BaseTool):
         except Exception as e:
             print(f"[PaidAdLib] _run error: {e}", flush=True)
             result = {"brand": brand, "platform_data": [], "error": str(e)}
+
+        # Write structured signal summary to sidecar file so _build_analyst_context
+        # can read integer active_ads_found directly without relying on LLM re-extraction.
+        try:
+            import pathlib as _pl
+            _sidecar_dir = _pl.Path("data/checkpoints")
+            _sidecar_dir.mkdir(parents=True, exist_ok=True)
+            _sidecar = _sidecar_dir / "feed_raw_signals.json"
+            # Load existing sidecar (accumulate per brand across multiple tool calls)
+            _existing: dict = {}
+            if _sidecar.exists():
+                try:
+                    _existing = json.loads(_sidecar.read_text(encoding="utf-8"))
+                except Exception:
+                    _existing = {}
+            # Aggregate active_ads_found across all platform_data entries for this brand
+            _total_ads = sum(
+                int(pd.get("active_ads_found") or len(pd.get("raw_results") or []))
+                for pd in result.get("platform_data", [])
+            )
+            _per_plat = {
+                pd["platform"]: {
+                    "active_ads_found": int(pd.get("active_ads_found") or len(pd.get("raw_results") or [])),
+                    "cards_scraped":    int(pd.get("cards_scraped") or len(pd.get("raw_results") or [])),
+                    "confidence":       pd.get("confidence", "low"),
+                    "data_source":      pd.get("data_source", "scraper"),
+                }
+                for pd in result.get("platform_data", [])
+                if pd.get("platform")
+            }
+            _existing[brand] = {
+                "active_ads_found_total": _total_ads,
+                "per_platform":           _per_plat,
+            }
+            _sidecar.write_text(json.dumps(_existing, ensure_ascii=False), encoding="utf-8")
+            print(f"[PaidAdLib] Sidecar updated: {brand} → {_total_ads} total ads across {list(_per_plat)}", flush=True)
+        except Exception as _se:
+            print(f"[PaidAdLib] Sidecar write failed: {_se}", flush=True)
 
         return json.dumps(result)
