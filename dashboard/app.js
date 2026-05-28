@@ -714,7 +714,7 @@ async function pollStatus() {
 // ── Agent Card Updates ───────────────────────────────────────────────────────
 
 const CARD_LOG_HINTS = {
-  profile:  { idle: 'Awaiting activation…', active: 'Scraping brand profile pages…',   done: 'Profile baselines collected' },
+  profile:  { idle: 'Ad-library-only mode — skipped', active: 'Ad-library-only mode — skipped', done: 'Skipped — ad-library mode active' },
   feed:     { idle: 'Awaiting activation…', active: 'Querying Meta / Google / TikTok ad libraries…', done: 'Ad library data captured' },
   scraper:  { idle: 'Awaiting activation…', active: 'Identifying brand social profiles & channels…', done: 'Profile map complete' },
   analyst:  { idle: 'Awaiting data…',       active: 'Computing 6-signal SOV index…',   done: 'Analysis complete' },

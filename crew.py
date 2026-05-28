@@ -118,7 +118,7 @@ def _run_with_timeout(fn, timeout_secs: int, phase_name: str):
     return result[0]
 
 _CHECKPOINT_DIR = Path("data/checkpoints")
-_PHASE_NAMES    = ["researcher", "profile", "feed", "analyst", "reporter"]
+_PHASE_NAMES    = ["researcher", "feed", "analyst", "reporter"]
 
 
 def _cp_path(phase: str) -> Path:
@@ -179,7 +179,6 @@ class SocialListeningCrew:
 
     def run(self):
         researcher    = self.agents.researcher_agent()
-        profile_agent = self.agents.profile_agent()
         feed_agent    = self.agents.feed_agent()
         analyst       = self.agents.analyst_agent()
         reporter      = self.agents.reporter_agent()
@@ -211,7 +210,6 @@ class SocialListeningCrew:
 
         # ── Checkpoint recovery ───────────────────────────────────────────────
         cp_researcher = _load_checkpoint("researcher") if self.resume else None
-        cp_profile    = _load_checkpoint("profile")    if self.resume else None
         cp_feed       = _load_checkpoint("feed")       if self.resume else None
         cp_analyst    = _load_checkpoint("analyst")    if self.resume else None
 
@@ -237,32 +235,18 @@ class SocialListeningCrew:
                 finally:
                     _fire_hook("scraper", "done")
 
-            # ── Phase 1: Profile scraper ──────────────────────────────────────
-            profile_output = cp_profile
-            if not profile_output:
-                _fire_hook("profile", "active")
-                print("[PHASE] Profile Scraper — collecting posts and building baselines.", flush=True)
-                try:
-                    task_profile = self.tasks.profile_task(profile_agent, self.params,
-                                                           profile_map=profile_map)
-                    crew_profile = Crew(agents=[profile_agent], tasks=[task_profile],
-                                        process=Process.sequential, verbose=True)
-                    _profile_raw = _run_with_timeout(crew_profile.kickoff, _PROFILE_TIMEOUT, "profile")
-                    profile_output = str(_profile_raw) if _profile_raw is not None else (str(task_profile.output) if task_profile.output is not None else "{}")
-                    _save_checkpoint("profile", profile_output)
-                    # Post data_quality_check events to Sentinel
-                    _post_profile_quality(profile_output, _sentinel)
-                    print("[PHASE] Profile Scraper complete.", flush=True)
-                except Exception as exc:
-                    if _sentinel:
-                        _sentinel.receive_agent_response("profile", f"Phase exception: {str(exc)[:200]}")
-                    print(f"[PHASE] Profile Scraper failed: {exc} — proceeding without baselines.", flush=True)
-                    profile_output = "{}"
-                finally:
-                    _fire_hook("profile", "done")
+                # ── Phase 1: Profile scraper — SKIPPED (ad-library-only mode) ──────
+            # DOM profile scraping is blocked on Railway (datacenter IPs hit login walls
+            # on Facebook and TikTok regardless of scope period). Ad library signals
+            # (creative_volume, velocity, longevity, reach, platform_presence) cover 85%
+            # of the SOV model and are fully available without profile baselines.
+            # Engagement corroboration (15%) is zeroed — confidence caps at Medium.
+            profile_output = cp_profile if self.resume and cp_profile else "{}"
+            _fire_hook("profile", "done")
+            print("[PHASE] Profile Scraper — skipped (ad-library-only mode).", flush=True)
 
-            # Extract baselines from profile output (passed to feed task for schema compat)
-            _profile_baselines = _extract_baselines(profile_output)
+            # No baselines available — feed task schema compat only
+            _profile_baselines = "[]"
 
             # ── Phase 2: Ad Library queries (replaces feed scroll) ────────────
             # Feed scroll (Playwright authenticated sessions for Instagram/Facebook/TikTok/YouTube)
@@ -935,6 +919,14 @@ def _build_analyst_context(profile_json: str, feed_json: str, search_json: str,
             "paid_post_count = DOM-labelled + ER-outlier detected paid posts.\n"
             "baseline_available=False → ER signal unavailable for this brand×platform.\n\n"
             + json.dumps(profile_signals, indent=None)
+        )
+    else:
+        parts.append(
+            "=== AGENT 1: PROFILE SCRAPER — SKIPPED (ad-library-only mode) ===\n"
+            "Profile scraping is disabled in this deployment. "
+            "avg_er_pct = 0 for all brands. engagement_corroboration = 0 for all brands.\n"
+            "DO NOT fabricate ER values. Set engagement_corroboration = 0 in all signal dicts.\n"
+            "Confidence is CAPPED AT MEDIUM — do not assign High confidence to any brand."
         )
 
     # ── Feed scroller signal extraction ──────────────────────────────────────

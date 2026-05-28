@@ -34,8 +34,8 @@ def _make_llm(model_name: str) -> LLM:
 class SocialAgents:
     def __init__(self, depth: str = "deep"):
         self.search_tool   = SocialSearchTool()
-        self.profile_tool  = ProfileScraperTool()
         self.adlib_tool    = PaidAdLibTool()
+        # ProfileScraperTool not instantiated — ad-library-only mode (Railway IP blocks)
         # Scraper always uses e4b — structured data extraction, not deep reasoning.
         # e4b fits fully in GPU; 26b runs mixed CPU/GPU on this machine and stalls at 600s.
         self.scraper_llm = _make_llm("ollama/gemma4:e4b")
@@ -65,7 +65,7 @@ class SocialAgents:
                 "scraping targets. Your organic ER baselines and paid post flags are the primary "
                 "data source for the analyst's SOV signals. You never fabricate data."
             ),
-            tools=[self.profile_tool],
+            tools=[],
             llm=self.scraper_llm,
             verbose=True,
         )
