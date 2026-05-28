@@ -991,10 +991,11 @@ class SentinelObserver:
         model       = os.getenv("OLLAMA_MODEL", "gemma4:e4b")
         url         = f"{ollama_host}/api/generate"
         payload     = _json.dumps({
-            "model":  model,
-            "prompt": "hi",
-            "stream": False,
-            "options": {"num_predict": 1},
+            "model":       model,
+            "prompt":      "hi",
+            "stream":      False,
+            "keep_alive":  -1,   # pin model in VRAM for entire pipeline run
+            "options":     {"num_predict": 1},
         }).encode()
         self._gate_write(
             f"[SENTINEL] Pre-warming Ollama model '{model}' before researcher starts…"

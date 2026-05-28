@@ -76,22 +76,49 @@ def _build_query(params: dict) -> str:
 
 
 def _kill_ollama_runner():
+    """Unload model from VRAM via keep_alive=0 (authoritative), then fall back
+    to CLI stop and SIGINT for any lingering runner sub-process."""
+    import urllib.request, urllib.error
+    host = _ollama_host
+    models = [
+        os.getenv("OLLAMA_MODEL", "gemma4:e4b"),
+        "gemma4:26b",
+        "gemma4:e4b",
+    ]
+    evicted = set()
+    for model in models:
+        if model in evicted:
+            continue
+        try:
+            payload = json.dumps({"model": model, "keep_alive": 0}).encode()
+            req = urllib.request.Request(
+                f"{host}/api/generate",
+                data=payload,
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            urllib.request.urlopen(req, timeout=10)
+            print(f"[WATCHDOG] Evicted {model} from VRAM (keep_alive=0).", flush=True)
+            evicted.add(model)
+        except Exception as e:
+            print(f"[WATCHDOG] keep_alive evict failed for {model}: {e}", flush=True)
+    # Belt-and-suspenders: CLI stop + SIGINT the runner sub-process
+    if _OLLAMA_BIN:
+        for model in set(models):
+            try:
+                subprocess.run([_OLLAMA_BIN, "stop", model], capture_output=True, timeout=10)
+            except Exception:
+                pass
     try:
         r = subprocess.run(["pgrep", "-f", "ollama runner"], capture_output=True, text=True)
         for pid_str in r.stdout.strip().splitlines():
             try:
-                os.kill(int(pid_str), 2)  # SIGINT=2, no signal module
+                os.kill(int(pid_str), 2)  # SIGINT
                 print(f"[WATCHDOG] Sent SIGINT to Ollama runner PID {pid_str}.", flush=True)
             except (ValueError, ProcessLookupError):
                 pass
     except Exception as e:
         print(f"[WATCHDOG] pgrep failed: {e}", flush=True)
-    if _OLLAMA_BIN:
-        try:
-            subprocess.run([_OLLAMA_BIN, "stop", "gemma4:e4b"],  capture_output=True, timeout=10)
-            subprocess.run([_OLLAMA_BIN, "stop", "gemma4:26b"], capture_output=True, timeout=10)
-        except Exception:
-            pass
 
 
 # No hard deadline — pipeline runs until complete. Stall watchdog handles frozen LLMs.
