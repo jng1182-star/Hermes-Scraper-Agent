@@ -1843,121 +1843,136 @@ function renderResultsFiltered() {
     });
   });
 
-  // Chart 1 — Composite SOV per brand (update-in-place; create only if needed)
-  if (Charts.sovComposite && Charts.sovComposite.data.labels.length === brandNames.length) {
-    Charts.sovComposite.data.labels = brandNames;
-    Charts.sovComposite.data.datasets[0].data = brands.map(b => b.composite_sov || 0);
-    Charts.sovComposite.data.datasets[0].backgroundColor = bgColors;
-    Charts.sovComposite.update();
-  } else {
-    if (Charts.sovComposite) { Charts.sovComposite.destroy(); Charts.sovComposite = null; }
-    Charts.sovComposite = new Chart(document.getElementById('sovCompositeChart').getContext('2d'), {
-      type: 'bar',
-      data: {
-        labels: brandNames,
-        datasets: [{
-          label: 'Composite SOV (Directional)',
-          data: brands.map(b => b.composite_sov || 0),
-          backgroundColor: bgColors,
-          borderRadius: 5,
-          borderSkipped: false,
-        }],
-      },
-      options: {
-        ...CHART_OPTS,
-        plugins: {
-          legend: { display: false },
-          tooltip: { callbacks: { label: ctx => `SOV Index: ${ctx.parsed.y.toFixed(1)} (Directional / Indexed – Not Actual Spend)` } },
-        },
-        scales: { y: { ...CHART_OPTS.scales?.y, title: { display: true, text: 'SOV Index (Directional)', color: '#8b949e', font: { size: 10 } } } },
-      },
-    });
-  }
-
-  // Chart 2 — Per-platform SOV grouped bar (active platforms only)
-  const platDatasets = activePlats.map(p => ({
-    label: platLabels[p] || (p + ' SOV (Dir.)'),
-    data: brands.map(b => (b.platforms||{})[p]?.sov_index || 0),
-    backgroundColor: platColors[p] || C.accent,
-    borderRadius: 4, borderSkipped: false,
-  }));
-  if (Charts.platformSov) { Charts.platformSov.destroy(); Charts.platformSov = null; }
-  Charts.platformSov = new Chart(document.getElementById('platformSovChart').getContext('2d'), {
+  // Chart 1 — Composite SOV: horizontal ranked bar
+  // Sorted descending so the dominant brand sits at the top — immediately shows rank order
+  const _c1sorted = [...brands].sort((a,b) => (b.composite_sov||0) - (a.composite_sov||0));
+  const _c1names  = _c1sorted.map(b => b.name || '?');
+  const _c1vals   = _c1sorted.map(b => b.composite_sov || 0);
+  const _c1colors = _c1sorted.map(b => bgColors[brands.indexOf(b) % bgColors.length]);
+  if (Charts.sovComposite) { Charts.sovComposite.destroy(); Charts.sovComposite = null; }
+  Charts.sovComposite = new Chart(document.getElementById('sovCompositeChart').getContext('2d'), {
     type: 'bar',
-    data: { labels: brandNames, datasets: platDatasets },
+    data: {
+      labels: _c1names,
+      datasets: [{
+        label: 'Composite SOV (Directional)',
+        data: _c1vals,
+        backgroundColor: _c1colors,
+        borderRadius: 5,
+        borderSkipped: false,
+      }],
+    },
     options: {
       ...CHART_OPTS,
+      indexAxis: 'y',
       plugins: {
-        legend: { display: true, position: 'top', labels: { color: '#8b949e', font: { size: 10 } } },
-        tooltip: { callbacks: { label: ctx => `${ctx.dataset.label}: ${ctx.parsed.y.toFixed(1)} (Directional)` } },
+        legend: { display: false },
+        tooltip: { callbacks: { label: ctx => `SOV Index: ${ctx.parsed.x.toFixed(1)} (Directional / Indexed – Not Actual Spend)` } },
+      },
+      scales: {
+        x: { grid: { color: C.chartGrid }, ticks: { color: C.chartTick, font: { size: 11 } }, title: { display: true, text: 'SOV Index (Directional)', color: '#8b949e', font: { size: 10 } } },
+        y: { grid: { display: false }, ticks: { color: C.chartTick, font: { size: 12, weight: '600' } } },
       },
     },
   });
 
-  // Chart 3 — 6-signal stacked bar per brand (update-in-place when label count matches)
-  if (Charts.signalBreakdown && Charts.signalBreakdown.data.labels.length === brandNames.length) {
-    Charts.signalBreakdown.data.labels = brandNames;
-    Charts.signalBreakdown.data.datasets.forEach((ds, i) => {
-      const sk = sigKeys[i];
-      if (sk) { ds.data = brands.map(b => _avgSig(b, sk.key)); ds.label = sk.label; }
-    });
-    Charts.signalBreakdown.update();
-  } else {
-    if (Charts.signalBreakdown) { Charts.signalBreakdown.destroy(); Charts.signalBreakdown = null; }
-    Charts.signalBreakdown = new Chart(document.getElementById('signalBreakdownChart').getContext('2d'), {
-      type: 'bar',
-      data: {
-        labels: brandNames,
-        datasets: sigKeys.map(s => ({
-          label: s.label,
-          data: brands.map(b => _avgSig(b, s.key)),
-          backgroundColor: s.color,
-          borderRadius: 3,
-          borderSkipped: false,
-        })),
+  // Chart 2 — Platform SOV: line chart (one line per platform, brands on X-axis)
+  // Shows each platform's relative contribution across the competitive set
+  const platLineDatasets = activePlats.map(p => ({
+    label: platLabels[p] || (p + ' SOV'),
+    data: brands.map(b => (b.platforms||{})[p]?.sov_index || 0),
+    borderColor: platColors[p] || C.accent,
+    backgroundColor: (platColors[p] || C.accent).replace(')', ', 0.10)').replace('rgb(', 'rgba(').replace('#', 'rgba(').replace(/rgba\(([0-9a-f]{6}), 0\.10\)/, (_, h) => {
+      const r=parseInt(h.slice(0,2),16),g=parseInt(h.slice(2,4),16),b_=parseInt(h.slice(4,6),16);
+      return `rgba(${r},${g},${b_},0.10)`;
+    }),
+    fill: false,
+    tension: 0.35,
+    pointRadius: 6,
+    pointHoverRadius: 8,
+    pointBackgroundColor: platColors[p] || C.accent,
+    borderWidth: 2.5,
+  }));
+  if (Charts.platformSov) { Charts.platformSov.destroy(); Charts.platformSov = null; }
+  Charts.platformSov = new Chart(document.getElementById('platformSovChart').getContext('2d'), {
+    type: 'line',
+    data: { labels: brandNames, datasets: platLineDatasets },
+    options: {
+      ...CHART_OPTS,
+      plugins: {
+        legend: { display: true, position: 'top', labels: { color: '#8b949e', font: { size: 10 }, boxWidth: 14 } },
+        tooltip: { callbacks: { label: ctx => `${ctx.dataset.label}: ${ctx.parsed.y.toFixed(1)} (Directional)` } },
       },
-      options: {
-        ...CHART_OPTS,
-        plugins: {
-          legend: { display: true, position: 'top', labels: { color: '#8b949e', font: { size: 9 } } },
-          tooltip: { callbacks: { label: ctx => `${ctx.dataset.label}: ${ctx.parsed.y.toFixed(1)} (Directional – Not Actual Spend)` } },
-        },
-        scales: {
-          x: { stacked: true, grid: { color: C.chartGrid }, ticks: { color: C.chartTick, font: { size: 11 } } },
-          y: { stacked: true, grid: { color: C.chartGrid }, ticks: { color: C.chartTick, font: { size: 11 } } },
-        },
+      scales: {
+        x: { grid: { color: C.chartGrid }, ticks: { color: C.chartTick, font: { size: 11 } } },
+        y: { grid: { color: C.chartGrid }, ticks: { color: C.chartTick, font: { size: 11 } }, min: 0, title: { display: true, text: 'SOV Index', color: '#8b949e', font: { size: 10 } } },
       },
-    });
-  }
+    },
+  });
 
-  // Chart 4 — Confidence distribution per active platform
-  const confPlatLabels = activePlats.map(p => p.charAt(0).toUpperCase() + p.slice(1));
-  if (Charts.confidence && Charts.confidence.data.labels.join() === confPlatLabels.join()) {
-    Charts.confidence.data.datasets[0].data = activePlats.map(p => confCounts[p].High);
-    Charts.confidence.data.datasets[1].data = activePlats.map(p => confCounts[p].Medium);
-    Charts.confidence.data.datasets[2].data = activePlats.map(p => confCounts[p].Low);
-    Charts.confidence.update();
-  } else {
-    if (Charts.confidence) { Charts.confidence.destroy(); Charts.confidence = null; }
-    Charts.confidence = new Chart(document.getElementById('confidenceChart').getContext('2d'), {
-      type: 'bar',
-      data: {
-        labels: confPlatLabels,
-        datasets: [
-          { label: 'High',   data: activePlats.map(p => confCounts[p].High),   backgroundColor: C.green,  borderRadius: 4, borderSkipped: false },
-          { label: 'Medium', data: activePlats.map(p => confCounts[p].Medium), backgroundColor: C.amber,  borderRadius: 4, borderSkipped: false },
-          { label: 'Low',    data: activePlats.map(p => confCounts[p].Low),    backgroundColor: C.red,    borderRadius: 4, borderSkipped: false },
-        ],
+  // Chart 3 — Signal breakdown: radar chart (one dataset per brand, 6 signal axes)
+  // Spider/radar shows brand "signature" — which signals are strong or weak per brand
+  const radarLabels = sigKeys.map(s => s.label.replace(/\s*\(\d+%\)/, ''));
+  if (Charts.signalBreakdown) { Charts.signalBreakdown.destroy(); Charts.signalBreakdown = null; }
+  Charts.signalBreakdown = new Chart(document.getElementById('signalBreakdownChart').getContext('2d'), {
+    type: 'radar',
+    data: {
+      labels: radarLabels,
+      datasets: brands.map((b, i) => {
+        const col = bgColors[i % bgColors.length];
+        const r=parseInt(col.slice(1,3),16), g=parseInt(col.slice(3,5),16), bv=parseInt(col.slice(5,7),16);
+        return {
+          label: b.name || '?',
+          data: sigKeys.map(s => _avgSig(b, s.key)),
+          borderColor: col,
+          backgroundColor: `rgba(${r},${g},${bv},0.12)`,
+          pointBackgroundColor: col,
+          pointRadius: 4,
+          borderWidth: 2,
+          fill: true,
+        };
+      }),
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: true,
+      plugins: {
+        legend: { display: true, position: 'top', labels: { color: '#8b949e', font: { size: 10 }, boxWidth: 12 } },
+        tooltip: { callbacks: { label: ctx => `${ctx.dataset.label} — ${radarLabels[ctx.dataIndex]}: ${(ctx.raw||0).toFixed(1)}` } },
       },
-      options: {
-        ...CHART_OPTS,
-        plugins: {
-          legend: { display: true, position: 'top', labels: { color: '#8b949e', font: { size: 10 } } },
-          tooltip: { callbacks: { label: ctx => `${ctx.dataset.label}: ${ctx.parsed.y} brand${ctx.parsed.y!==1?'s':''}` } },
+      scales: {
+        r: {
+          grid: { color: 'rgba(30,144,255,0.10)' },
+          angleLines: { color: 'rgba(30,144,255,0.12)' },
+          pointLabels: { color: '#8b949e', font: { size: 10 } },
+          ticks: { color: '#8b949e', backdropColor: 'transparent', font: { size: 9 }, maxTicksLimit: 4 },
+          beginAtZero: true,
         },
       },
-    });
-  }
+    },
+  });
+
+  // Chart 4 — Confidence distribution: grouped bar per platform (unchanged — categorical counts)
+  const confPlatLabels = activePlats.map(p => p.charAt(0).toUpperCase() + p.slice(1));
+  if (Charts.confidence) { Charts.confidence.destroy(); Charts.confidence = null; }
+  Charts.confidence = new Chart(document.getElementById('confidenceChart').getContext('2d'), {
+    type: 'bar',
+    data: {
+      labels: confPlatLabels,
+      datasets: [
+        { label: 'High',   data: activePlats.map(p => confCounts[p].High),   backgroundColor: C.green,  borderRadius: 4, borderSkipped: false },
+        { label: 'Medium', data: activePlats.map(p => confCounts[p].Medium), backgroundColor: C.amber,  borderRadius: 4, borderSkipped: false },
+        { label: 'Low',    data: activePlats.map(p => confCounts[p].Low),    backgroundColor: C.red,    borderRadius: 4, borderSkipped: false },
+      ],
+    },
+    options: {
+      ...CHART_OPTS,
+      plugins: {
+        legend: { display: true, position: 'top', labels: { color: '#8b949e', font: { size: 10 } } },
+        tooltip: { callbacks: { label: ctx => `${ctx.dataset.label}: ${ctx.parsed.y} brand${ctx.parsed.y!==1?'s':''}` } },
+      },
+    },
+  });
 
   // Chart 5 — SOV Trend line (shown only when grain ≠ lifetime)
   _renderSovTrendChart(brands, bgColors);

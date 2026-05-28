@@ -323,8 +323,10 @@ def run_pipeline(params: dict):
         pass
 
     import concurrent.futures as _cf
+    # raw_output may be a dict (returned by _postprocess_report) — must be JSON string for gate
+    _raw_str = json.dumps(raw_output, ensure_ascii=False) if isinstance(raw_output, dict) else str(raw_output)
     with _cf.ThreadPoolExecutor(max_workers=1) as _pool:
-        _fut = _pool.submit(gate.process_final_report, str(raw_output), _scope_days)
+        _fut = _pool.submit(gate.process_final_report, _raw_str, _scope_days)
         try:
             final_json_str = _fut.result(timeout=GATE_TIMEOUT)
         except _cf.TimeoutError:
