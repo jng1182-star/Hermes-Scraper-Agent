@@ -118,7 +118,7 @@ def _run_with_timeout(fn, timeout_secs: int, phase_name: str):
     return result[0]
 
 _CHECKPOINT_DIR = Path("data/checkpoints")
-_PHASE_NAMES    = ["researcher", "feed", "analyst", "reporter"]
+_PHASE_NAMES    = ["researcher", "profile", "feed", "analyst", "reporter"]
 
 
 def _cp_path(phase: str) -> Path:
@@ -179,6 +179,7 @@ class SocialListeningCrew:
 
     def run(self):
         researcher    = self.agents.researcher_agent()
+        profile_agent = self.agents.profile_agent()
         feed_agent    = self.agents.feed_agent()
         analyst       = self.agents.analyst_agent()
         reporter      = self.agents.reporter_agent()
@@ -210,6 +211,7 @@ class SocialListeningCrew:
 
         # ── Checkpoint recovery ───────────────────────────────────────────────
         cp_researcher = _load_checkpoint("researcher") if self.resume else None
+        cp_profile    = _load_checkpoint("profile")    if self.resume else None
         cp_feed       = _load_checkpoint("feed")       if self.resume else None
         cp_analyst    = _load_checkpoint("analyst")    if self.resume else None
 
@@ -235,18 +237,38 @@ class SocialListeningCrew:
                 finally:
                     _fire_hook("scraper", "done")
 
-                # ── Phase 1: Profile scraper — SKIPPED (ad-library-only mode) ──────
-            # DOM profile scraping is blocked on Railway (datacenter IPs hit login walls
-            # on Facebook and TikTok regardless of scope period). Ad library signals
-            # (creative_volume, velocity, longevity, reach, platform_presence) cover 85%
-            # of the SOV model and are fully available without profile baselines.
-            # Engagement corroboration (15%) is zeroed — confidence caps at Medium.
-            profile_output = cp_profile if self.resume and cp_profile else "{}"
-            _fire_hook("profile", "done")
-            print("[PHASE] Profile Scraper — skipped (ad-library-only mode).", flush=True)
+                # ── Phase 1: Brand API Data Collection ───────────────────────
+            # Replaces Playwright profile scraping (blocked on Railway datacenter IPs).
+            # Uses YouTube Data API v3 for real er_pct / avg_views / subscriber baselines.
+            # Uses Meta Ad Library for Facebook/Instagram declared ad counts.
+            # Restores engagement_corroboration signal — confidence can reach High.
+            profile_output = cp_profile
+            if not profile_output:
+                _fire_hook("profile", "active")
+                print("[PHASE] Brand API Data — fetching YouTube + Meta baselines.", flush=True)
+                try:
+                    task_profile = self.tasks.profile_task(profile_agent, self.params,
+                                                           profile_map=profile_map)
+                    crew_profile = Crew(agents=[profile_agent], tasks=[task_profile],
+                                       process=Process.sequential, verbose=True)
+                    _profile_raw = _run_with_timeout(crew_profile.kickoff, _PROFILE_TIMEOUT, "profile")
+                    profile_output = str(_profile_raw) if _profile_raw is not None else (
+                        str(task_profile.output) if task_profile.output is not None else "{}"
+                    )
+                    _save_checkpoint("profile", profile_output)
+                    print("[PHASE] Brand API Data complete.", flush=True)
+                except Exception as exc:
+                    if _sentinel:
+                        _sentinel.receive_agent_response("profile", f"Phase exception: {str(exc)[:200]}")
+                    print(f"[PHASE] Brand API Data failed: {exc} — proceeding without baselines.", flush=True)
+                    profile_output = "{}"
+                finally:
+                    _fire_hook("profile", "done")
+            else:
+                print("[RESUME] Brand API Data restored from checkpoint.", flush=True)
+                _fire_hook("profile", "done")
 
-            # No baselines available — feed task schema compat only
-            _profile_baselines = "[]"
+            _profile_baselines = profile_output or "[]"
 
             # ── Phase 2: Ad Library queries (replaces feed scroll) ────────────
             # Feed scroll (Playwright authenticated sessions for Instagram/Facebook/TikTok/YouTube)

@@ -2,7 +2,7 @@ import os
 from crewai import Agent
 from crewai.llm import LLM
 from tools.social_search_tool import SocialSearchTool
-from tools.profile_scraper import ProfileScraperTool
+from tools.api_data_tool import APIDataTool
 from tools.paid_adlib_tool import PaidAdLibTool
 
 _OLLAMA_HOST     = os.getenv("OLLAMA_HOST", "http://127.0.0.1:11434").rstrip("/")
@@ -33,9 +33,9 @@ def _make_llm(model_name: str) -> LLM:
 
 class SocialAgents:
     def __init__(self, depth: str = "deep"):
-        self.search_tool   = SocialSearchTool()
-        self.adlib_tool    = PaidAdLibTool()
-        # ProfileScraperTool not instantiated — ad-library-only mode (Railway IP blocks)
+        self.search_tool    = SocialSearchTool()
+        self.adlib_tool     = PaidAdLibTool()
+        self.api_data_tool  = APIDataTool()
         # Scraper always uses e4b — structured data extraction, not deep reasoning.
         # e4b fits fully in GPU; 26b runs mixed CPU/GPU on this machine and stalls at 600s.
         self.scraper_llm = _make_llm("ollama/gemma4:e4b")
@@ -43,30 +43,33 @@ class SocialAgents:
         self.llm = _make_llm(analyst_model)
 
     def profile_agent(self) -> Agent:
-        """Agent 1 — scrapes public profile pages using the researcher's profile map.
-        Collects all posts in scope, computes organic baselines, and flags paid posts
-        via DOM labels + ER outlier detection. Geo-unconstrained."""
+        """Agent 1 — collects brand channel metrics via official APIs (YouTube Data API v3,
+        Meta Graph) and returns structured ER baselines per brand × platform. Railway-safe:
+        no Playwright, no login walls, no headless browser."""
         return Agent(
-            role="Profile Scraper",
+            role="Brand API Data Collector",
             goal=(
-                "Using the verified profile map from the researcher, scrape every brand's public "
-                "social media profile pages within the user-specified date scope. "
-                "For each brand × platform: collect all posts in scope (url, caption, metrics, "
-                "publish_date), detect DOM-labelled paid posts (Sponsored / Paid partnership), "
-                "compute an organic ER baseline from the clean organic pool, then re-score all "
-                "remaining posts — flagging those exceeding 3× the organic baseline ER as "
-                "likely_paid (baseline_outlier). "
-                "Return organic_posts, paid_posts, and baseline metrics per brand per platform. "
-                "Coverage is geo-unconstrained: public profile pages are hit directly."
+                "For each brand in the competitive set, call the 'Brand API Data Fetcher' tool "
+                "to retrieve real channel metrics from official APIs: YouTube subscriber count, "
+                "avg views, avg likes, avg comments, er_pct from YouTube Data API v3; "
+                "Facebook/Instagram declared ad counts and impression ranges from Meta Ad Library. "
+                "Return structured platform_data per brand with er_pct, followers, avg_views, "
+                "avg_likes, avg_comments, top_posts, and data_source fields. "
+                "Do NOT fabricate metrics. If the API returns no data for a platform, record "
+                "er_pct=0 and note the missing source."
             ),
             backstory=(
-                "You are a specialist in social media content collection and paid signal detection. "
-                "The researcher hands you verified URLs and handles — you use those as your exact "
-                "scraping targets. Your organic ER baselines and paid post flags are the primary "
-                "data source for the analyst's SOV signals. You never fabricate data."
+                "You are a brand intelligence analyst specialising in API-based social media data "
+                "collection. You use official APIs (YouTube Data API v3, Meta Graph API) to "
+                "retrieve authoritative, structured channel metrics — subscriber counts, view "
+                "rates, engagement rates — without relying on browser scraping. "
+                "Your output feeds directly into the SOV analyst's engagement corroboration "
+                "signal. Accurate er_pct values raise confidence from Medium to High. "
+                "You never fabricate numbers — if an API call fails, you record zeros and flag it."
             ),
-            tools=[],
+            tools=[self.api_data_tool],
             llm=self.scraper_llm,
+            max_iter=3,
             verbose=True,
         )
 

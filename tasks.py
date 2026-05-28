@@ -106,8 +106,9 @@ class SocialTasks:
         )
 
     def profile_task(self, agent, params: dict = None, profile_map: str = None) -> Task:
-        """Agent 1 — scrapes public profile pages for all posts in scope; computes organic
-        baselines and flags paid posts. Uses researcher's verified profile map as targets."""
+        """Agent 1 — collects brand channel metrics via official APIs (YouTube Data API v3,
+        Meta Graph). Returns structured er_pct and follower baselines per brand × platform.
+        Railway-safe: no Playwright, no login walls."""
         params      = params or {}
         advertisers = params.get("advertisers", [])
         competitors = params.get("competitors", [])
@@ -115,8 +116,7 @@ class SocialTasks:
         comp_brands = params.get("comp_brands",  [])
         platforms   = params.get("platforms", ["Instagram", "Facebook", "TikTok", "YouTube"])
         country     = params.get("country", "")
-        date_from   = params.get("date_from", "")
-        date_to     = params.get("date_to", "")
+        markets     = params.get("markets", [country] if country else ["PH"])
 
         all_brand_pairs = list(my_brands) + [
             b for b in comp_brands
@@ -126,53 +126,38 @@ class SocialTasks:
             all_brands = list(advertisers) + [c for c in competitors if c not in advertisers]
             all_brand_pairs = [{"brand": b, "advertiser": ""} for b in all_brands]
 
-        brands_str = ", ".join(
+        brand_names = [
             f"{p['advertiser']} {p['brand']}".strip() if p.get("advertiser") else p["brand"]
             for p in all_brand_pairs
-        ) or "all target brands"
+        ]
+        brands_str = ", ".join(brand_names) or "all target brands"
 
-        # Pass the researcher profile_map into the tool so the scraper can
-        # extract alt_candidates and retry on 0-post results automatically.
-        scraper_input = json.dumps({
-            "brands": [
-                {"name": p.get("brand", ""), "handles": {pl: p.get("handle", p.get("brand", "")) for pl in platforms}}
-                for p in all_brand_pairs
-            ],
+        tool_input = json.dumps({
+            "brands":    brand_names,
             "platforms": platforms,
-            "date_from": date_from,
-            "date_to": date_to,
-            "country": country or "",
-            "profile_map": profile_map or "",
+            "country":   country or "PH",
+            "markets":   markets,
         })
-
-        profile_map_section = (
-            f"\nRESEARCHER PROFILE MAP (use these verified handles/URLs as your scraping targets):\n"
-            f"{profile_map[:800]}\n"
-            "Use the profile_url from the map as the primary handle for each brand × platform. "
-            "The 'profile_map' field in the tool input gives the scraper alternate candidates "
-            "to retry automatically if the primary handle returns 0 posts.\n"
-        ) if profile_map else ""
 
         return Task(
             description=(
-                f"Scrape public brand profile pages and collect all posts within the date scope "
-                f"for these brands: {brands_str}.\n\n"
+                f"Collect real brand channel metrics from official APIs for: {brands_str}.\n\n"
                 f"PLATFORMS: {', '.join(platforms)}\n"
-                f"COUNTRY/MARKET: {country or 'Global'}\n"
-                f"DATE SCOPE: {date_from or 'start'} → {date_to or 'today'}\n"
-                f"{profile_map_section}\n"
-                "Call the 'Profile Scraper' tool with this exact JSON input:\n"
-                f"{scraper_input}\n\n"
-                "The tool handles alt-handle retries internally — do NOT modify the brands list.\n"
-                "Return the full tool output without summarising or truncating."
+                f"MARKET: {country or 'PH'}\n\n"
+                "Call the 'Brand API Data Fetcher' tool ONCE with this exact JSON:\n"
+                f"{tool_input}\n\n"
+                "The tool fetches YouTube subscriber counts, avg_views, avg_likes, avg_comments, "
+                "and er_pct via YouTube Data API v3. For Facebook/Instagram it returns declared "
+                "ad counts and impression ranges from Meta Ad Library.\n\n"
+                "Return the full tool output as-is. Do NOT summarise, truncate, or fabricate values. "
+                "If a platform returns no data, that is a valid result — record it as-is."
             ),
             expected_output=(
-                "JSON from the Profile Scraper tool: a 'profiles' list where each entry contains "
-                "brand, platform, handle, follower_count, organic_posts[], paid_posts[], "
-                "avg_er_pct, avg_likes, avg_views, avg_comments, er_threshold, baseline_available, "
-                "organic_post_count, paid_post_count, date_from, date_to, data_source. "
-                "paid_posts entries include paid_signal ('dom_label' or 'baseline_outlier'), "
-                "post_er_pct, and baseline_er_pct where applicable."
+                "JSON from 'Brand API Data Fetcher': an 'api_data' list where each entry has "
+                "brand, platform_data[]. Each platform_data entry has: platform, data_source, "
+                "followers, avg_views, avg_likes, avg_comments, er_pct, top_posts[], confidence. "
+                "Facebook entries include active_ads_found, impressions_min, impressions_max. "
+                "sources_used and missing_keys fields indicate which APIs were available."
             ),
             agent=agent,
         )

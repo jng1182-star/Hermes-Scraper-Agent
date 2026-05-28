@@ -382,20 +382,15 @@ class SentinelObserver:
             "[SENTINEL] Live log tap active — real-time error interception enabled.\n"
             "[SENTINEL] Authority: flags are binding per phase.\n"
             "[SENTINEL] Approval Gate retains override authority.\n"
-            "[SENTINEL] MODE: AD-LIBRARY-ONLY — profile scraper evicted.\n"
-            "[SENTINEL] SOV computed from 5 signals (engagement_corroboration=0 for all brands).\n"
-            "[SENTINEL] Confidence hard-capped at Medium for all brands/platforms this run.\n"
-            "[SENTINEL] Responsibilities in this mode:\n"
-            "  1. Validate feed sidecar has real integer ad counts per brand after Phase 2.\n"
-            "  2. Proactively inject synthetic ER stubs so analyst context is complete.\n"
-            "  3. Hard-cap confidence after analyst LLM completes.\n"
-            "  4. Halt if all brands return zero ads — escalate before analyst wastes a cycle.\n"
+            "[SENTINEL] MODE: API-BACKED — Brand API Data Collector active.\n"
+            "[SENTINEL] Phase 1 uses YouTube Data API v3 + Meta Graph for real er_pct baselines.\n"
+            "[SENTINEL] Confidence cap: High allowed when engagement_corroboration > 0.\n"
+            "[SENTINEL] Responsibilities:\n"
+            "  1. Validate Brand API phase returns real er_pct for at least one brand.\n"
+            "  2. Validate feed sidecar has real integer ad counts per brand after Phase 2.\n"
+            "  3. If all er_pct=0 after API phase: cap confidence at Medium and log gap.\n"
+            "  4. Hard-cap confidence after analyst LLM if API phase failed entirely.\n"
             + "═" * 60
-        )
-        # Announce skipped profile phase immediately so gate log is coherent
-        self._gate_write(
-            "[SENTINEL] Phase 'profile' — SKIPPED (ad-library-only mode). "
-            "Proceeding directly to researcher → ad library → analyst."
         )
 
         # Pre-warm Ollama in background so model is loaded before researcher's first call
@@ -681,7 +676,15 @@ class SentinelObserver:
             f"{'Output looks populated.' if output_len > 100 else 'Output is very short — checking for empty JSON.'}"
         )
 
-        # Ad-library-only mode: after feed phase, validate sidecar and cap confidence
+        # After profile (API) phase: validate er_pct data quality
+        if phase == "profile":
+            _s = self
+            threading.Thread(
+                target=_s._action_validate_profile_api_data,
+                daemon=True, name="sentinel-profile-validate"
+            ).start()
+
+        # After feed phase: validate sidecar and conditionally cap confidence
         if phase == "feed":
             _s = self
             threading.Thread(
@@ -1427,6 +1430,78 @@ class SentinelObserver:
         )
         self._action_set_directive(f"hallucination_risk_{phase}", True)
 
+    def _action_validate_profile_api_data(self) -> None:
+        """Validate Brand API Data phase output after Phase 1 completes.
+
+        Checks:
+          1. Checkpoint exists and parses as JSON with api_data entries.
+          2. At least one brand has er_pct > 0 on at least one platform (YouTube).
+          3. If all er_pct = 0: set adlib_only_fallback directive — analyst context
+             will declare engagement_corroboration = 0 and confidence cap = Medium.
+          4. If er_pct > 0 for any brand: clear adlib_only_fallback — High confidence
+             is available for brands with valid ER data.
+        """
+        import json as _json, pathlib as _p
+        ckpt = _p.Path("data/checkpoints/profile.json")
+        if not ckpt.exists():
+            self._gate_write(
+                "[SENTINEL FLAG] Brand API Data checkpoint missing after Phase 1. "
+                "Setting adlib_only_fallback — confidence will cap at Medium."
+            )
+            self._action_set_directive("adlib_only_fallback", True)
+            return
+
+        try:
+            raw = ckpt.read_text(encoding="utf-8")
+            # Strip markdown fences
+            import re as _re
+            raw = _re.sub(r"```(?:json)?\s*|```", "", raw).strip()
+            start = raw.find("{")
+            if start > 0:
+                raw = raw[start:]
+            data = _json.loads(raw)
+        except Exception as exc:
+            self._gate_write(
+                f"[SENTINEL FLAG] Brand API Data checkpoint parse error: {exc}. "
+                "Setting adlib_only_fallback."
+            )
+            self._action_set_directive("adlib_only_fallback", True)
+            return
+
+        api_entries = data.get("api_data", [])
+        brands_with_er = []
+        brands_zero_er = []
+
+        for entry in api_entries:
+            brand = entry.get("brand", "?")
+            plat_data = entry.get("platform_data", [])
+            brand_has_er = any(
+                float(p.get("er_pct") or 0) > 0
+                for p in plat_data
+                if isinstance(p, dict)
+            )
+            if brand_has_er:
+                brands_with_er.append(brand)
+            else:
+                brands_zero_er.append(brand)
+
+        if brands_with_er:
+            self._gate_write(
+                f"[SENTINEL] Brand API Data validated. Real er_pct available for: "
+                f"{', '.join(brands_with_er)}. "
+                f"{'Zero er_pct for: ' + ', '.join(brands_zero_er) + '.' if brands_zero_er else ''} "
+                "Engagement corroboration signal active — High confidence available."
+            )
+            self._action_set_directive("adlib_only_fallback", False)
+        else:
+            self._gate_write(
+                "[SENTINEL FLAG] Brand API Data returned er_pct=0 for ALL brands. "
+                f"Brands checked: {', '.join(b.get('brand','?') for b in api_entries) or 'none'}. "
+                "API may lack YOUTUBE_API_KEY or calls returned no data. "
+                "Setting adlib_only_fallback — confidence capped at Medium this run."
+            )
+            self._action_set_directive("adlib_only_fallback", True)
+
     def _action_validate_feed_sidecar(self) -> None:
         """
         Ad-library-only mode: validate the feed_raw_signals.json sidecar after Phase 2.
@@ -1532,21 +1607,37 @@ class SentinelObserver:
                     "This is real data — not an error. Analyst should reflect this in SOV indices."
                 )
 
-        self._gate_write(
-            "[SENTINEL] Sidecar validation PASSED — analyst will receive authoritative integer counts. "
-            "Confidence hard-capped at Medium (ad-library-only mode, no engagement baseline)."
-        )
-        # Enforce the confidence cap directive so analyst task prompt sees it
-        self._action_set_directive("adlib_only_mode", True)
-        self._action_set_directive("confidence_cap_medium", True)
+        # Check if profile API phase delivered real er_pct — if so, High confidence is valid
+        _adlib_fallback = self._directives.get("adlib_only_fallback", True)
+        if _adlib_fallback:
+            self._gate_write(
+                "[SENTINEL] Sidecar validation PASSED. Ad counts authoritative. "
+                "Confidence capped at Medium — Brand API phase returned no er_pct data."
+            )
+            self._action_set_directive("adlib_only_mode", True)
+            self._action_set_directive("confidence_cap_medium", True)
+        else:
+            self._gate_write(
+                "[SENTINEL] Sidecar validation PASSED. Ad counts authoritative. "
+                "Engagement corroboration active (er_pct > 0 from API phase) — High confidence available."
+            )
+            self._action_set_directive("adlib_only_mode", False)
+            self._action_set_directive("confidence_cap_medium", False)
 
     def _action_enforce_adlib_confidence_cap(self) -> None:
         """
         Post-analyst hook: walk the analyst checkpoint and hard-cap all confidence values
-        at Medium. Called after analyst completes in ad-library-only mode.
-        This is a belt-and-suspenders enforcement — normalize_sov() also applies the cap,
-        but doing it here means the reporter receives already-capped data.
+        at Medium — but ONLY when adlib_only_fallback directive is set (API phase returned
+        no er_pct data). If real ER data came through, High confidence is valid and we skip.
         """
+        # Skip cap if Brand API phase delivered real er_pct values
+        if not self._directives.get("adlib_only_fallback", True):
+            self._gate_write(
+                "[SENTINEL] Confidence cap skipped — Brand API phase delivered real er_pct. "
+                "High confidence is valid for brands with engagement data."
+            )
+            return
+
         import pathlib as _p, json as _j
         cp = _p.Path("data/checkpoints/analyst.json")
         if not cp.exists():
@@ -1571,8 +1662,8 @@ class SentinelObserver:
                     if isinstance(pd, dict) and pd.get("confidence") == "High":
                         pd["confidence"] = "Medium"
                         pd["confidence_note"] = (
-                            "Sentinel hard-cap: ad-library-only mode. "
-                            "Engagement corroboration (15%) unavailable — profile scraper evicted."
+                            "Sentinel hard-cap: Brand API phase returned no er_pct data. "
+                            "Engagement corroboration (15%) = 0 — confidence capped at Medium."
                         )
                         changed += 1
                 if b.get("composite_confidence") == "High":

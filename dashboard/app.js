@@ -714,7 +714,7 @@ async function pollStatus() {
 // ── Agent Card Updates ───────────────────────────────────────────────────────
 
 const CARD_LOG_HINTS = {
-  profile:  { idle: 'Ad-library-only mode — skipped', active: 'Ad-library-only mode — skipped', done: 'Skipped — ad-library mode active' },
+  profile:  { idle: 'Awaiting brand API data collection…', active: 'Fetching YouTube & Meta channel metrics via API…', done: 'Brand API data collected — er_pct baselines ready' },
   feed:     { idle: 'Awaiting activation…', active: 'Querying Meta / Google / TikTok ad libraries…', done: 'Ad library data captured' },
   scraper:  { idle: 'Awaiting activation…', active: 'Identifying brand social profiles & channels…', done: 'Profile map complete' },
   analyst:  { idle: 'Awaiting data…',       active: 'Computing 6-signal SOV index…',   done: 'Analysis complete' },
@@ -724,6 +724,9 @@ const CARD_LOG_HINTS = {
 
 // keyword → agent-id mapping for routing log lines to individual cards
 const _LOG_ROUTE = {
+  profile:  ['brand api data', 'api data collector', 'brand api data collector',
+             'youtube data api', 'meta graph', '[profile]', 'er_pct', 'er baseline',
+             'brand api data fetcher', 'api data fetcher'],
   feed:     ['feed scroller', 'in-feed', 'feed ad', '[feed]', 'ad capture', 'paid adlib',
              'ad library collector', 'ad library', 'meta ad library', 'google atc', 'tiktok ccl'],
   scraper:  ['social data researcher', 'researcher', 'profile discovery', 'profile map',
@@ -737,6 +740,8 @@ const _LOG_ROUTE = {
 
 // [AGENT THINKING: <role>] → role keyword → card-id
 const _THINKING_ROLE_MAP = {
+  'brand api data collector': 'profile',
+  'api data collector':       'profile',
   'feed scroller':            'feed',
   'in-feed ad collector':     'feed',
   'feed ad capture agent':    'feed',
@@ -828,16 +833,13 @@ function updateAgentCards(agentStates, logs) {
     const card  = document.getElementById('acard-' + id);
     const badge = document.getElementById('abadge-' + id);
     if (!card || !badge) return;
-    // Skipped cards are frozen — don't update badge or state
-    if (card.classList.contains('agent-card--skipped')) return;
-
     card.dataset.state = status;
     badge.textContent = status === 'active' ? '⟳ WORKING' : status === 'done' ? '✓ DONE' : 'STANDBY';
   });
 
   // Route new log lines to per-card feeds (profile excluded — skipped card)
   if (logs && logs.length) {
-    const buckets = { feed: [], scraper: [], analyst: [], reporter: [], gate: [] };
+    const buckets = { profile: [], feed: [], scraper: [], analyst: [], reporter: [], gate: [] };
     logs.forEach(line => {
       const id = _routeLogLine(line, agentStates);
       if (id && buckets[id]) buckets[id].push(line);   // keep raw line — _renderLogLine handles formatting
@@ -868,8 +870,6 @@ function resetAgentCards() {
     const badge = document.getElementById('abadge-' + id);
     const logEl = document.getElementById('alog-'   + id);
     if (!card || !badge || !logEl) return;
-    // Skipped cards stay frozen across runs
-    if (card.classList.contains('agent-card--skipped')) return;
     card.dataset.state = 'idle';
     badge.textContent  = 'STANDBY';
     logEl.textContent  = CARD_LOG_HINTS[id]?.idle || 'Awaiting…';
