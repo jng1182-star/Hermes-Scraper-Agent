@@ -1,6 +1,6 @@
 [build]
 builder = "nixpacks"
-buildCommand = "pip install -r requirements.txt && playwright install chromium --with-deps"
+buildCommand = "pip install -r requirements.txt && (playwright install chromium --with-deps || echo 'Playwright install skipped — DOM scraping disabled on Railway')"
 
 [deploy]
 startCommand = "uvicorn api:app --host 0.0.0.0 --port ${PORT:-8000}"
