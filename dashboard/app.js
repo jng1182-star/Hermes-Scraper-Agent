@@ -1796,7 +1796,7 @@ function renderResultsFiltered() {
   const kpiPaidPct     = document.getElementById('kpiPaidPct');
   if (kpiBrandCount) kpiBrandCount.textContent = brandCount;
   if (kpiBrandSub)   kpiBrandSub.textContent   = `across ${Object.keys(platLeader).length || '—'} platform(s)`;
-  if (kpiTopSov)     kpiTopSov.textContent = topSovEntry ? `${esc(topSovEntry.name)} · ${(topSovEntry.composite_sov||0).toFixed(1)} (Dir.)` : '—';
+  if (kpiTopSov)     kpiTopSov.textContent = topSovEntry ? `${topSovEntry.name} · ${(topSovEntry.composite_sov||0).toFixed(1)} (Dir.)` : '—';
   if (kpiPlatLeader) kpiPlatLeader.textContent = platLeaderStr;
   if (kpiConfidence) kpiConfidence.textContent = avgConfLabel;
   if (kpiPaidPct)    kpiPaidPct.textContent    = paidPct !== null ? `${paidPct}% of tracked posts` : 'No post data';

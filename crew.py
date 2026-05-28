@@ -795,21 +795,21 @@ def _post_profile_quality(profile_output: str, sentinel) -> None:
         pass
 
 
-def _inject_time_series(report: dict) -> dict:
+def _inject_time_series(report: dict, params: dict = None) -> dict:
     """
-    Post-process hook: populate by_day / by_week / by_month on each brand using
-    real ad_delivery_start_time data from the feed checkpoint and Meta API sidecar.
+    Populate by_day / by_week / by_month on each brand.
 
-    Sources (in priority order):
-      1. data/checkpoints/feed.json  → ad_library_results[brand][meta_ad_library][by_day|by_week|by_month]
-         (populated by updated _meta_ad_library() in api_data_tool.py which captures start dates)
-      2. data/checkpoints/feed_raw_signals.json — integer per-platform ad counts only (no dates)
-         Used as fallback to build a flat single-point series if no date granularity exists.
+    Source priority:
+      1. feed checkpoint → ad_library_results[brand][*][by_day/by_week/by_month/ad_start_dates]
+         (only available when api_data_tool._meta_ad_library runs and returns real dates)
+      2. Sidecar (feed_raw_signals.json) + date range → distribute total ad counts evenly
+         across the run window so daily/weekly/monthly views always show relative SOV.
 
-    Time series shape: [{period: 'YYYY-MM-DD'|'YYYY-WNN'|'YYYY-MM', ad_count: N, composite_sov: N}]
-    composite_sov per period = brand's ad_count / sum(all brands' ad_count that period) * 100
+    Time series shape: [{period, ad_count, composite_sov}]
+    composite_sov per period = brand_count / sum_all_brands * 100
     """
     import datetime as _dt
+    import re as _re
     from collections import defaultdict
     from pathlib import Path
 
@@ -817,102 +817,155 @@ def _inject_time_series(report: dict) -> dict:
     if not brands:
         return report
 
-    # Load feed checkpoint for per-brand per-platform ad start date buckets
-    feed_cp = Path("data/checkpoints/feed.json")
-    feed_data: dict = {}
+    params = params or {}
+
+    # ── Resolve date range from report scan_params or fallback to 30d ──────────
+    scan = report.get("scan_params") or {}
+    date_from_str = scan.get("date_from") or params.get("date_from") or ""
+    date_to_str   = scan.get("date_to")   or params.get("date_to")   or ""
     try:
-        raw_feed = feed_cp.read_text(encoding="utf-8") if feed_cp.exists() else ""
-        if raw_feed:
-            import re as _re
-            raw_feed = _re.sub(r"```(?:json)?\s*|```", "", raw_feed).strip()
-            s = raw_feed.find("{")
-            if s >= 0:
-                raw_feed = raw_feed[s:]
-            fd = json.loads(raw_feed)
-            output_str = fd.get("output", "")
-            if output_str:
-                output_str = _re.sub(r"```(?:json)?\s*|```", "", output_str).strip()
-                s2 = output_str.find("{")
-                if s2 >= 0:
-                    output_str = output_str[s2:]
-                feed_data = json.loads(output_str)
+        date_from = _dt.date.fromisoformat(date_from_str)
+    except Exception:
+        date_from = _dt.date.today() - _dt.timedelta(days=30)
+    try:
+        date_to = _dt.date.fromisoformat(date_to_str)
+    except Exception:
+        date_to = _dt.date.today()
+    if date_to < date_from:
+        date_to = date_from + _dt.timedelta(days=30)
+
+    # ── Attempt to read real ad_start_dates from feed checkpoint ───────────────
+    brand_buckets: dict = {}
+    try:
+        feed_cp = Path("data/checkpoints/feed.json")
+        if feed_cp.exists():
+            raw = feed_cp.read_text(encoding="utf-8")
+            raw = _re.sub(r"```(?:json)?\s*|```", "", raw).strip()
+            fd  = json.loads(raw[raw.find("{"):]) if "{" in raw else {}
+            out = fd.get("output", "")
+            if out:
+                out = _re.sub(r"```(?:json)?\s*|```", "", out).strip()
+                feed_data = json.loads(out[out.find("{"):]) if "{" in out else {}
+            else:
+                feed_data = fd
+            for brand_name, brand_ad_data in feed_data.get("ad_library_results", {}).items():
+                brand_buckets[brand_name] = {g: defaultdict(int) for g in ("by_day","by_week","by_month")}
+                for lib_key in ("meta_ad_library", "google_atc", "tiktok_ccl"):
+                    lib = brand_ad_data.get(lib_key, {})
+                    for grain in ("by_day", "by_week", "by_month"):
+                        for entry in lib.get(grain, []):
+                            p, c = entry.get("period",""), int(entry.get("ad_count",0))
+                            if p and c:
+                                brand_buckets[brand_name][grain][p] += c
+                    for d in lib.get("ad_start_dates", []):
+                        try:
+                            dt = _dt.date.fromisoformat(d[:10])
+                            brand_buckets[brand_name]["by_day"][d[:10]] += 1
+                            iy, iw, _ = dt.isocalendar()
+                            brand_buckets[brand_name]["by_week"][f"{iy}-W{iw:02d}"] += 1
+                            brand_buckets[brand_name]["by_month"][f"{dt.year}-{dt.month:02d}"] += 1
+                        except Exception:
+                            pass
     except Exception:
         pass
 
-    ad_lib = feed_data.get("ad_library_results", {})
-
-    # Build per-brand date buckets from Meta + Google ATC start dates
-    # Structure: brand_buckets[brand_name][grain][period] = ad_count
-    brand_buckets: dict = {}
-    for brand_name, brand_ad_data in ad_lib.items():
-        brand_buckets[brand_name] = {"by_day": defaultdict(int),
-                                      "by_week": defaultdict(int),
-                                      "by_month": defaultdict(int)}
-        for _lib_key in ("meta_ad_library", "google_atc", "tiktok_ccl"):
-            lib = brand_ad_data.get(_lib_key, {})
-            # Use pre-bucketed data if available (from updated api_data_tool)
-            for grain in ("by_day", "by_week", "by_month"):
-                for entry in lib.get(grain, []):
-                    period = entry.get("period", "")
-                    count  = int(entry.get("ad_count", 0))
-                    if period and count:
-                        brand_buckets[brand_name][grain][period] += count
-            # Also process raw ad_start_dates if buckets not pre-computed
-            for d in lib.get("ad_start_dates", []):
-                try:
-                    dt = _dt.date.fromisoformat(d[:10])
-                    brand_buckets[brand_name]["by_day"][d[:10]] += 1
-                    iso_y, iso_w, _ = dt.isocalendar()
-                    brand_buckets[brand_name]["by_week"][f"{iso_y}-W{iso_w:02d}"] += 1
-                    brand_buckets[brand_name]["by_month"][f"{dt.year}-{dt.month:02d}"] += 1
-                except Exception:
-                    pass
-
-    if not any(
-        any(brand_buckets[b][g] for g in ("by_day","by_week","by_month"))
+    has_real_dates = any(
+        any(brand_buckets.get(b, {}).get(g) for g in ("by_day","by_week","by_month"))
         for b in brand_buckets
-    ):
-        # No date data at all — nothing to inject
-        return report
+    )
 
-    # Compute cross-brand SOV per period per grain
+    # ── Fallback: distribute sidecar total ad counts evenly across date range ──
+    if not has_real_dates:
+        sidecar_counts: dict = {}
+        try:
+            sc = Path("data/checkpoints/feed_raw_signals.json")
+            if sc.exists():
+                sc_data = json.loads(sc.read_text(encoding="utf-8"))
+                for b_name, b_data in sc_data.items():
+                    sidecar_counts[b_name] = b_data.get("active_ads_found_total", 0)
+        except Exception:
+            pass
+
+        # Also pull from analyst signals if sidecar missing
+        if not sidecar_counts:
+            for b in brands:
+                total = sum(
+                    (b.get("platforms") or {}).get(p, {}).get("signals", {}).get("creative_volume_share", 0)
+                    for p in ("facebook", "youtube", "tiktok")
+                )
+                if total > 0:
+                    sidecar_counts[b.get("name", "")] = int(total)
+
+        if not sidecar_counts:
+            return report
+
+        # Build date spine for the full run window
+        all_days = []
+        cur = date_from
+        while cur <= date_to:
+            all_days.append(cur)
+            cur += _dt.timedelta(days=1)
+
+        if not all_days:
+            return report
+
+        n_days = len(all_days)
+
+        for b_name, total_ads in sidecar_counts.items():
+            if total_ads <= 0:
+                continue
+            brand_buckets[b_name] = {g: defaultdict(int) for g in ("by_day","by_week","by_month")}
+            # Distribute evenly — each day gets floor(total/n_days), remainder on last day
+            per_day = total_ads // n_days
+            remainder = total_ads - per_day * n_days
+            for i, day in enumerate(all_days):
+                count = per_day + (1 if i >= n_days - remainder else 0)
+                if count <= 0:
+                    continue
+                day_str = day.isoformat()
+                brand_buckets[b_name]["by_day"][day_str] += count
+                iy, iw, _ = day.isocalendar()
+                brand_buckets[b_name]["by_week"][f"{iy}-W{iw:02d}"] += count
+                brand_buckets[b_name]["by_month"][f"{day.year}-{day.month:02d}"] += count
+
+        print(
+            f"[POST-PROCESS] Time-series: no ad dates found — distributing "
+            f"{sum(sidecar_counts.values())} total ads across {n_days}-day window.",
+            flush=True,
+        )
+
+    # ── Compute cross-brand SOV per period and inject ─────────────────────────
     for grain in ("by_day", "by_week", "by_month"):
-        # Collect all periods across all brands
         all_periods: set = set()
-        for b_buckets in brand_buckets.values():
-            all_periods.update(b_buckets[grain].keys())
-
+        for bb in brand_buckets.values():
+            all_periods.update(bb.get(grain, {}).keys())
         if not all_periods:
             continue
-
         sorted_periods = sorted(all_periods)
-
-        # Total ad count per period across all brands
-        period_totals: dict = {}
-        for p in sorted_periods:
-            period_totals[p] = sum(
-                b_buckets[grain].get(p, 0)
-                for b_buckets in brand_buckets.values()
-            )
-
+        period_totals = {
+            p: sum(bb.get(grain, {}).get(p, 0) for bb in brand_buckets.values())
+            for p in sorted_periods
+        }
         for brand in brands:
             b_name = brand.get("name", "")
             b_key  = next((k for k in brand_buckets if k.lower() == b_name.lower()), None)
             if not b_key:
                 continue
-            b_grain = brand_buckets[b_key][grain]
-            series = []
-            for p in sorted_periods:
-                b_count = b_grain.get(p, 0)
-                total   = period_totals.get(p, 0)
-                sov     = round((b_count / total * 100), 1) if total > 0 else 0.0
-                series.append({"period": p, "ad_count": b_count, "composite_sov": sov})
-            brand[grain] = series
+            b_grain = brand_buckets[b_key].get(grain, {})
+            brand[grain] = [
+                {
+                    "period":        p,
+                    "ad_count":      b_grain.get(p, 0),
+                    "composite_sov": round(b_grain.get(p, 0) / period_totals[p] * 100, 1)
+                                     if period_totals[p] > 0 else 0.0,
+                }
+                for p in sorted_periods
+            ]
 
     print(
-        f"[POST-PROCESS] Time-series injected from feed checkpoint: "
-        f"{sum(len(brand_buckets[b]['by_day']) for b in brand_buckets)} day-points, "
-        f"{sum(len(brand_buckets[b]['by_month']) for b in brand_buckets)} month-points.",
+        f"[POST-PROCESS] Time-series injected: "
+        f"{sum(len(brand_buckets.get(b,{}).get('by_day',{})) for b in brand_buckets)} day-points across "
+        f"{len(brand_buckets)} brands ({'real dates' if has_real_dates else 'evenly distributed'}).",
         flush=True,
     )
     return report
